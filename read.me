@@ -1,0 +1,124 @@
+# Academic Literature LLM Analysis Tool
+
+## Overview
+
+This tool provides a streamlined workflow for analyzing academic literature using Large Language Models (LLMs). It extracts text from PDF papers, processes the content while preserving academic formatting and citations, and leverages modern LLMs for comprehensive literature analysis and synthesis.
+
+## 🌟 Key Features
+
+- **PDF Processing**: Extract text from academic papers while preserving structure
+- **Document Organization**: Manage documents by project for focused analysis
+- **Text Preprocessing**: Clean and normalize extracted text for optimal LLM processing
+- **Citation Handling**: Preserve citations and references for academic integrity
+- **Retrieval Augmented Generation (RAG)**: Enhance LLM responses with relevant document context
+- **Customizable Analysis**: Configure analysis parameters based on research needs
+
+## 📁 Project Structure
+
+```
+academic_lit_llm_2/
+├── pdfs/                  # Source PDF documents organized by project
+│   ├── project1/          # Example project folder
+│   └── project2/          # Example project folder  
+├── extracted_texts/       # Extracted raw text from PDFs
+├── merged_texts/          # Merged text files for analysis
+├── config.py              # Configuration settings
+├── extract_text.py        # PDF text extraction utilities
+├── rag_2.py               # Retrieval Augmented Generation implementation
+└── requirements.txt       # Project dependencies
+```
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- Python 3.10+
+- Access to an LLM API (OpenAI, Anthropic, etc.)
+
+### Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/academic_lit_llm_2.git
+cd academic_lit_llm_2
+```
+
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+3. Configure API access by creating a `.env` file:
+```
+API_KEY=your_api_key_here
+API_BASE=https://api.example.com/v1
+```
+
+## 📊 Usage Guide
+
+### 1. Organizing PDFs
+
+Place your PDF documents in the appropriate project folder:
+```bash
+mkdir -p pdfs/my_research_project
+# Copy your PDFs to this folder
+```
+
+### 2. Extracting Text
+
+Run the extraction script:
+```bash
+python extract_text.py --project my_research_project
+```
+
+### 3. Running Analysis
+
+Open and execute the provided Jupyter notebooks:
+```bash
+jupyter notebook
+```
+
+Key notebooks:
+- `llm_connection.ipynb`: Examples of connecting to LLM APIs
+- `test.ipynb`: Development and testing examples
+
+### 4. Using RAG
+
+The RAG module enhances LLM responses by providing relevant context:
+```python
+from rag_2 import RAGProcessor
+
+processor = RAGProcessor(project_name="my_research_project")
+response = processor.query("Summarize the key findings across these papers")
+print(response)
+```
+
+## ⚙️ Configuration
+
+Edit `config.py` to customize:
+- Text extraction parameters
+- LLM model selection
+- Chunking strategies
+- Embedding configurations
+
+## 🔧 Troubleshooting
+
+Common issues:
+- **PDF Extraction Fails**: Some PDFs with complex formatting may need alternative extraction methods
+- **API Rate Limits**: Implement retry logic or batching for large document sets
+- **Memory Issues**: For large documents, adjust chunking parameters in config.py
+
+## 🔜 Future Development
+
+- Integration with reference management software
+- Support for additional document formats
+- Collaborative analysis features
+- Visualization of document relationships
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.

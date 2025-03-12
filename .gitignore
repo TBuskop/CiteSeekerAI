@@ -8,3 +8,4 @@ test.txt
 test.ipynb
 combined_context.txt
 chunks.db
+llm_connection.ipynb
