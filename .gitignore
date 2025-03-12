@@ -1,0 +1,10 @@
+.env
+/extracted_texts
+/merged_texts
+/pdfs
+/__pycache__
+test.py
+test.txt
+test.ipynb
+combined_context.txt
+chunks.db
