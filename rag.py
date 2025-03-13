@@ -300,7 +300,7 @@ def index_document(document_path: str, db_path: str,
 # ---------------------------
 # Retrieval and Iterative Query Functions
 # ---------------------------
-def generate_llm_response(prompt: str, max_tokens: int, temperature: float = 0.5, model=None) -> str:
+def generate_llm_response(prompt: str, max_tokens: int, temperature: float = 1, model=None) -> str:
     """
     Generate a response from the configured LLM provider.
     """
@@ -317,8 +317,6 @@ def generate_llm_response(prompt: str, max_tokens: int, temperature: float = 0.5
     elif model.lower() in ["gemini-2.0-flash", "gemini-2.0-flash-lite"]:
         generate_content_config = genai.types.GenerateContentConfig(
             temperature=temperature,
-            top_p=0.95,
-            top_k=40,
             max_output_tokens=max_tokens,
             response_mime_type="text/plain",
         )
@@ -412,7 +410,7 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
         for chunk in retrieved_chunks
     )
     prompt = (
-        f"Answer the following question using only the provided context. If the context does not contain enough information, say so.\n\n"
+        f"Answer the following question using only the provided context. You may elaborate a bit and provide some explanations on the statement. If the context does not contain enough information, say so.\n\n"
         f"Context:\n{combined_context}\n\n"
         f"Question: {query}\n\n"
         f"Please include references in your answer using the format [Source: filename, chunk number, token range].\n"
