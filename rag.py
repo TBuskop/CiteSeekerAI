@@ -179,17 +179,40 @@ def generate_chunk_context(document: str, chunk: str, token_limit: int = 30000,
     
     return generate_llm_response(prompt, context_length, temperature=0.5, model=model)
 
-def get_openai_embedding(text: str, model: str = EMBEDDING_MODEL) -> np.ndarray:
+def get_embedding(text: str, model: str = EMBEDDING_MODEL, task_type=None) -> np.ndarray:
     """
     Get the embedding for a given text using OpenAI's embeddings model.
     """
-    response = openai.embeddings.create(
-        input=[text],
-        model=model,
-        encoding_format="float"
-    )
-    vector = response.data[0].embedding
-    return np.array(vector)
+    if task_type:
+        if task_type not in ["retrieval_document", "retrieval_query"]:
+            print ("Task type not supported")
+            
+
+    if EMBEDDING_MODEL in ["text-embedding-3-small"]:
+        response = openai.embeddings.create(
+            input=[text],
+            model=model,
+            encoding_format="float"
+        )
+        vector = response.data[0].embedding
+        return np.array(vector)
+    
+    elif EMBEDDING_MODEL in ["embedding-001"]:
+        response = gemini_client.models.embed_content(
+            model=EMBEDDING_MODEL,
+            contents=text,
+            task_type=task_type,
+        )
+        vector = response["embedding"]
+        return np.array(vector)
+    
+    elif EMBEDDING_MODEL in ["text-embedding-004"]:
+        response = gemini_client.models.embed_content(
+            model=EMBEDDING_MODEL,
+            contents=text,
+        )
+        vector = response.embeddings[0].values
+        return np.array(vector)
 
 def cosine_similarity(query_vec: np.ndarray, matrix: np.ndarray) -> np.ndarray:
     """
@@ -270,7 +293,7 @@ def index_document(document_path: str, db_path: str,
         chunk_context = generate_chunk_context(document, raw_chunk)
         contextualized_text = f"{chunk_context}\n{raw_chunk}"
         tokens = count_tokens(raw_chunk)
-        embedding = get_openai_embedding(contextualized_text)
+        embedding = get_embedding(contextualized_text, task_type="retrieval_document")
         embedding_blob = pickle.dumps(embedding)
         cursor.execute(
             """
@@ -393,7 +416,7 @@ def retrieve_chunks_for_query(query: str, db_path: str, top_k: int) -> List[dict
             "processing_date": processing_date
         })
     embedding_matrix = np.vstack(embedding_list)
-    query_vec = get_openai_embedding(query)
+    query_vec = get_embedding(query, task_type="retrieval_query")
     similarities = cosine_similarity(query_vec, embedding_matrix)
     top_indices = np.argsort(similarities)[::-1][:top_k]
     retrieved_chunks = [chunks[i] for i in top_indices]
@@ -490,7 +513,7 @@ def query_index(query: str, db_path: str, top_k: int = DEFAULT_TOP_K) -> str:
 # Main CLI
 # ---------------------------
 def main():
-    test = False  # Set to False for production mode
+    test = True  # Set to False for production mode
     max_tokens = DEFAULT_MAX_TOKENS
     overlap = DEFAULT_OVERLAP
     if test:
