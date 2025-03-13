@@ -1,56 +1,65 @@
 #!/usr/bin/env python3
 """
-rag.py
+rag_deeplinking.py
 
-A Retrieval-Augmented Generation (RAG) script that:
+A Retrieval-Augmented Generation (RAG) script with deep linking that:
   1. Reads a given .txt document.
-  2. Splits it into semantically coherent chunks using a token-based sliding window.
-  3. Generates a short contextual summary for each chunk.
+  2. Splits it into semantically coherent chunks using a token-based sliding window,
+     capturing token offsets for each chunk.
+  3. Generates a short contextual summary for each chunk using the full document context.
   4. Computes an embedding for each contextualized chunk using OpenAI's embeddings model.
-  5. Stores each chunk (with metadata such as the original file name, chunk number, and processing date) in an SQLite database.
+  5. Stores each chunk (with metadata including file name, chunk number, token offset range, and processing date)
+     in an SQLite database.
   6. Checks if a file has already been chunked to avoid reprocessing.
-  7. In query mode, retrieves the top-K chunks for a user query by computing cosine similarity over stored embeddings.
-
+  7. In query mode, retrieves the top-K chunks by computing cosine similarity over stored embeddings.
+  8. In iterative query mode, first expands the original query into subqueries, retrieves chunks for each,
+     and then generates the final answer using the combined context and deep linking metadata.
+     
 Usage:
   # To index a document:
-  python rag.py --mode index --document_path path/to/document.txt --db_path chunks.db
+  python rag_deeplinking.py --mode index --document_path path/to/document.txt --db_path chunks.db
 
-  # To query:
-  python rag.py --mode query --query "What was ACME's Q2 2023 revenue?" --db_path chunks.db --top_k 5
+  # To query iteratively:
+  python rag_deeplinking.py --mode query --query "What was ACME's Q2 2023 revenue?" --db_path chunks.db --top_k 5
 """
+
 import os
-
-from dotenv import load_dotenv
-load_dotenv(override=True)  # Force override of existing environment variables
-
 import argparse
 import datetime
 import hashlib
 import pickle
-import re
 import sqlite3
-from typing import List
-from tqdm import tqdm  # Import tqdm for progress bars
+from typing import List, Dict, Any
+from tqdm import tqdm
 
 import numpy as np
 import openai
-import tiktoken  # For accurate token counting
+import tiktoken
 
 # Import configuration values from config.py
 from config import (
-    OPENAI_API_KEY, 
-    EMBEDDING_MODEL, 
+    OPENAI_API_KEY,
+    GEMINI_API_KEY, 
+    EMBEDDING_MODEL,
+    CHUNK_CONTEXT_MODEL,
+    SUBQUERY_MODEL, 
     CHAT_MODEL,
     DEFAULT_MAX_TOKENS,
     DEFAULT_OVERLAP,
+    DEFAULT_CONTEXT_LENGTH,
     DEFAULT_TOP_K
 )
 
-# Set OpenAI API key from config
+# Set OpenAI API key from config and initialize OpenAI client
 openai.api_key = OPENAI_API_KEY
-
 from openai import OpenAI
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+# ---------------------------
+# Initialize Gemini Client
+# ---------------------------
+from google import genai
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 # ---------------------------
 # Database Setup and Helpers
@@ -59,7 +68,8 @@ def init_db(db_path: str) -> sqlite3.Connection:
     """
     Initialize the SQLite database with two tables:
       - documents: stores file hash, file name, and processing date.
-      - chunks: stores each chunk's text, context, embedding (as a pickle blob), chunk number, and a foreign key to documents.
+      - chunks: stores each chunk's text, context, token offset range,
+                embedding (as a pickle blob), chunk number, and a foreign key to documents.
     """
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -79,6 +89,8 @@ def init_db(db_path: str) -> sqlite3.Connection:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             doc_id INTEGER,
             chunk_number INTEGER,
+            start_token INTEGER,
+            end_token INTEGER,
             text TEXT,
             context TEXT,
             contextualized_text TEXT,
@@ -106,7 +118,7 @@ def compute_file_hash(file_path: str) -> str:
 # ---------------------------
 def count_tokens(text: str, model: str = EMBEDDING_MODEL) -> int:
     """
-    Count tokens using the tiktoken library, which matches OpenAI's tokenization.
+    Count tokens using the tiktoken library.
     """
     try:
         encoding = tiktoken.encoding_for_model(model)
@@ -115,11 +127,12 @@ def count_tokens(text: str, model: str = EMBEDDING_MODEL) -> int:
     tokens = encoding.encode(text)
     return len(tokens)
 
-def chunk_document_tokens(document: str, max_tokens: int = DEFAULT_MAX_TOKENS, overlap: int = DEFAULT_OVERLAP) -> List[str]:
+def chunk_document_tokens(document: str,
+                          max_tokens: int = DEFAULT_MAX_TOKENS,
+                          overlap: int = DEFAULT_OVERLAP) -> List[tuple]:
     """
     Split the document into chunks using a sliding window over tokens.
-    Each chunk will have at most max_tokens tokens, with the specified overlap between consecutive chunks.
-    This approach guarantees that no chunk exceeds the max_tokens limit.
+    Returns a list of tuples: (chunk_text, start_token, end_token).
     """
     try:
         encoding = tiktoken.encoding_for_model(EMBEDDING_MODEL)
@@ -131,20 +144,40 @@ def chunk_document_tokens(document: str, max_tokens: int = DEFAULT_MAX_TOKENS, o
     while start < len(tokens):
         end = start + max_tokens
         chunk_tokens = tokens[start:end]
-        chunks.append(encoding.decode(chunk_tokens).strip())
+        chunk_text = encoding.decode(chunk_tokens).strip()
+        chunks.append((chunk_text, start, min(end, len(tokens))))
         start = end - overlap  # Slide window with overlap
     return chunks
 
-def generate_context(chunk_text: str, chunk_number: int) -> str:
+def truncate_text(text: str, token_limit: int, model: str = CHAT_MODEL) -> str:
+    try:
+        encoding = tiktoken.encoding_for_model(model)
+    except Exception:
+        encoding = tiktoken.get_encoding("cl100k_base")
+    tokens = encoding.encode(text)
+    if len(tokens) > token_limit:
+        tokens = tokens[:token_limit]
+        text = encoding.decode(tokens)
+    return text
+
+def generate_chunk_context(document: str, chunk: str, token_limit: int = 30000,
+                           context_length: int = DEFAULT_CONTEXT_LENGTH,
+                           model: str = CHUNK_CONTEXT_MODEL) -> str:
     """
-    Generate a contextual summary for a chunk.
-    For simplicity, this returns the first sentence (or first 20 words) of the chunk.
+    Generate a succinct, chunk-specific context using the full document.
     """
-    sentences = re.split(r'(?<=[.!?]) +', chunk_text)
-    first_sentence = sentences[0] if sentences else chunk_text
-    words = first_sentence.split()
-    context = " ".join(words[:20])
-    return f"Context for chunk {chunk_number}: {context}"
+    if count_tokens(document) > token_limit:
+        document = truncate_text(document, token_limit)
+        
+    prompt = (
+        f"<document>\n{document}\n</document>\n"
+        f"Here is the chunk we want to situate within the whole document\n"
+        f"<chunk>\n{chunk}\n</chunk>\n"
+        "Please give a short succinct context to situate this chunk within the overall document "
+        "for the purposes of improving search retrieval of the chunk. Answer only with the succinct context and nothing else."
+    )
+    
+    return generate_llm_response(prompt, context_length, temperature=0.5, model=model)
 
 def get_openai_embedding(text: str, model: str = EMBEDDING_MODEL) -> np.ndarray:
     """
@@ -164,7 +197,6 @@ def cosine_similarity(query_vec: np.ndarray, matrix: np.ndarray) -> np.ndarray:
     """
     query_norm = np.linalg.norm(query_vec)
     matrix_norm = np.linalg.norm(matrix, axis=1)
-    # Avoid division by zero
     if query_norm == 0:
         return np.zeros(matrix.shape[0])
     similarities = np.dot(matrix, query_vec) / (matrix_norm * query_norm + 1e-10)
@@ -172,42 +204,44 @@ def cosine_similarity(query_vec: np.ndarray, matrix: np.ndarray) -> np.ndarray:
 
 def simulate_generation(query: str, retrieved_chunks: List[dict]) -> str:
     """
-    Simulate generating an answer using the retrieved chunks.
+    Simulate generating an answer using the retrieved chunks,
+    including deep linking references.
     """
     combined_context = "\n---\n".join(
-        [f"{chunk['contextualized_text']}\n(File: {chunk['file_name']}, Chunk: {chunk['chunk_number']}, Date: {chunk['processing_date']})"
-         for chunk in retrieved_chunks]
+        [
+            f"{chunk['contextualized_text']}\n"
+            f"[Deep Link: File={chunk['file_name']}, Chunk={chunk['chunk_number']}, "
+            f"Tokens={chunk['start_token']}-{chunk['end_token']}, Date={chunk['processing_date']}]"
+            for chunk in retrieved_chunks
+        ]
     )
     response = (
-        f"Query: {query}\n\nRetrieved Context:\n{combined_context}\n\n"
+        f"Query: {query}\n\n"
+        f"Retrieved Context:\n{combined_context}\n\n"
         "[Simulated Answer based on the above context]"
     )
     return response
 
 # ---------------------------
-# Indexing and Querying Functions
+# Indexing Functions
 # ---------------------------
-def index_document(document_path: str, db_path: str, max_tokens: int = DEFAULT_MAX_TOKENS, overlap: int = DEFAULT_OVERLAP):
+def index_document(document_path: str, db_path: str,
+                   max_tokens: int = DEFAULT_MAX_TOKENS, overlap: int = DEFAULT_OVERLAP):
     """
-    Index a document by splitting it into chunks using a token-based sliding window,
-    generating embeddings for each chunk, and storing them along with metadata in the database.
-    Skips reprocessing if the document (by its hash) already exists.
+    Index a document by splitting it into chunks, generating embeddings,
+    and storing the data (including deep linking token offsets) in the database.
     """
     if not os.path.exists(document_path):
         raise FileNotFoundError(f"Document not found: {document_path}")
 
-    # Compute file hash and read the document.
     file_hash = compute_file_hash(document_path)
     with open(document_path, "r", encoding="utf-8") as f:
         document = f.read()
     file_name = os.path.basename(document_path)
     processing_date = datetime.datetime.now().isoformat()
 
-    # Initialize database.
     conn = init_db(db_path)
     cursor = conn.cursor()
-
-    # Check if this document has already been processed.
     cursor.execute("SELECT doc_id FROM documents WHERE file_hash = ?", (file_hash,))
     result = cursor.fetchone()
     if result:
@@ -215,7 +249,6 @@ def index_document(document_path: str, db_path: str, max_tokens: int = DEFAULT_M
         conn.close()
         return
 
-    # Insert the new document record.
     cursor.execute(
         "INSERT INTO documents (file_hash, file_name, processing_date) VALUES (?, ?, ?)",
         (file_hash, file_name, processing_date),
@@ -226,36 +259,114 @@ def index_document(document_path: str, db_path: str, max_tokens: int = DEFAULT_M
     raw_chunks = chunk_document_tokens(document, max_tokens=max_tokens, overlap=overlap)
     print(f"Created {len(raw_chunks)} chunks.")
 
-    # Add tqdm progress bar to show indexing progress
-    for idx, raw_chunk in tqdm(enumerate(raw_chunks), total=len(raw_chunks), desc=f"Processing {file_name}", unit="chunk"):
-        context = generate_context(raw_chunk, idx)
-        contextualized_text = f"{context}\n{raw_chunk}"
+    # --- CHANGES MADE ---
+    # Removed global file summary generation (generate_context) and now generate a chunk-specific context.
+    for idx, (raw_chunk, start_tok, end_tok) in tqdm(
+        enumerate(raw_chunks),
+        total=len(raw_chunks),
+        desc=f"Processing {file_name[0:30]}...",
+        unit="chunk"
+    ):
+        chunk_context = generate_chunk_context(document, raw_chunk)
+        contextualized_text = f"{chunk_context}\n{raw_chunk}"
         tokens = count_tokens(raw_chunk)
         embedding = get_openai_embedding(contextualized_text)
-        # Store the embedding as a pickle blob.
         embedding_blob = pickle.dumps(embedding)
         cursor.execute(
             """
-            INSERT INTO chunks (doc_id, chunk_number, text, context, contextualized_text, embedding, tokens)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO chunks (
+                doc_id, chunk_number, start_token, end_token,
+                text, context, contextualized_text, embedding, tokens
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (doc_id, idx, raw_chunk, context, contextualized_text, embedding_blob, tokens),
+            (
+                doc_id,
+                idx,
+                start_tok,
+                end_tok,
+                raw_chunk,
+                chunk_context,
+                contextualized_text,
+                embedding_blob,
+                tokens,
+            )
         )
-    
+
     conn.commit()
     conn.close()
     print(f"Document '{file_name}' indexed and stored in the database.")
 
-def query_index(query: str, db_path: str, top_k: int = DEFAULT_TOP_K) -> str:
+# ---------------------------
+# Retrieval and Iterative Query Functions
+# ---------------------------
+def generate_llm_response(prompt: str, max_tokens: int, temperature: float = 0.5, model=None) -> str:
     """
-    Query the database by computing the query embedding using OpenAI's model, then calculating cosine similarity
-    between the query embedding and all stored chunk embeddings. Returns a simulated answer based on the top-K chunks.
+    Generate a response from the configured LLM provider.
+    """
+    if model is None:
+        raise ValueError("A model must be specified")
+    if model.lower() in ["gpt-3.5-turbo", "gpt-4", "gpt-4o"]:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return response.choices[0].message.content.strip()
+    elif model.lower() in ["gemini-2.0-flash", "gemini-2.0-flash-lite"]:
+        generate_content_config = genai.types.GenerateContentConfig(
+            temperature=temperature,
+            top_p=0.95,
+            top_k=40,
+            max_output_tokens=max_tokens,
+            response_mime_type="text/plain",
+        )
+
+
+        response = gemini_client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=generate_content_config
+        )
+        return response.text.strip()
+    else:
+        raise ValueError(f"Unsupported model: {model}")
+
+def generate_subqueries(initial_query: str, model: str = SUBQUERY_MODEL) -> List[str]:
+    """
+    Generate a set of expanded or alternative queries based on the original query.
+    """
+    n_queries=5
+    prompt = (
+        f"You are an assistant tasked with expanding a user's academic query to retrieve more context. "
+        f"Based on the original question, provide a list of {n_queries} expanded or alternative queries that capture different aspects or keywords. Just return the questions in a list, nothing else.\n\n"
+        f"Original Query: {initial_query}\nPlease provide a list of expanded queries."
+    )
+    
+    response_text = generate_llm_response(prompt, max_tokens=150, temperature=0.7, model=model)
+    subqueries = [line.strip("- ").strip() for line in response_text.split("\n") if line.strip()]
+    return subqueries
+
+def retrieve_chunks_for_query(query: str, db_path: str, top_k: int) -> List[dict]:
+    """
+    Retrieve the top-K chunks from the database relevant to a given query,
+    including deep linking metadata.
     """
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT c.chunk_number, c.text, c.context, c.contextualized_text, c.embedding, d.file_name, d.processing_date
+        SELECT
+            c.chunk_number,
+            c.start_token,
+            c.end_token,
+            c.text,
+            c.context,
+            c.contextualized_text,
+            c.embedding,
+            d.file_name,
+            d.processing_date
         FROM chunks c
         JOIN documents d ON c.doc_id = d.doc_id
         """
@@ -264,93 +375,138 @@ def query_index(query: str, db_path: str, top_k: int = DEFAULT_TOP_K) -> str:
     conn.close()
 
     if not rows:
-        return "No chunks found in the database. Please index a document first."
+        return []
 
-    # Reconstruct embeddings and metadata.
     chunks = []
     embedding_list = []
     for row in rows:
-        chunk_number, text, context, contextualized_text, embedding_blob, file_name, processing_date = row
+        (chunk_number, start_token, end_token, text, context,
+         contextualized_text, embedding_blob, file_name, processing_date) = row
         embedding = pickle.loads(embedding_blob)
         embedding_list.append(embedding)
         chunks.append({
             "chunk_number": chunk_number,
+            "start_token": start_token,
+            "end_token": end_token,
             "text": text,
             "context": context,
             "contextualized_text": contextualized_text,
             "file_name": file_name,
             "processing_date": processing_date
         })
-
     embedding_matrix = np.vstack(embedding_list)
-
     query_vec = get_openai_embedding(query)
-
     similarities = cosine_similarity(query_vec, embedding_matrix)
-
-    # Get the top_k chunks.
     top_indices = np.argsort(similarities)[::-1][:top_k]
     retrieved_chunks = [chunks[i] for i in top_indices]
-    
-    # Log retrieved chunks information to terminal
-    print("\n=== Retrieved Chunks ===")
-    for i, idx in enumerate(top_indices):
-        print(f"{i+1}. File: '{chunks[idx]['file_name']}', Chunk: {chunks[idx]['chunk_number']}, Similarity: {similarities[idx]:.3f}")
-    print("=====================\n")
+    return retrieved_chunks
 
-    answer = simulate_generation(query, retrieved_chunks)
-    return answer
-
-def generate_answer(query: str, retrieved_chunks: str) -> str:
+def generate_answer(query: str, combined_context: str, retrieved_chunks: List[dict],
+                    model: str = CHAT_MODEL) -> str:
     """
-    Generate an answer to the user query using the retrieved chunks as context.
+    Generate an answer to the user query using the provided combined context,
+    embedding deep link metadata so the user can see precisely where each chunk came from.
     """
-    combined_context = retrieved_chunks 
+    references = "\n".join(
+        f"- {chunk['file_name']} [chunk #{chunk['chunk_number']}, tokens {chunk['start_token']}–{chunk['end_token']}]"
+        for chunk in retrieved_chunks
+    )
     prompt = (
         f"Answer the following question using only the provided context. If the context does not contain enough information, say so.\n\n"
         f"Context:\n{combined_context}\n\n"
         f"Question: {query}\n\n"
-        f"Answer:"
+        f"Please include references in your answer using the format [Source: filename, chunk number, token range].\n"
+        f"\nSources:\n{references}\n"
+        f"\nAnswer:"
     )
+
+    # wrap the prompt to a txt file
+    with open('prompt.txt', 'w', encoding='utf-8') as f:
+        f.write(prompt)
     
-    response = client.chat.completions.create(
-        model=CHAT_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a helpful assistant that answers questions based on the provided context. Every argument or statement should have a reference to the file where it came from."
-            },
-            {"role": "user", "content": prompt}
-        ],
-        max_tokens=16384,
-        temperature=0.7,
+    return generate_llm_response(prompt, max_tokens=16384, temperature=1, model=model)
+
+def iterative_rag_query(initial_query: str, db_path: str, top_k: int = DEFAULT_TOP_K,
+                        subquery_model: str = SUBQUERY_MODEL,
+                        answer_model: str = CHAT_MODEL) -> str:
+    """
+    Implements the iterative retrieval process with deep linking:
+      1. Generate subqueries from the original query using the specified model.
+      2. Retrieve chunks for each subquery.
+      3. Deduplicate and combine the retrieved contexts.
+      4. Generate the final answer using the original query and aggregated context with the specified model.
+    """
+    subqueries = generate_subqueries(initial_query, model=subquery_model)
+    print("Generated subqueries:")
+    for idx, subq in enumerate(subqueries, 1):
+        print(f"  {idx}. {subq}")
+    
+    all_retrieved_chunks = []
+    for subq in subqueries:
+        retrieved = retrieve_chunks_for_query(subq, db_path, top_k)
+        all_retrieved_chunks.extend(retrieved)
+    
+    if not all_retrieved_chunks:
+        return "No relevant chunks found in the database. Please index a document first."
+
+    # Deduplicate chunks using file name and chunk number as unique key.
+    unique_chunks: Dict[tuple, Dict[str, Any]] = {
+        (chunk["file_name"], chunk["chunk_number"]): chunk 
+        for chunk in all_retrieved_chunks
+    }
+    unique_chunks_list: List[Dict[str, Any]] = list(unique_chunks.values())
+    print(f"Retrieved {len(unique_chunks_list)} unique chunks.")
+    print("\n=== Unique Retrieved Chunks ===")
+    for i, chunk in enumerate(unique_chunks_list, 1):
+        print(f"{i}. File: '{chunk['file_name']}', Chunk: {chunk['chunk_number']}")
+    print("=====================\n")
+    
+    combined_context = "\n====\n".join(
+        f"Context for chunk {chunk['chunk_number']} from '{chunk['file_name']}':\n"
+        f"{chunk.get('contextualized_text', chunk.get('text', ''))}\n(Date: {chunk['processing_date']})"
+        for chunk in unique_chunks_list
     )
-    answer = response.choices[0].message.content.strip()
+    # Optionally, save combined context to a file.
+    with open('combined_context.txt', 'w', encoding='utf-8') as f:
+        f.write(combined_context)
+
+    answer = generate_answer(initial_query, combined_context, unique_chunks_list, model=answer_model)
+    return answer
+
+def query_index(query: str, db_path: str, top_k: int = DEFAULT_TOP_K) -> str:
+    """
+    (Legacy) Query the database using the original query and return a simulated answer,
+    including deep linking references.
+    """
+    retrieved_chunks = retrieve_chunks_for_query(query, db_path, top_k)
+    if not retrieved_chunks:
+        return "No chunks found in the database. Please index a document first."
+    print("\n=== Retrieved Chunks ===")
+    for i, chunk in enumerate(retrieved_chunks, 1):
+        print(f"{i}. File: '{chunk['file_name']}', Chunk: {chunk['chunk_number']}")
+    print("=====================\n")
+    answer = simulate_generation(query, retrieved_chunks)
     return answer
 
 # ---------------------------
 # Main CLI
 # ---------------------------
 def main():
-    test = True  # Set to False for production mode
-    import argparse
-
+    test = False  # Set to False for production mode
+    max_tokens = DEFAULT_MAX_TOKENS
+    overlap = DEFAULT_OVERLAP
     if test:
         print("Test mode enabled")
         args = argparse.Namespace()
         args.db_path = "chunks.db"
         args.mode = "index"
-        args.folder_path = "extracted_texts/paper_2_intro" # None
-        args.document_path = None#"extracted_texts/paper_2_intro/Buskop et al. - 2024 - Amplifying exploration of regional climate risks .txt"
-        args.query = "Buskop et al introduces a multi model plausibilistic framework for regional climate risk assessment. What are the key components of this framework and what have other storyline papers approached the creation of storylines?"	
-        args.top_k = 20
-        
-        # Force the correct value from the environment variable
-        max_tokens = int(os.environ.get("DEFAULT_MAX_TOKENS", "300"))
-        overlap = int(os.environ.get("DEFAULT_OVERLAP", "20"))
+        args.folder_path = "extracted_texts/test"  # For folder indexing
+        args.document_path = None  # Or set a specific file path
+        args.query = "How do cascading risks work?"
+        args.top_k = DEFAULT_TOP_K
     else:
         parser = argparse.ArgumentParser(
-            description="RAG Script with Database Storage: Index a document or query the database"
+            description="RAG Script with Deep Linking: Index a document/folder or query the database"
         )
         parser.add_argument("--mode", choices=["index", "query"], required=True,
                             help="Mode: index a document/folder or query the database")
@@ -366,14 +522,12 @@ def main():
                             help="Number of top chunks to retrieve (for query mode)")
         args = parser.parse_args()
 
-    # Ensure OpenAI API key is set.
     if not OPENAI_API_KEY:
         raise EnvironmentError("Please set the OPENAI_API_KEY in config.py or as an environment variable.")
 
     if args.mode == "index":
         if not args.document_path and not args.folder_path:
-            raise ValueError("For indexing, you must provide either --document_path or --folder_path.")
-
+            raise ValueError("For indexing, provide either --document_path or --folder_path.")
         if args.folder_path:
             if not os.path.isdir(args.folder_path):
                 raise ValueError(f"Folder path '{args.folder_path}' does not exist or is not a directory.")
@@ -382,31 +536,22 @@ def main():
                     if file.endswith(".txt"):
                         file_path = os.path.join(root, file)
                         print(f"Indexing file: {file_path}")
-                        index_document(file_path, args.db_path, max_tokens=DEFAULT_MAX_TOKENS, overlap=DEFAULT_OVERLAP)
+                        index_document(file_path, args.db_path, max_tokens=max_tokens, overlap=overlap)
         else:
-            # Force use of the correct values for testing
-            if test:
-                max_tokens = int(os.environ.get("DEFAULT_MAX_TOKENS", "300"))
-                overlap = int(os.environ.get("DEFAULT_OVERLAP", "20"))
-                index_document(args.document_path, args.db_path, max_tokens=max_tokens, overlap=overlap)
-            else:
-                index_document(args.document_path, args.db_path, max_tokens=DEFAULT_MAX_TOKENS, overlap=DEFAULT_OVERLAP)
+            index_document(args.document_path, args.db_path, max_tokens=max_tokens, overlap=overlap)
 
     elif args.mode == "query":
         if not args.query:
             raise ValueError("Query must be provided in query mode.")
-        answer = query_index(args.query, args.db_path, top_k=args.top_k)
+        final_answer = iterative_rag_query(args.query, args.db_path, top_k=args.top_k)
         print("\n=== Final Answer ===")
-        print(answer)
+        print(final_answer)
 
-    # Optional test mode: if test is enabled, you can run an indexing and query cycle.
     if test and args.mode == "index":
-        print("\nRunning test query after indexing...")
-        args.mode = "query"
-        relevant_chunks = query_index(args.query, args.db_path, top_k=args.top_k)
-        answer = generate_answer(args.query, relevant_chunks)
+        print("\nRunning test iterative query after indexing...")
+        final_answer = iterative_rag_query(args.query, args.db_path, top_k=args.top_k)
         print("\n=== Final Answer ===")
-        print(answer)
+        print(final_answer)
 
 if __name__ == "__main__":
     main()
