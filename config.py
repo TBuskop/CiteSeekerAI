@@ -11,8 +11,11 @@ load_dotenv(override=True)  # Force override of existing environment variables
 
 # OpenAI API configuration
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-ada-002")
-CHAT_MODEL = os.getenv("CHAT_MODEL", "gpt-3.5-turbo")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
+CHUNK_CONTEXT_MODEL = os.getenv("CHUNK_CONTEXT_MODEL")
+SUBQUERY_MODEL = os.getenv("SUBQUERY_MODEL")
+CHAT_MODEL = os.getenv("CHAT_MODEL")
 
 # Chunking configuration - explicitly force the correct default value if not found
 DEFAULT_MAX_TOKENS = int(os.environ.get("DEFAULT_MAX_TOKENS", "300"))
