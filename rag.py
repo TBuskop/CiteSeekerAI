@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-rag_deeplinking.py
+rag.py
 
 A Retrieval-Augmented Generation (RAG) script with deep linking that:
   1. Reads a given .txt document.
@@ -17,10 +17,10 @@ A Retrieval-Augmented Generation (RAG) script with deep linking that:
      
 Usage:
   # To index a document:
-  python rag_deeplinking.py --mode index --document_path path/to/document.txt --db_path chunks.db
+  python rag.py --mode index --document_path path/to/document.txt --db_path chunks.db
 
   # To query iteratively:
-  python rag_deeplinking.py --mode query --query "What was ACME's Q2 2023 revenue?" --db_path chunks.db --top_k 5
+  python rag.py --mode query --query "What was ACME's Q2 2023 revenue?" --db_path chunks.db --top_k 5
 """
 
 import os
@@ -491,7 +491,9 @@ def iterative_rag_query(initial_query: str, db_path: str, top_k: int = DEFAULT_T
     with open('combined_context.txt', 'w', encoding='utf-8') as f:
         f.write(combined_context)
 
-    answer = generate_answer(initial_query, combined_context, unique_chunks_list, model=answer_model)
+    combined_query = f"{initial_query}\n\nSubqueries:\n" + "\n".join(subqueries)
+
+    answer = generate_answer(combined_query, combined_context, unique_chunks_list, model=answer_model)
     return answer
 
 def query_index(query: str, db_path: str, top_k: int = DEFAULT_TOP_K) -> str:
@@ -513,7 +515,7 @@ def query_index(query: str, db_path: str, top_k: int = DEFAULT_TOP_K) -> str:
 # Main CLI
 # ---------------------------
 def main():
-    test = True  # Set to False for production mode
+    test = False  # Set to False for production mode
     max_tokens = DEFAULT_MAX_TOKENS
     overlap = DEFAULT_OVERLAP
     if test:
