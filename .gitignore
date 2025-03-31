@@ -1,5 +1,6 @@
 .env
 /extracted_texts
+/cleaned_text
 /merged_texts
 /pdfs
 /__pycache__
@@ -12,3 +13,5 @@ llm_connection.ipynb
 chunks.db-journal
 prompt.txt
 .gitignore
+/chunk_database
+final_prompt.txt
