@@ -27,3 +27,10 @@ OUTPUT_EMBEDDING_DIMENSION= int(os.getenv("OUTPUT_EMBEDDING_DIMENSION", "768"))
 
 # Query configuration
 DEFAULT_TOP_K = int(os.getenv("DEFAULT_TOP_K", "5"))
+
+# --- Re-ranker Configuration ---
+# Model examples: 'cross-encoder/ms-marco-MiniLM-L-6-v2', 'cross-encoder/ms-marco-TinyBERT-L-2-v2'
+# Or set to None to disable re-ranking
+RERANKER_MODEL = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+# Number of candidates to fetch *before* re-ranking
+DEFAULT_RERANK_CANDIDATE_COUNT = int(os.getenv("DEFAULT_RERANK_CANDIDATE_COUNT", "100"))

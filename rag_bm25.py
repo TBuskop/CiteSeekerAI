@@ -58,6 +58,13 @@ from google import genai
 from google.genai.types import EmbedContentConfig
 import traceback # For more detailed error logging
 
+try:
+    from sentence_transformers import CrossEncoder
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    print("Warning: sentence-transformers not installed (`pip install sentence-transformers`). Re-ranking will be disabled.")
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
+    CrossEncoder = None # Define as None to avoid NameError
 
 # Removed: multiprocessing, functools
 import time # For embed delay
@@ -96,6 +103,8 @@ from config import (
     DEFAULT_CONTEXT_LENGTH,
     DEFAULT_TOP_K,
     OUTPUT_EMBEDDING_DIMENSION,
+    RERANKER_MODEL,
+    DEFAULT_RERANK_CANDIDATE_COUNT,
 )
 
 
@@ -778,6 +787,88 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
 
     return final_results
 
+# Global cache for the reranker model
+reranker_model_cache = {}
+
+def rerank_chunks(query: str, chunks: List[Dict], model_name: Optional[str], top_n: int) -> List[Dict]:
+    """
+    Re-ranks a list of chunk dictionaries based on relevance to the query using a cross-encoder.
+
+    Args:
+        query: The original query string.
+        chunks: A list of candidate chunk dictionaries (must contain 'text' or 'contextualized_text').
+        model_name: The name of the CrossEncoder model (e.g., 'cross-encoder/ms-marco-MiniLM-L-6-v2')
+                    or None to disable re-ranking.
+        top_n: The final number of chunks to return after re-ranking.
+
+    Returns:
+        A list of chunk dictionaries sorted by the re-ranker score (highest first), limited to top_n.
+        Returns the original chunks (limited to top_n) if re-ranking is disabled or fails.
+    """
+    if not model_name or not SENTENCE_TRANSFORMERS_AVAILABLE or not CrossEncoder or not chunks:
+        if model_name and not SENTENCE_TRANSFORMERS_AVAILABLE:
+             print("Info: Re-ranking skipped (sentence-transformers not installed).")
+        # Return top_n based on original order (likely RRF score if applicable)
+        return sorted(chunks, key=lambda c: c.get('rrf_score', 0.0), reverse=True)[:top_n]
+
+    print(f"--- Re-ranking top {len(chunks)} candidates using {model_name} ---")
+
+    try:
+        # Load model from cache or instantiate
+        if model_name not in reranker_model_cache:
+            print(f"Loading re-ranker model: {model_name}...")
+            # Consider adding model_args={'device': 'cuda'} if GPU is available
+            reranker_model_cache[model_name] = CrossEncoder(model_name)
+            print("Re-ranker model loaded.")
+        model = reranker_model_cache[model_name]
+
+        # Prepare query-chunk pairs for the model
+        query_chunk_pairs = []
+        valid_chunks_for_reranking = [] # Store chunks that have valid text
+        for chunk in chunks:
+            # Prioritize contextualized text if available, fall back to raw text
+            text_to_rank = chunk.get('contextualized_text', chunk.get('text', ''))
+            if text_to_rank and isinstance(text_to_rank, str) and text_to_rank.strip():
+                query_chunk_pairs.append([query, text_to_rank.strip()])
+                valid_chunks_for_reranking.append(chunk)
+            else:
+                print(f"Warning: Skipping chunk {chunk.get('file_hash', '')}_{chunk.get('chunk_number', '?')} for re-ranking due to missing/empty text.")
+
+        if not valid_chunks_for_reranking:
+            print("Warning: No valid chunks found to re-rank.")
+            return sorted(chunks, key=lambda c: c.get('rrf_score', 0.0), reverse=True)[:top_n] # Fallback
+
+        # Get scores from the cross-encoder
+        scores = model.predict(query_chunk_pairs, show_progress_bar=False) # Set show_progress_bar=True for large batches
+
+        # Add scores to the valid chunks
+        for i, chunk in enumerate(valid_chunks_for_reranking):
+            chunk['rerank_score'] = float(scores[i]) # Ensure it's a float
+
+        # Sort the valid chunks by the new rerank_score (higher is better)
+        reranked_chunks = sorted(valid_chunks_for_reranking, key=lambda c: c['rerank_score'], reverse=True)
+
+        # Add back any chunks that were skipped (e.g., empty text), placing them at the end
+        skipped_chunk_ids = {f"{c.get('file_hash')}_{c.get('chunk_number')}" for c in valid_chunks_for_reranking}
+        original_chunk_ids = {f"{c.get('file_hash')}_{c.get('chunk_number')}" for c in chunks}
+        missing_ids = original_chunk_ids - skipped_chunk_ids
+        if missing_ids:
+             print(f"Adding {len(missing_ids)} chunks skipped during re-ranking back to the end of the list.")
+             for chunk in chunks:
+                 chunk_id = f"{chunk.get('file_hash')}_{chunk.get('chunk_number')}"
+                 if chunk_id in missing_ids:
+                     chunk['rerank_score'] = -float('inf') # Ensure they appear last if sorted later
+                     reranked_chunks.append(chunk)
+
+        print(f"Re-ranking complete. Returning top {top_n} based on cross-encoder scores.")
+        return reranked_chunks[:top_n]
+
+    except Exception as e:
+        print(f"!!! Error during re-ranking with {model_name}: {e}")
+        print(traceback.format_exc())
+        print("Warning: Falling back to original chunk order (before re-ranking).")
+        # Fallback: return top_n based on the order they came in (likely RRF sorted)
+        return sorted(chunks, key=lambda c: c.get('rrf_score', 0.0), reverse=True)[:top_n]
 
 # --- Subquery and Answer Generation ---
 def generate_subqueries(initial_query: str, model: str = SUBQUERY_MODEL) -> List[str]:
@@ -871,14 +962,20 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
 def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
                         top_k: int = DEFAULT_TOP_K,
                         subquery_model: str = SUBQUERY_MODEL,
-                        answer_model: str = CHAT_MODEL) -> str:
-    """Iterative RAG with HYBRID retrieval (Vector + BM25 + RRF)."""
+                        answer_model: str = CHAT_MODEL,
+                        reranker_model: Optional[str] = RERANKER_MODEL, # Use config default
+                        rerank_candidate_count: int = DEFAULT_RERANK_CANDIDATE_COUNT) -> str: # Use config default
+    """Iterative RAG with HYBRID retrieval (Vector + BM25 + RRF) and optional Re-ranking."""
     # 1. Generate Queries
+    # --- *** FIX: Initialize all_queries HERE, before the if/else *** ---
     all_queries = [initial_query]
+    # --------------------------------------------------------------------
+
     # Ensure subquery model client is available (uses main process)
-    if not gemini_client:
+    if not gemini_client: # Adjust client check if using different model provider
         print(f"Warning: Client for subquery model '{subquery_model}' not available. Using only initial query.")
     else:
+        # ... (existing logic to generate and print subqueries) ...
         generated_subqueries = generate_subqueries(initial_query, model=subquery_model)
         if generated_subqueries and generated_subqueries != [initial_query]:
             print("--- Generated Subqueries ---")
@@ -886,25 +983,25 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
             all_queries.extend(generated_subqueries)
         else: print("--- Using only the initial query (no distinct subqueries generated) ---")
 
+
     # 2. Retrieve Chunks (Hybrid) for all queries
     vector_results_all, bm25_results_all = [], []
-    fetch_k = max(top_k, int(top_k * 1.5)) # Fetch more candidates for RRF
+    # Determine how many candidates to fetch initially for reranking
+    fetch_k = rerank_candidate_count if reranker_model and SENTENCE_TRANSFORMERS_AVAILABLE else max(top_k, int(top_k * 1.5))
+    print(f"\n--- Retrieving Top {fetch_k} Initial Candidates (Hybrid Vector + BM25) ---")
 
-    print("\n--- Retrieving Chunks (Hybrid Vector + BM25) ---")
     # Ensure embedding client is available for query embedding (uses main process)
-    if not gemini_client:
+    if not gemini_client: # Adjust client check if necessary
          return f"Error: Client for embedding model '{EMBEDDING_MODEL}' needed for query is not available."
 
     for q_idx, current_query in enumerate(all_queries):
          print(f"  Querying ({q_idx+1}/{len(all_queries)}): \"{current_query[:100]}...\"")
-         # retrieve_chunks_for_query embeds the query
          vector_results_all.extend(retrieve_chunks_for_query(current_query, db_path, collection_name, fetch_k))
-         # retrieve_chunks_bm25 uses the loaded index
          bm25_results_all.extend(retrieve_chunks_bm25(current_query, db_path, collection_name, fetch_k))
 
     # 3. Deduplicate and Combine using RRF
-    print(f"\n--- Combining {len(vector_results_all)} Vector & {len(bm25_results_all)} BM25 candidate results ---")
-
+    print(f"\n--- Combining {len(vector_results_all)} Vector & {len(bm25_results_all)} BM25 candidate results via RRF ---")
+    # ... (keep existing deduplication logic) ...
     # Deduplicate vector results (keep best score/lowest distance for each unique chunk ID)
     deduped_vector_results_dict: Dict[str, Dict] = {}
     for chunk_meta in vector_results_all:
@@ -913,7 +1010,6 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
         if file_hash is None or chunk_number is None: continue
         chunk_id = f"{file_hash}_{chunk_number}"
         current_dist = chunk_meta.get('distance', float('inf'))
-        # Keep the one with the smallest distance if ID collision occurs
         if chunk_id not in deduped_vector_results_dict or current_dist < deduped_vector_results_dict[chunk_id].get('distance', float('inf')):
              deduped_vector_results_dict[chunk_id] = chunk_meta
     deduped_vector_results = list(deduped_vector_results_dict.values())
@@ -923,51 +1019,75 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
     for chunk_id, score in bm25_results_all:
          if chunk_id and (chunk_id not in deduped_bm25_results_dict or score > deduped_bm25_results_dict[chunk_id]):
               deduped_bm25_results_dict[chunk_id] = score
-    deduped_bm25_results = list(deduped_bm25_results_dict.items()) # List of (id, score)
+    deduped_bm25_results = list(deduped_bm25_results_dict.items())
 
     print(f"Unique Vector candidates: {len(deduped_vector_results)}, Unique BM25 candidates: {len(deduped_bm25_results)}")
 
-    # Combine using RRF
-    unique_chunks_list = combine_results_rrf(
+    # Combine using RRF - Get up to fetch_k combined results for potential reranking
+    combined_chunks_rrf = combine_results_rrf(
         deduped_vector_results, deduped_bm25_results, db_path, collection_name
     )
-    unique_chunks_list = unique_chunks_list[:top_k] # Limit to final top_k
+    combined_chunks_rrf = combined_chunks_rrf[:fetch_k] # Limit to candidates for reranking
 
-    if not unique_chunks_list:
-        return "No relevant chunks found in the database using hybrid iterative search."
+    # ---------------------------------------------
+    # 3.5. *** OPTIONAL RE-RANKING STEP ***
+    # ---------------------------------------------
+    if reranker_model and SENTENCE_TRANSFORMERS_AVAILABLE:
+         final_chunks_list = rerank_chunks(
+             initial_query, # Re-rank based on the *original* query
+             combined_chunks_rrf,
+             reranker_model,
+             top_k # Return the final desired number of chunks
+         )
+    else:
+         # If no reranker, just take the top_k from RRF results
+         final_chunks_list = combined_chunks_rrf[:top_k]
+         if reranker_model: # Only print warning if reranker was configured but unavailable
+              print("Info: Skipping re-ranking step.")
+    # ---------------------------------------------
+
+    if not final_chunks_list:
+        return "No relevant chunks found after retrieval and potential re-ranking."
 
     # 4. Process Final Chunks & Generate Context
-    print(f"\n--- Processing Top {len(unique_chunks_list)} Combined Chunks ---")
+    # Sort by final score (rerank or rrf) for context generation consistency
+    final_chunks_list.sort(key=lambda c: c.get('rerank_score', c.get('rrf_score', 0.0)), reverse=True)
+
+    print(f"\n--- Processing Top {len(final_chunks_list)} Final Chunks for Context ---")
     combined_context = "\n\n---\n\n".join(
         f"Source Document: {chunk.get('file_name', 'N/A')}\n"
         f"Source Chunk Number: {chunk.get('chunk_number', '?')}\n"
         # Use contextualized text if available, otherwise fall back to raw text
         f"Content:\n{chunk.get('contextualized_text', chunk.get('text', ''))}"
-        for chunk in unique_chunks_list
+        for chunk in final_chunks_list
     )
-    # Optional: Save combined context for debugging
-    # try: with open('combined_context_iterative.txt', 'w', encoding='utf-8') as f: f.write(combined_context)
-    # except Exception as e: print(f"Warning: Could not write combined_context_iterative.txt: {e}")
+    # ... (optional save combined context) ...
 
     # 5. Generate Final Answer
     print("\n--- Generating Final Answer (Iterative Hybrid Retrieval) ---")
     # Ensure answer model client is available (uses main process)
-    if not gemini_client:
+    if not gemini_client: # Adjust client check if necessary
         return f"Error: Client for answer model '{answer_model}' is not available."
 
-    final_answer = generate_answer(initial_query, combined_context, unique_chunks_list, model=answer_model)
+    final_answer = generate_answer(initial_query, combined_context, final_chunks_list, model=answer_model)
     return final_answer
 
 def query_index(query: str, db_path: str, collection_name: str,
-                top_k: int = DEFAULT_TOP_K, answer_model: str = CHAT_MODEL) -> str:
-    """Direct query using HYBRID retrieval (Vector + BM25 + RRF)."""
+                top_k: int = DEFAULT_TOP_K,
+                answer_model: str = CHAT_MODEL,
+                reranker_model: Optional[str] = RERANKER_MODEL, # Use config default
+                rerank_candidate_count: int = DEFAULT_RERANK_CANDIDATE_COUNT) -> str: # Use config default
+    """Direct query using HYBRID retrieval (Vector + BM25 + RRF) and optional Re-ranking."""
     print(f"--- Running Direct Hybrid Query ---")
     print(f"Query: {query}")
-    fetch_k = max(top_k, int(top_k * 1.5)) # Fetch more candidates
+
+    # Determine how many candidates to fetch initially for reranking
+    fetch_k = rerank_candidate_count if reranker_model and SENTENCE_TRANSFORMERS_AVAILABLE else max(top_k, int(top_k * 1.5))
+    print(f"Retrieving Top {fetch_k} initial candidates...")
 
     # 1. Retrieve Chunks (Hybrid)
     # Ensure embedding client is available (uses main process)
-    if not gemini_client:
+    if not gemini_client: # Adjust client check if necessary
          return f"Error: Client for embedding model '{EMBEDDING_MODEL}' needed for query is not available."
 
     vector_results = retrieve_chunks_for_query(query, db_path, collection_name, fetch_k)
@@ -975,33 +1095,52 @@ def query_index(query: str, db_path: str, collection_name: str,
     print(f"Retrieved {len(vector_results)} vector candidates, {len(bm25_results)} BM25 candidates.")
 
     # 2. Combine using RRF
-    unique_chunks_list = combine_results_rrf(
+    print("Combining via RRF...")
+    combined_chunks_rrf = combine_results_rrf(
         vector_results, bm25_results, db_path, collection_name
     )
-    unique_chunks_list = unique_chunks_list[:top_k] # Limit to final top_k
+    combined_chunks_rrf = combined_chunks_rrf[:fetch_k] # Limit to candidates for reranking
 
-    if not unique_chunks_list:
-        return "No relevant chunks found in the database using direct hybrid search."
+    # ---------------------------------------------
+    # 2.5. *** OPTIONAL RE-RANKING STEP ***
+    # ---------------------------------------------
+    if reranker_model and SENTENCE_TRANSFORMERS_AVAILABLE:
+         final_chunks_list = rerank_chunks(
+             query, # Re-rank based on the query
+             combined_chunks_rrf,
+             reranker_model,
+             top_k # Return the final desired number of chunks
+         )
+    else:
+         # If no reranker, just take the top_k from RRF results
+         final_chunks_list = combined_chunks_rrf[:top_k]
+         if reranker_model: # Only print warning if reranker was configured but unavailable
+             print("Info: Skipping re-ranking step.")
+    # ---------------------------------------------
+
+    if not final_chunks_list:
+        return "No relevant chunks found after retrieval and potential re-ranking."
 
     # 3. Process Final Chunks & Generate Context
-    print(f"\n--- Processing Top {len(unique_chunks_list)} Combined Chunks (Direct Query) ---")
+    # Sort by final score (rerank or rrf) for context generation consistency
+    final_chunks_list.sort(key=lambda c: c.get('rerank_score', c.get('rrf_score', 0.0)), reverse=True)
+
+    print(f"\n--- Processing Top {len(final_chunks_list)} Final Chunks (Direct Query) ---")
     combined_context = "\n\n---\n\n".join(
         f"Source Document: {chunk.get('file_name', 'N/A')}\n"
         f"Source Chunk Number: {chunk.get('chunk_number', '?')}\n"
         f"Content:\n{chunk.get('contextualized_text', chunk.get('text', ''))}"
-        for chunk in unique_chunks_list
+        for chunk in final_chunks_list
     )
-    # Optional: Save combined context for debugging
-    # try: with open('direct_query_context.txt', 'w', encoding='utf-8') as f: f.write(combined_context)
-    # except Exception as e: print(f"Warning: Could not write direct_query_context.txt: {e}")
+    # ... (optional save context) ...
 
     # 4. Generate Final Answer
     print("\n--- Generating Final Answer (Direct Hybrid Query) ---")
-     # Ensure answer model client is available (uses main process)
-    if not gemini_client:
+    # Ensure answer model client is available (uses main process)
+    if not gemini_client: # Adjust client check if necessary
         return f"Error: Client for answer model '{answer_model}' is not available."
 
-    answer = generate_answer(query, combined_context, unique_chunks_list, model=answer_model)
+    answer = generate_answer(query, combined_context, final_chunks_list, model=answer_model)
     return answer
 
 def setup_test_mode(test_folder="cleaned_text/test_docs", test_db_path="chunk_database/test_rag_db", test_collection="test_collection", query="what color are apples?"):
@@ -1033,7 +1172,7 @@ def get_test_args(phase, query, test_folder, test_db_path, test_collection, top_
 def parse_arguments(test_mode_enabled=True):
     """Parses command-line arguments, handling test mode overrides."""
     parser = argparse.ArgumentParser(
-        description="RAG Script (Two-Phase Indexing: index -> embed). Handles .txt files sequentially.",
+        description="RAG Script (Two-Phase Indexing + Optional Reranking).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument("--mode", required=True, choices=["index", "embed", "query", "query_direct"],
