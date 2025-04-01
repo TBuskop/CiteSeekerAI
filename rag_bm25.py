@@ -495,7 +495,7 @@ def generate_llm_response(prompt: str, max_tokens: int, temperature: float = 1, 
             max_tokens=max_tokens,
         )
         return response.choices[0].message.content.strip()
-    elif model.lower() in ["gemini-2.0-flash", "gemini-2.0-flash-lite"]:
+    elif model.lower() in ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-8b"]:
         generate_content_config = genai.types.GenerateContentConfig(
             temperature=temperature,
             max_output_tokens=max_tokens,
