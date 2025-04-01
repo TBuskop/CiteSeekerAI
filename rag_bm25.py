@@ -327,15 +327,34 @@ def generate_chunk_context(document: str, chunk: str, token_limit: int = 30000,
         print(f"Truncating document for context generation (limit: {token_limit} tokens)")
         document = truncate_text(document, token_limit) # Use default model for truncating
 
-    prompt = (
-        f"<document>\n{document}\n</document>\n\n"
-        f"Here is a specific chunk from the document above:\n"
-        f"<chunk>\n{chunk}\n</chunk>\n\n"
-        "Provide a very short, succinct context (1-2 sentences maximum) that describes the immediate topic or section surrounding this chunk within the overall document. "
-        "This context is intended to help improve search retrieval for the chunk later. "
-        "Focus only on the local context. Do not summarize the chunk itself. "
-        "Answer ONLY with the succinct context itself, without any preamble like 'Context:'."
-    )
+    prompt = f"""
+        You are an AI assistant tasked with generating contextual metadata for text chunks to improve semantic search performance.
+
+        **Provided Document:**
+        <document>
+        {document}
+        </document>
+
+        **Chunk Requiring Context:**
+        <chunk>
+        {chunk}
+        </chunk>
+
+        **Instructions:**
+        1. Read the entire **Provided Document**.
+        2. Locate the **Chunk Requiring Context** within the document.
+        3. Determine the primary subject or theme being discussed in the immediate vicinity of the chunk (the surrounding paragraphs or section). Think about the heading or topic this chunk falls under.
+        4. Synthesize this surrounding subject into a highly succinct contextual description (maximum 1-2 sentences).
+        5. This description should act as a high-level "topic tag" or "situational context" for the chunk.
+
+        **Critical Requirements:**
+        - The description MUST focus on the **surrounding context**, NOT the specific details within the chunk itself. Do NOT summarize the chunk.
+        - The output MUST be **only** the 1-2 sentence contextual description. No extra text, explanations, or labels like "Context:".
+
+        **Example Scenario:** If the chunk discusses a specific algorithm like 'Adam Optimizer', but it's located in a section about 'Training Deep Learning Models', a good context might be: "Discussing optimization algorithms for training deep learning models." A bad context would be: "Explains the Adam optimization algorithm."
+
+        **Generated Contextual Description (Output Only):**
+        """
 
     try:
         # Ensure context_length is reasonable
