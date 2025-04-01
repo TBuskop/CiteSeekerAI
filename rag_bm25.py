@@ -977,16 +977,37 @@ def query_index(query: str, db_path: str, collection_name: str,
     answer = generate_answer(query, combined_context, unique_chunks_list, model=answer_model)
     return answer
 
-# ---------------------------
-# Main CLI
-# ---------------------------
-def main():
-    test_mode_enabled = True # Set to True for simplified test runs
+def setup_test_mode(test_folder="cleaned_text/test_docs", test_db_path="test_rag_db", test_collection="test_collection", query="what color are apples?"):
+    """Creates test directory and dummy files if needed."""
+    print("--- Running in Test Mode ---")
+    os.makedirs(test_folder, exist_ok=True)
+    if not os.listdir(test_folder):
+        with open(os.path.join(test_folder, "test1.txt"), "w") as f: f.write("Red apples are sweet. BM25 scores terms.")
+        with open(os.path.join(test_folder, "test2.txt"), "w") as f: f.write("Vector search finds similar concepts like fruit.")
+        print("Created dummy test files.")
+    return query, test_folder, test_db_path, test_collection
+
+def get_test_args(phase, query, test_folder, test_db_path, test_collection, top_k=3):
+    """Returns the argument list for a specific test phase."""
+    if phase == "index":
+        print("\n--- TEST PHASE: INDEX ---")
+        return ["--mode", "index", "--folder_path", test_folder, "--db_path", test_db_path, "--collection_name", test_collection, "--force_reindex"]
+    elif phase == "embed":
+        print("\n--- TEST PHASE: EMBED ---")
+        return ["--mode", "embed", "--db_path", test_db_path, "--collection_name", test_collection]
+    elif phase == "query":
+        print("\n--- TEST PHASE: QUERY ---")
+        return ["--mode", "query", "--query", query, "--db_path", test_db_path, "--collection_name", test_collection, "--top_k", str(top_k)]
+    else: # Default to index if phase unknown
+        print("\n--- TEST PHASE: INDEX (Default) ---")
+        return ["--mode", "index", "--folder_path", test_folder, "--db_path", test_db_path, "--collection_name", test_collection]
+
+def parse_arguments(test_mode_enabled=True):
+    """Parses command-line arguments, handling test mode overrides."""
     parser = argparse.ArgumentParser(
         description="RAG Script (Two-Phase Indexing: index -> embed). Handles .txt files sequentially.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    # ADD ARGUMENTS TO THE PARSER AS BEFORE
     parser.add_argument("--mode", required=True, choices=["index", "embed", "query", "query_direct"],
                         help="'index': Chunk files, store raw data, build BM25. "
                              "'embed': Generate embeddings for stored chunks lacking them. "
@@ -1006,56 +1027,22 @@ def main():
     parser.add_argument("--embed_delay", type=float, default=0.1,
                          help="Optional delay (seconds) between embedding batches in 'embed' mode (to avoid rate limits).")
 
-    # --- Test Mode Setup OR Regular Argument Parsing ---
     if test_mode_enabled:
-        print("--- Running in Test Mode ---")
-        test_db_path = "test_rag_db"
-        test_folder = "cleaned_text/test_docs"
-        test_collection = "test_collection"
-        os.makedirs(test_folder, exist_ok=True)
-        # Create dummy files if needed
-        if not os.listdir(test_folder):
-             with open(os.path.join(test_folder, "test1.txt"), "w") as f: f.write("Red apples are sweet. BM25 scores terms.")
-             with open(os.path.join(test_folder, "test2.txt"), "w") as f: f.write("Vector search finds similar concepts like fruit.")
-             print("Created dummy test files.")
-
-        # Simulate command line arguments for testing workflow
-        test_phase ="query" # Control phase via environment variable or manually change here
-
-        args_list = None # Initialize
-        if test_phase == "index":
-            print("\n--- TEST PHASE: INDEX ---")
-            args_list = ["--mode", "index", "--folder_path", test_folder, "--db_path", test_db_path, "--collection_name", test_collection, "--force_reindex"]
-        elif test_phase == "embed":
-             print("\n--- TEST PHASE: EMBED ---")
-             args_list = ["--mode", "embed", "--db_path", test_db_path, "--collection_name", test_collection]
-        elif test_phase == "query":
-             print("\n--- TEST PHASE: QUERY ---")
-             args_list = ["--mode", "query", "--query", "what color are apples?", "--db_path", test_db_path, "--collection_name", test_collection, "--top_k", "3"]
-        else: # Default to index if phase unknown
-             print("\n--- TEST PHASE: INDEX (Default) ---")
-             args_list = ["--mode", "index", "--folder_path", test_folder, "--db_path", test_db_path, "--collection_name", test_collection]
-
-        # Parse the HARDCODED test arguments
+        query, test_folder, test_db_path, test_collection = setup_test_mode()
+        test_phase = "embed" # Control phase: "index", "embed", "query"
+        args_list = get_test_args(test_phase, query, test_folder, test_db_path, test_collection, DEFAULT_TOP_K)
         if args_list:
             args = parser.parse_args(args_list)
         else:
             print("Error: Test mode enabled, but failed to determine test arguments.")
             exit(1) # Exit if something went wrong determining the test phase args
-
     else:
-        # Parse the ACTUAL command-line arguments provided by the user
         args = parser.parse_args()
-    # --- End Argument Parsing Logic ---
 
+    return args
 
-    # --- Initialize API Clients for the MAIN process ---
-    # This is crucial for 'index', 'embed', and 'query' modes.
-    print(f"Main process initializing clients...")
-    initialize_clients()
-
-
-    # --- Configuration & Validation ---
+def print_and_validate_config(args):
+    """Prints the current configuration and performs basic validation."""
     print(f"\n--- Configuration ---")
     print(f"Mode: {args.mode}")
     print(f"DB Path: {args.db_path}")
@@ -1068,386 +1055,454 @@ def main():
 
     # Basic validation
     if args.mode == "index" and not args.document_path and not args.folder_path:
-        parser.error("--document_path or --folder_path is required for 'index' mode.")
+        raise ValueError("--document_path or --folder_path is required for 'index' mode.")
     if args.mode in ["query", "query_direct"] and not args.query:
-        parser.error("--query cannot be empty for query modes.")
+        raise ValueError("--query cannot be empty for query modes.")
 
-    # --- Execute Mode ---
+# --- Index Mode Functions ---
+
+def find_files_to_index(folder_path, document_path):
+    """Identifies potential .txt files to index from folder or single path."""
+    potential_files = []
+    if folder_path:
+        if not os.path.isdir(folder_path): raise ValueError(f"Folder not found: {folder_path}")
+        print(f"Scanning folder: {folder_path}")
+        for root, _, files in os.walk(folder_path):
+            for file in files:
+                if file.lower().endswith(".txt"):
+                    potential_files.append(os.path.join(root, file))
+    elif document_path:
+        if not os.path.isfile(document_path): raise ValueError(f"File not found: {document_path}")
+        if document_path.lower().endswith(".txt"): potential_files.append(document_path)
+        else: print(f"Warning: Skipping non-txt file: {document_path}")
+
+    if not potential_files: print("No source .txt files found to index.")
+    else: print(f"Found {len(potential_files)} potential source file(s).")
+    return potential_files
+
+def filter_files_for_processing(potential_files, db_path, collection_name, force_reindex):
+    """Checks ChromaDB for existing file hashes and filters the list of files."""
+    files_to_process = []
+    skipped_files_count = 0
+    existing_hashes = set()
+
+    if not force_reindex:
+        print("Checking ChromaDB for already indexed files (based on hash)...")
+        try:
+            collection = get_chroma_collection(db_path, collection_name)
+            existing_data = collection.get(include=['metadatas']) # Fetch metadata
+            if existing_data and existing_data.get('metadatas'):
+                count = 0
+                for meta in existing_data['metadatas']:
+                    if meta and 'file_hash' in meta:
+                        existing_hashes.add(meta['file_hash'])
+                        count += 1
+                print(f"Found {len(existing_hashes)} unique file hashes from {count} existing chunks in ChromaDB.")
+        except Exception as e:
+            if "does not exist" in str(e) or "not found" in str(e).lower(): # Adapt based on actual ChromaDB exception message
+                 print("Collection not found or empty, assuming no files are indexed yet.")
+            else: print(f"Warning: Could not check existing files in ChromaDB: {e}. Processing all files.")
+    else:
+        print("Force re-index enabled, processing all found files.")
+
+    print("Filtering files to process...")
+    skipped_files = []
+    for file_path in tqdm(potential_files, desc="Checking files", unit="file"):
+        try:
+            file_hash = compute_file_hash(file_path)
+            if not force_reindex and file_hash in existing_hashes:
+                skipped_files.append(os.path.basename(file_path)); skipped_files_count += 1
+            else: files_to_process.append(file_path)
+        except FileNotFoundError: print(f"\nWarning: File not found during check: {file_path}. Skipping.")
+        except Exception as e: print(f"\nError hashing file {os.path.basename(file_path)}, skipping: {e}"); skipped_files_count += 1
+
+    if skipped_files_count > 0:
+        print(f"Skipping {skipped_files_count} file(s) already indexed or with hash errors.")
+
+    return files_to_process, skipped_files_count
+
+def process_files_sequentially(files_to_process):
+    """Processes a list of files sequentially for Phase 1 (chunking)."""
+    all_phase1_chunks = []
+    successful_files, failed_files_info = 0, []
+
+    print("--- Starting Sequential Chunk Processing (Phase 1) ---")
+    for file_path in tqdm(files_to_process, desc="Processing Files (Phase 1)", unit="file"):
+        try:
+            processed_data = index_document_phase1(
+                document_path=file_path,
+                max_tokens=DEFAULT_MAX_TOKENS,
+                overlap=DEFAULT_OVERLAP
+            )
+            if processed_data:
+                all_phase1_chunks.extend(processed_data)
+                successful_files += 1
+        except Exception as e:
+            err_msg = f"CRITICAL Error processing {os.path.basename(file_path)} (Phase 1): {e}\n{traceback.format_exc()}"
+            print(f"\n{err_msg}")
+            failed_files_info.append((os.path.basename(file_path), str(e)))
+
+    print(f"\n--- Phase 1 Processing Summary ---")
+    print(f"Successfully processed files (yielding chunks): {successful_files}")
+    if failed_files_info:
+        print(f"Failed processing attempts: {len(failed_files_info)}")
+        for fname, err in failed_files_info[:5]: print(f"  - Example Failure: {fname}: {err}")
+        if len(failed_files_info) > 5: print("  ...")
+
+    return all_phase1_chunks, failed_files_info
+
+def update_chromadb_raw_chunks(collection, all_phase1_chunks):
+    """Adds/Updates raw chunk data (Phase 1) to ChromaDB."""
+    if not all_phase1_chunks:
+        print("No new raw chunks to add/update in ChromaDB.")
+        return
+
+    print(f"Adding/Updating {len(all_phase1_chunks)} raw chunks in ChromaDB...")
+    chroma_ids = [chunk['id'] for chunk in all_phase1_chunks]
+    chroma_metadatas = [chunk['metadata'] for chunk in all_phase1_chunks]
+    chroma_documents = [chunk['metadata'].get('text', '') for chunk in all_phase1_chunks] # Ensure text is included
+
+    batch_size = 500
+    num_batches = (len(chroma_ids) + batch_size - 1) // batch_size
+    for i in tqdm(range(num_batches), desc="Adding/Upserting Raw Chunks to ChromaDB"):
+        start_idx = i * batch_size
+        end_idx = start_idx + batch_size
+        batch_ids = chroma_ids[start_idx:end_idx]
+        batch_metadatas = chroma_metadatas[start_idx:end_idx]
+        batch_documents = chroma_documents[start_idx:end_idx]
+
+        if not batch_ids: continue
+        try:
+            collection.upsert(
+                ids=batch_ids,
+                metadatas=batch_metadatas,
+                documents=batch_documents # Pass raw text for upsert
+            )
+        except Exception as upsert_err:
+            print(f"\n!!! Error upserting batch {i+1}/{num_batches} to ChromaDB: {upsert_err}")
+            # Consider logging failed IDs or retrying?
+
+    print("Finished adding/upserting raw chunks to ChromaDB.")
+
+def rebuild_bm25_index(collection, db_path, collection_name):
+    """Rebuilds and saves the BM25 index using all current data in ChromaDB."""
+    print("Rebuilding BM25 index using all data currently in ChromaDB...")
     try:
-        # ===========================
-        # ===== INDEX MODE ==========
-        # ===========================
-        if args.mode == "index":
-            # --- 1. Identify potential files ---
-            potential_files_to_index = []
-            if args.folder_path:
-                if not os.path.isdir(args.folder_path): raise ValueError(f"Folder not found: {args.folder_path}")
-                print(f"Scanning folder: {args.folder_path}")
-                for root, _, files in os.walk(args.folder_path):
-                    for file in files:
-                        if file.lower().endswith(".txt"):
-                            potential_files_to_index.append(os.path.join(root, file))
-            elif args.document_path:
-                 if not os.path.isfile(args.document_path): raise ValueError(f"File not found: {args.document_path}")
-                 if args.document_path.lower().endswith(".txt"): potential_files_to_index.append(args.document_path)
-                 else: print(f"Warning: Skipping non-txt file: {args.document_path}")
+        all_data = collection.get(include=['metadatas']) # Fetch all needed data
+        if not all_data or not all_data.get('ids'):
+            print("Warning: Could not fetch any data from ChromaDB for BM25 rebuild. Collection might be empty.")
+            return
 
-            if not potential_files_to_index: print("No source .txt files found to index."); return
-            print(f"Found {len(potential_files_to_index)} potential source file(s).")
+        all_current_ids = all_data['ids']
+        all_current_metadatas = all_data.get('metadatas', [])
+        valid_entries = [(id, meta) for id, meta in zip(all_current_ids, all_current_metadatas) if meta and 'text' in meta and meta['text'].strip()]
 
-            # --- 2. Check existing hashes (unless forcing) ---
-            files_to_process = []
-            skipped_files_count = 0
-            existing_hashes = set()
-            if not args.force_reindex:
-                print("Checking ChromaDB for already indexed files (based on hash)...")
-                try:
-                    collection = get_chroma_collection(args.db_path, args.collection_name)
-                    # Fetch only metadata, specifically 'file_hash' if possible, else all metadata
-                    # ChromaDB get() might not support filtering metadata fields directly, fetch all.
-                    existing_data = collection.get(include=['metadatas']) # Potentially slow for huge collections
-                    if existing_data and existing_data.get('metadatas'):
-                        count = 0
-                        for meta in existing_data['metadatas']:
-                            if meta and 'file_hash' in meta:
-                                existing_hashes.add(meta['file_hash'])
-                                count += 1
-                        print(f"Found {len(existing_hashes)} unique file hashes from {count} existing chunks in ChromaDB.")
-                except Exception as e:
-                     # Handle case where collection might not exist yet gracefully
-                    if "does not exist" in str(e): print("Collection not found, assuming no files are indexed yet.")
-                    else: print(f"Warning: Could not check existing files in ChromaDB: {e}. Processing all files.")
-            else: print("Force re-index enabled, processing all found files.")
+        if len(valid_entries) != len(all_current_ids):
+            print(f"Warning: Found {len(all_current_ids) - len(valid_entries)} entries with missing/invalid/empty text metadata. Excluding them from BM25.")
 
-            print("Filtering files to process...")
-            files_with_hashes = {} # Store hash to avoid recomputing
-            skipped_files = []
-            for file_path in tqdm(potential_files_to_index, desc="Checking files", unit="file"):
-                try:
-                    file_hash = compute_file_hash(file_path)
-                    files_with_hashes[file_path] = file_hash # Store for later use
-                    if not args.force_reindex and file_hash in existing_hashes:
-                        skipped_files.append(os.path.basename(file_path)); skipped_files_count += 1
-                    else: files_to_process.append(file_path)
-                except FileNotFoundError: print(f"\nWarning: File not found during check: {file_path}. Skipping.")
-                except Exception as e: print(f"\nError hashing file {os.path.basename(file_path)}, skipping: {e}"); skipped_files_count += 1
+        if not valid_entries:
+            print("No valid chunk text found in ChromaDB metadata. Skipping BM25 build.")
+            return
 
-            if skipped_files_count > 0:
-                print(f"Skipping {skipped_files_count} file(s) already indexed or with hash errors.")
-                # Optional: List skipped files if needed
-                # if skipped_files: print(f"  Skipped: {', '.join(skipped_files[:10])}{'...' if len(skipped_files)>10 else ''}")
+        valid_ids = [id for id, meta in valid_entries]
+        valid_texts = [meta['text'] for id, meta in valid_entries]
+        print(f"Tokenizing {len(valid_ids)} total valid chunks for BM25...")
 
-            if not files_to_process: print("No new files need processing."); return
-            print(f"Preparing to process {len(files_to_process)} files sequentially.")
+        all_final_tokenized_corpus = [
+            tokenize_text_bm25(text)
+            for text in tqdm(valid_texts, desc="Tokenizing all chunks")
+        ]
 
-            # --- 3. Sequential Processing (Phase 1: Chunking & Metadata) ---
-            all_phase1_chunks = []
-            successful_files, failed_files = 0, []
+        if not any(all_final_tokenized_corpus):
+            print("Warning: Tokenization resulted in empty corpus. Skipping BM25 build.")
+            return
 
-            print("--- Starting Sequential Chunk Processing (Phase 1) ---")
-            # Simple loop instead of multiprocessing pool
-            for file_path in tqdm(files_to_process, desc="Processing Files (Phase 1)", unit="file"):
-                try:
-                    # Call the core processing function directly
-                    processed_data = index_document_phase1(
-                        document_path=file_path,
-                        max_tokens=DEFAULT_MAX_TOKENS,
-                        overlap=DEFAULT_OVERLAP
-                    )
-                    if processed_data: # Check if the function returned any chunks
-                        all_phase1_chunks.extend(processed_data)
-                        successful_files += 1
-                    # else: File processed OK but yielded no chunks (e.g., empty or only whitespace)
-                except Exception as e:
-                    # Catch errors during the processing of a single file
-                    import traceback
-                    err_msg = f"CRITICAL Error processing {os.path.basename(file_path)} (Phase 1): {e}\n{traceback.format_exc()}"
-                    print(f"\n{err_msg}") # Ensure error message is visible with tqdm
-                    failed_files.append((os.path.basename(file_path), str(e)))
+        print(f"Building final BM25 index...")
+        bm25_index = BM25Okapi(all_final_tokenized_corpus)
+        bm25_index_path, bm25_mapping_path = get_bm25_paths(db_path, collection_name)
 
-            # --- End Sequential Processing ---
+        print(f"Saving final BM25 index ({len(valid_ids)} docs) to: {bm25_index_path}")
+        os.makedirs(os.path.dirname(bm25_index_path), exist_ok=True)
+        with open(bm25_index_path, 'wb') as f_idx: pickle.dump(bm25_index, f_idx)
 
-            print(f"\n--- Post-Processing (Phase 1 Results) ---")
-            print(f"Successfully processed files (yielding chunks): {successful_files}")
-            print(f"Skipped files (already indexed or hash error): {skipped_files_count}")
-            if failed_files:
-                print(f"Failed processing attempts: {len(failed_files)}")
-                for fname, err in failed_files[:5]: print(f"  - Example Failure: {fname}: {err}") # Show first few errors
-                if len(failed_files) > 5: print("  ...")
-            if not all_phase1_chunks:
-                 print("No valid new chunks were generated. Nothing to add to DB or index.")
-                 # Check if BM25 should still be rebuilt if force_reindex was used?
-                 # For now, exit if no *new* chunks unless force_reindex implies full rebuild desire.
-                 if not args.force_reindex: return
+        print(f"Saving final BM25 ID mapping to: {bm25_mapping_path}")
+        with open(bm25_mapping_path, 'wb') as f_map: pickle.dump(valid_ids, f_map)
 
-            print(f"Total raw chunks generated/to be added/updated: {len(all_phase1_chunks)}")
+        print("Final BM25 index saved.")
 
-            # --- 4/5. Add Raw Chunks to ChromaDB & Build/Rebuild BM25 Index ---
-            try:
-                 collection = get_chroma_collection(args.db_path, args.collection_name)
-
-                 # Add/Update the NEW chunks (Phase 1 data) to ChromaDB
-                 # Add/Update the NEW chunks (Phase 1 data) to ChromaDB
-                 if all_phase1_chunks:
-                     print(f"Adding/Updating {len(all_phase1_chunks)} raw chunks in ChromaDB collection '{args.collection_name}'...")
-                     chroma_ids = [chunk['id'] for chunk in all_phase1_chunks]
-                     chroma_metadatas = [chunk['metadata'] for chunk in all_phase1_chunks]
-                     # ---> EXTRACT THE DOCUMENT TEXTS (Required for upsert) <---
-                     chroma_documents = [chunk['metadata'].get('text', '') for chunk in all_phase1_chunks] # Get text from metadata
-
-                     # Use upsert: adds new chunks, updates existing ones if ID matches (e.g., during force_reindex)
-                     # Crucially, this sets 'has_embedding' back to False for re-indexed files.
-                     batch_size = 500 # Adjust as needed for performance/memory
-                     num_batches = (len(chroma_ids) + batch_size - 1) // batch_size
-                     for i in tqdm(range(num_batches), desc="Adding/Upserting Raw Chunks to ChromaDB"):
-                         start_idx = i * batch_size
-                         end_idx = start_idx + batch_size
-                         batch_ids = chroma_ids[start_idx:end_idx]
-                         batch_metadatas = chroma_metadatas[start_idx:end_idx]
-                         # ---> GET THE DOCUMENTS FOR THE BATCH <---
-                         batch_documents = chroma_documents[start_idx:end_idx]
-
-                         if not batch_ids: continue
-                         try:
-                             # ---> PASS documents PARAMETER (The Fix!) <---
-                             collection.upsert(
-                                 ids=batch_ids,
-                                 metadatas=batch_metadatas,
-                                 documents=batch_documents # Provide the raw text here
-                             )
-                         except Exception as upsert_err:
-                             print(f"\n!!! Error upserting batch {i+1}/{num_batches} to ChromaDB: {upsert_err}")
-                             # Consider logging failed IDs or retrying?
-                     print("Finished adding/upserting raw chunks to ChromaDB.")
-
-                 # Build/Rebuild BM25 Index using ALL data currently in the collection
-                 # This ensures consistency after adds/updates/force_reindex
-                 print("Rebuilding BM25 index using all data currently in ChromaDB...")
-                 # Fetch all IDs and required metadata ('text')
-                 all_data = collection.get(include=['metadatas']) # Fetch all metadata again
-                 if all_data and all_data.get('ids'):
-                      all_current_ids = all_data['ids']
-                      all_current_metadatas = all_data.get('metadatas', [])
-                      # Filter for entries that have valid metadata and the 'text' field
-                      valid_entries = [(id, meta) for id, meta in zip(all_current_ids, all_current_metadatas) if meta and 'text' in meta]
-
-                      if len(valid_entries) != len(all_current_ids):
-                         print(f"Warning: Found {len(all_current_ids) - len(valid_entries)} entries with missing/invalid metadata. Excluding them from BM25.")
-
-                      if valid_entries:
-                           valid_ids = [id for id, meta in valid_entries]
-                           valid_texts = [meta['text'] for id, meta in valid_entries]
-                           print(f"Tokenizing {len(valid_ids)} total valid chunks for BM25...")
-                           # Sequential tokenization
-                           all_final_tokenized_corpus = [
-                               tokenize_text_bm25(text)
-                               for text in tqdm(valid_texts, desc="Tokenizing all chunks")
-                           ]
-
-                           # Check if tokenization yielded results
-                           if not any(all_final_tokenized_corpus):
-                                print("Warning: Tokenization resulted in empty corpus. Skipping BM25 build.")
-                           else:
-                               print(f"Building final BM25 index...")
-                               bm25_index = BM25Okapi(all_final_tokenized_corpus)
-                               bm25_index_path, bm25_mapping_path = get_bm25_paths(args.db_path, args.collection_name)
-                               print(f"Saving final BM25 index ({len(valid_ids)} docs) to: {bm25_index_path}")
-                               os.makedirs(os.path.dirname(bm25_index_path), exist_ok=True) # Ensure dir exists
-                               with open(bm25_index_path, 'wb') as f_idx: pickle.dump(bm25_index, f_idx)
-                               print(f"Saving final BM25 ID mapping to: {bm25_mapping_path}")
-                               with open(bm25_mapping_path, 'wb') as f_map: pickle.dump(valid_ids, f_map) # Save IDs corresponding to the corpus
-                               print("Final BM25 index saved.")
-                      else: print("No valid chunk text found in ChromaDB metadata. Skipping BM25 build.")
-                 else: print("Warning: Could not fetch any data from ChromaDB for BM25 rebuild. Collection might be empty.")
-
-            except Exception as db_bm25_err:
-                 print(f"!!! Error during ChromaDB upsert or BM25 build phase: {db_bm25_err}")
-                 import traceback; traceback.print_exc()
-
-            print("\n--- Index Mode (Phase 1) Complete ---")
-            print("Raw chunks stored/updated. Run '--mode embed' to generate embeddings for any missing ones.")
-
-
-        # ===========================
-        # ===== EMBED MODE ==========
-        # ===========================
-        elif args.mode == "embed":
-            # This mode runs sequentially in the main process.
-            print("--- Running Embed Mode (Phase 2) ---")
-            # Check if necessary embedding client is available in the main process
-            provider = "Unknown"
-            client_ok = False
-            if EMBEDDING_MODEL in ["embedding-001", "models/embedding-001", "text-embedding-004", "models/text-embedding-004"]: provider = "Gemini"; client_ok = bool(gemini_client)
-
-            if not client_ok:
-                 print(f"Error: {provider} client needed for embedding model '{EMBEDDING_MODEL}' is not initialized. Cannot proceed.")
-                 return # Exit if the required client isn't ready
-
-            try:
-                collection = get_chroma_collection(args.db_path, args.collection_name)
-                print(f"Checking collection '{args.collection_name}' for chunks needing embedding...")
-
-                # Find chunks where metadata has 'has_embedding': False
-                # Use collection.get with a filter
-                results = collection.get(
-                    where={"has_embedding": False},
-                    include=['metadatas'] # Only need metadata to get text and update flag
-                )
-
-                ids_to_embed = results.get('ids', [])
-                metadatas_to_embed = results.get('metadatas', [])
-
-                if not ids_to_embed:
-                    print("No chunks found needing embedding in this collection.")
-                    return
-
-                print(f"Found {len(ids_to_embed)} chunks to embed.")
-
-                embeddings_to_update = []
-                ids_to_update = []
-                metadatas_to_update = []
-                failed_ids = []
-
-                # Process in batches defined by user argument
-                num_batches = (len(ids_to_embed) + args.embed_batch_size - 1) // args.embed_batch_size
-                for i in tqdm(range(num_batches), desc="Generating Embeddings", unit="batch"):
-                    start_idx = i * args.embed_batch_size
-                    end_idx = start_idx + args.embed_batch_size
-                    batch_ids = ids_to_embed[start_idx:end_idx]
-                    batch_metadatas = metadatas_to_embed[start_idx:end_idx]
-
-                    current_batch_embeddings = []
-                    current_batch_ids_ok = []
-                    current_batch_metadatas_ok = []
-
-                    for chunk_id, meta in zip(batch_ids, batch_metadatas):
-                        if not meta:
-                            # print(f"Warning: Skipping chunk {chunk_id} due to missing metadata.") # Can be noisy
-                            failed_ids.append(chunk_id)
-                            continue
-
-                        # Prefer using 'contextualized_text' if available, else fall back to 'text'
-                        text_to_embed = meta.get('contextualized_text', meta.get('text'))
-                        if not text_to_embed or not text_to_embed.strip():
-                            # print(f"Warning: Skipping chunk {chunk_id} due to empty text content.") # Can be noisy
-                            failed_ids.append(chunk_id)
-                            continue
-
-                        # Generate embedding using the main process's client
-                        embedding_vector = get_embedding(text_to_embed, model=EMBEDDING_MODEL, task_type="retrieval_document")
-
-                        if embedding_vector is not None and embedding_vector.ndim == 1 and embedding_vector.size > 0:
-                            current_batch_embeddings.append(embedding_vector.tolist())
-                            # Prepare updated metadata: Copy original and set flag to True
-                            updated_meta = meta.copy()
-                            updated_meta['has_embedding'] = True
-                            current_batch_metadatas_ok.append(updated_meta)
-                            current_batch_ids_ok.append(chunk_id)
-                        else:
-                            # print(f"Warning: Failed to get valid embedding for chunk {chunk_id}. Skipping update.") # Can be noisy
-                            failed_ids.append(chunk_id)
-
-                    # Store results for this batch to update ChromaDB later
-                    if current_batch_ids_ok:
-                         ids_to_update.extend(current_batch_ids_ok)
-                         embeddings_to_update.extend(current_batch_embeddings)
-                         metadatas_to_update.extend(current_batch_metadatas_ok)
-
-                    # Optional delay between batches to manage API rate limits
-                    if args.embed_delay > 0 and i < num_batches - 1:
-                        # print(f"Delaying {args.embed_delay}s before next batch...") # Debug
-                        time.sleep(args.embed_delay)
-
-                # --- Update ChromaDB with generated embeddings ---
-                if ids_to_update:
-                    print(f"\nUpdating {len(ids_to_update)} chunks in ChromaDB with new embeddings...")
-                    # Update in batches again for the DB operation (can use a different batch size if needed)
-                    update_batch_size = 500 # Larger batch size for DB updates is often fine
-                    num_update_batches = (len(ids_to_update) + update_batch_size - 1) // update_batch_size
-                    for i in tqdm(range(num_update_batches), desc="Updating ChromaDB", unit="batch"):
-                         start_idx = i * update_batch_size
-                         end_idx = start_idx + update_batch_size
-                         batch_ids = ids_to_update[start_idx:end_idx]
-                         batch_embeddings = embeddings_to_update[start_idx:end_idx]
-                         batch_metadatas = metadatas_to_update[start_idx:end_idx]
-                         if not batch_ids: continue
-                         try:
-                            # Use update: We know these IDs exist and need embedding + metadata flag change
-                            collection.update(
-                                ids=batch_ids,
-                                embeddings=batch_embeddings,
-                                metadatas=batch_metadatas
-                            )
-                         except Exception as db_update_err:
-                            print(f"\n!!! Error updating batch {i+1}/{num_update_batches} in ChromaDB: {db_update_err}")
-                            # Log failed IDs from this batch for potential retry
-                            failed_ids.extend(batch_ids) # Mark these as failed for the final count
-
-                    print("Finished updating chunks in ChromaDB.")
-                else:
-                     print("No successful embeddings were generated to update in the database.")
-
-                if failed_ids:
-                    unique_failed_count = len(set(failed_ids))
-                    print(f"\nWarning: Failed to process or embed {unique_failed_count} unique chunks.")
-                    print("These chunks remain marked as 'has_embedding': False and can be retried.")
-                    # Optional: Log failed_ids to a file: e.g., with open('failed_embed_ids.log', 'a') as f: f.write('\n'.join(set(failed_ids)) + '\n')
-
-            except Exception as e:
-                 print(f"!!! Error during embed mode execution: {e}")
-                 import traceback; traceback.print_exc()
-
-            print("\n--- Embed Mode (Phase 2) Complete ---")
-
-
-        # ===========================
-        # ===== QUERY MODES =========
-        # ===========================
-        elif args.mode == "query" or args.mode == "query_direct":
-             # These modes run in the main process. Ensure necessary clients are initialized.
-             # Check clients needed for: query embedding, subquery generation, final answer generation
-            query_embed_client_ok = bool(gemini_client)
-            subquery_client_ok = bool(gemini_client) if args.mode == "query" else True # Only needed for iterative
-            answer_client_ok = bool(gemini_client)
-
-            if not query_embed_client_ok: print(f"Error: Client for query embedding model '{EMBEDDING_MODEL}' not available."); return
-            if not subquery_client_ok: print(f"Error: Client for subquery model '{SUBQUERY_MODEL}' not available."); return
-            if not answer_client_ok: print(f"Error: Client for answer model '{CHAT_MODEL}' not available."); return
-
-            # Ensure BM25 index is loaded for hybrid search
-            if not load_bm25_index(args.db_path, args.collection_name):
-                print("Warning: BM25 index not found or failed to load. Lexical search part of hybrid query will not work.")
-                # Decide if query should proceed without BM25? For now, it will, but RRF won't combine lexical.
-
-            # Execute the appropriate query function
-            if args.mode == "query":
-                 final_answer = iterative_rag_query(args.query, args.db_path, args.collection_name,
-                                                    top_k=args.top_k,
-                                                    subquery_model=SUBQUERY_MODEL,
-                                                    answer_model=CHAT_MODEL)
-            else: # Direct query
-                 final_answer = query_index(args.query, args.db_path, args.collection_name,
-                                            top_k=args.top_k,
-                                            answer_model=CHAT_MODEL)
-
-            # Print the final result
-            print("\n" + "="*20 + " Final Answer " + "="*20)
-            print(final_answer)
-            print("="*54 + "\n")
-
-    except ValueError as ve:
-        # Catch specific configuration errors (like folder not found)
-        print(f"\n!!! Configuration Error: {ve}")
-    except RuntimeError as rte:
-         # Catch client initialization errors explicitly raised
-        print(f"\n!!! Runtime Error (likely client issue): {rte}")
-    except Exception as e:
-        # Catch any other unexpected errors during main execution
-        print(f"\n\n!!! An unexpected error occurred in main execution: {e}")
-        import traceback
-        print("Traceback:")
+    except Exception as bm25_err:
+        print(f"!!! Error during BM25 rebuild phase: {bm25_err}")
         traceback.print_exc()
 
+def run_index_mode(args):
+    """Handles the logic for the 'index' mode."""
+    print("--- Running Index Mode (Phase 1) ---")
+    # 1. Find potential files
+    potential_files = find_files_to_index(args.folder_path, args.document_path)
+    if not potential_files: return
+
+    # 2. Filter based on existing hashes (unless forced)
+    files_to_process, skipped_count = filter_files_for_processing(
+        potential_files, args.db_path, args.collection_name, args.force_reindex
+    )
+    if not files_to_process:
+        print("No new files need processing.")
+        # If forcing, we might still want to rebuild BM25 even if no *new* files
+        if args.force_reindex:
+             print("Force re-index requested, proceeding to BM25 rebuild with existing data.")
+             collection = get_chroma_collection(args.db_path, args.collection_name)
+             rebuild_bm25_index(collection, args.db_path, args.collection_name)
+        return
+
+    # 3. Process files sequentially
+    all_phase1_chunks, _ = process_files_sequentially(files_to_process)
+
+    # 4 & 5. Update DB and Rebuild BM25
+    if not all_phase1_chunks and not args.force_reindex:
+        print("No valid new chunks were generated. Nothing to add to DB or index.")
+        return
+
+    try:
+        collection = get_chroma_collection(args.db_path, args.collection_name)
+        update_chromadb_raw_chunks(collection, all_phase1_chunks)
+        rebuild_bm25_index(collection, args.db_path, args.collection_name)
+    except Exception as db_bm25_err:
+        print(f"!!! Error during ChromaDB update or BM25 build phase: {db_bm25_err}")
+        traceback.print_exc()
+
+    print("\n--- Index Mode (Phase 1) Complete ---")
+    print("Raw chunks stored/updated. Run '--mode embed' to generate embeddings for any missing ones.")
+
+
+# --- Embed Mode Functions ---
+
+def find_chunks_to_embed(collection):
+    """Finds chunks in the collection marked with 'has_embedding': False."""
+    print(f"Checking collection for chunks needing embedding...")
+    try:
+        results = collection.get(
+            where={"has_embedding": False},
+            include=['metadatas'] # Only need metadata to get text
+        )
+        ids_to_embed = results.get('ids', [])
+        metadatas_to_embed = results.get('metadatas', [])
+
+        if not ids_to_embed:
+            print("No chunks found needing embedding in this collection.")
+            return [], []
+        else:
+            print(f"Found {len(ids_to_embed)} chunks to embed.")
+            return ids_to_embed, metadatas_to_embed
+    except Exception as e:
+        print(f"Error querying ChromaDB for chunks to embed: {e}")
+        return [], []
+
+def generate_embeddings_in_batches(ids_to_embed, metadatas_to_embed, batch_size, delay):
+    """Generates embeddings for the given chunks in batches."""
+    embeddings_to_update = []
+    ids_to_update = []
+    metadatas_to_update = []
+    failed_ids = []
+
+    num_batches = (len(ids_to_embed) + batch_size - 1) // batch_size
+    for i in tqdm(range(num_batches), desc="Generating Embeddings", unit="batch"):
+        start_idx = i * batch_size
+        end_idx = start_idx + batch_size
+        batch_ids = ids_to_embed[start_idx:end_idx]
+        batch_metadatas = metadatas_to_embed[start_idx:end_idx]
+
+        current_batch_embeddings = []
+        current_batch_ids_ok = []
+        current_batch_metadatas_ok = []
+
+        for chunk_id, meta in zip(batch_ids, batch_metadatas):
+            if not meta:
+                failed_ids.append(chunk_id); continue
+
+            text_to_embed = meta.get('contextualized_text', meta.get('text'))
+            if not text_to_embed or not text_to_embed.strip():
+                failed_ids.append(chunk_id); continue
+
+            try:
+                embedding_vector = get_embedding(text_to_embed, model=EMBEDDING_MODEL, task_type="retrieval_document")
+                if embedding_vector is not None and embedding_vector.ndim == 1 and embedding_vector.size > 0:
+                    current_batch_embeddings.append(embedding_vector.tolist())
+                    updated_meta = meta.copy()
+                    updated_meta['has_embedding'] = True
+                    current_batch_metadatas_ok.append(updated_meta)
+                    current_batch_ids_ok.append(chunk_id)
+                else:
+                    # print(f"Warning: Failed to get valid embedding for chunk {chunk_id}. Skipping update.") # Optional logging
+                    failed_ids.append(chunk_id)
+            except Exception as embed_err:
+                 print(f"\nError generating embedding for chunk {chunk_id}: {embed_err}")
+                 failed_ids.append(chunk_id)
+
+
+        if current_batch_ids_ok:
+            ids_to_update.extend(current_batch_ids_ok)
+            embeddings_to_update.extend(current_batch_embeddings)
+            metadatas_to_update.extend(current_batch_metadatas_ok)
+
+        if delay > 0 and i < num_batches - 1:
+            time.sleep(delay)
+
+    return ids_to_update, embeddings_to_update, metadatas_to_update, failed_ids
+
+def update_embedded_chunks_in_chromadb(collection, ids, embeddings, metadatas):
+    """Updates chunks in ChromaDB with their generated embeddings."""
+    if not ids:
+        print("No successful embeddings were generated to update in the database.")
+        return
+
+    print(f"\nUpdating {len(ids)} chunks in ChromaDB with new embeddings...")
+    update_batch_size = 500
+    failed_update_ids = [] # Track failures during DB update
+    num_update_batches = (len(ids) + update_batch_size - 1) // update_batch_size
+
+    for i in tqdm(range(num_update_batches), desc="Updating ChromaDB", unit="batch"):
+        start_idx = i * update_batch_size
+        end_idx = start_idx + update_batch_size
+        batch_ids = ids[start_idx:end_idx]
+        batch_embeddings = embeddings[start_idx:end_idx]
+        batch_metadatas = metadatas[start_idx:end_idx]
+
+        if not batch_ids: continue
+        try:
+            collection.update(
+                ids=batch_ids,
+                embeddings=batch_embeddings,
+                metadatas=batch_metadatas
+            )
+        except Exception as db_update_err:
+            print(f"\n!!! Error updating batch {i+1}/{num_update_batches} in ChromaDB: {db_update_err}")
+            failed_update_ids.extend(batch_ids) # Mark these as failed
+
+    print("Finished updating chunks in ChromaDB.")
+    return failed_update_ids
+
+
+def run_embed_mode(args):
+    """Handles the logic for the 'embed' mode."""
+    print("--- Running Embed Mode (Phase 2) ---")
+    # Check if necessary client is available
+    provider = "Unknown"
+    client_ok = False
+    if EMBEDDING_MODEL in ["embedding-001", "models/embedding-001", "text-embedding-004", "models/text-embedding-004"]: provider = "Gemini"; client_ok = bool(gemini_client) # Add checks for other providers if needed
+
+    if not client_ok:
+        print(f"Error: {provider} client needed for embedding model '{EMBEDDING_MODEL}' is not initialized. Cannot proceed.")
+        return
+
+    try:
+        collection = get_chroma_collection(args.db_path, args.collection_name)
+
+        # 1. Find chunks needing embedding
+        ids_to_embed, metadatas_to_embed = find_chunks_to_embed(collection)
+        if not ids_to_embed: return
+
+        # 2. Generate embeddings in batches
+        ids_ok, embeddings_ok, metadatas_ok, failed_embed_ids = generate_embeddings_in_batches(
+            ids_to_embed, metadatas_to_embed, args.embed_batch_size, args.embed_delay
+        )
+
+        # 3. Update ChromaDB
+        failed_update_ids = update_embedded_chunks_in_chromadb(collection, ids_ok, embeddings_ok, metadatas_ok)
+
+        # 4. Report failures
+        all_failed_ids = set(failed_embed_ids + failed_update_ids)
+        if all_failed_ids:
+            print(f"\nWarning: Failed to process/embed/update {len(all_failed_ids)} unique chunks.")
+            print("These chunks may remain marked as 'has_embedding': False and can be retried.")
+            # Optional: Log failed_ids to a file
+
+    except Exception as e:
+        print(f"!!! Error during embed mode execution: {e}")
+        traceback.print_exc()
+
+    print("\n--- Embed Mode (Phase 2) Complete ---")
+
+
+# --- Query Mode Function ---
+
+def run_query_mode(args):
+    """Handles the logic for 'query' and 'query_direct' modes."""
+    print(f"--- Running Query Mode ({args.mode}) ---")
+
+    # Check clients needed
+    query_embed_client_ok = bool(gemini_client) # Assuming Gemini for default embedding
+    subquery_client_ok = bool(gemini_client) if args.mode == "query" else True
+    answer_client_ok = bool(gemini_client) # Assuming Gemini for default chat
+
+    if not query_embed_client_ok: print(f"Error: Client for query embedding model '{EMBEDDING_MODEL}' not available."); return
+    if not subquery_client_ok: print(f"Error: Client for subquery model '{SUBQUERY_MODEL}' not available."); return
+    if not answer_client_ok: print(f"Error: Client for answer model '{CHAT_MODEL}' not available."); return
+
+    # Ensure BM25 index is loaded for hybrid search
+    if not load_bm25_index(args.db_path, args.collection_name):
+        print("Warning: BM25 index not found or failed to load. Lexical search part of hybrid query will not work.")
+        # Query can proceed but RRF might behave differently
+
+    # Execute the appropriate query function
+    final_answer = ""
+    if args.mode == "query":
+            final_answer = iterative_rag_query(args.query, args.db_path, args.collection_name,
+                                               top_k=args.top_k,
+                                               subquery_model=SUBQUERY_MODEL,
+                                               answer_model=CHAT_MODEL)
+    else: # query_direct
+            final_answer = query_index(args.query, args.db_path, args.collection_name,
+                                       top_k=args.top_k,
+                                       answer_model=CHAT_MODEL)
+
+    # Print the final result
+    print("\n" + "="*20 + " Final Answer " + "="*20)
+    print(final_answer)
+    print("="*54 + "\n")
+
+
+# --- Main Orchestrator ---
+
+def main():
+    """Main function to orchestrate the RAG script."""
+    test_mode_enabled = True # Set to True/False as needed
+
+    try:
+        # 1. Parse Arguments (handles test mode internally)
+        args = parse_arguments(test_mode_enabled)
+
+        # 2. Initialize API Clients (essential for all modes)
+        print(f"Main process initializing clients...")
+        initialize_clients() # Should ideally raise error if fails
+
+        # 3. Configuration & Validation
+        print_and_validate_config(args) # Raises ValueError on validation failure
+
+        # 4. Execute Mode-Specific Logic
+        if args.mode == "index":
+            run_index_mode(args)
+        elif args.mode == "embed":
+            run_embed_mode(args)
+        elif args.mode in ["query", "query_direct"]:
+            run_query_mode(args)
+        else:
+            # Should not happen due to choices in argparse, but good practice
+            print(f"Error: Unknown mode '{args.mode}'")
+
+    except ValueError as ve:
+        # Catch specific configuration/validation errors
+        print(f"\n!!! Configuration Error: {ve}")
+        exit(1) # Exit on configuration errors
+    except RuntimeError as rte:
+         # Catch client initialization errors if initialize_clients raises them
+        print(f"\n!!! Runtime Error (likely client initialization): {rte}")
+        exit(1)
+    except Exception as e:
+        # Catch any other unexpected errors during main execution
+        print(f"\n\n!!! An unexpected error occurred: {e}")
+        print("Traceback:")
+        traceback.print_exc()
+        exit(1) # Exit on unexpected errors
 
 if __name__ == "__main__":
     main()
