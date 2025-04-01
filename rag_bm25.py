@@ -320,80 +320,195 @@ def truncate_text(text: str, token_limit: int, model: str = CHAT_MODEL) -> str:
 
  #LLM Interaction Functions (with client checks)
 
-def generate_chunk_context(document: str, chunk: str, token_limit: int = 30000,
-                           context_length: int = DEFAULT_CONTEXT_LENGTH,
-                           model: str = CHUNK_CONTEXT_MODEL) -> str:
+def generate_chunk_context(
+    full_document_text: str,
+    chunk_text: str,
+    start_token_idx: int,
+    end_token_idx: int,
+    total_window_tokens: int = 8000, # Use total window size
+    summary_max_tokens: int = DEFAULT_CONTEXT_LENGTH,
+    context_model: str = CHUNK_CONTEXT_MODEL,
+    encoding_model: str = EMBEDDING_MODEL
+) -> str:
     """
-    Generate a succinct, chunk-specific context using the full document.
-    Relies on generate_llm_response which handles client/module checks.
+    Generates a succinct, chunk-specific context using a sliding token-based
+    window of a fixed total size around the chunk.
+
+    Args:
+        full_document_text: The entire original document text.
+        chunk_text: The text of the specific chunk.
+        start_token_idx: The starting token index of the chunk in the full document.
+        end_token_idx: The ending token index of the chunk in the full document.
+        total_window_tokens: The total desired size of the context window.
+        summary_max_tokens: Max tokens for the generated context summary output.
+        context_model: The LLM model to use for generating the context summary.
+        encoding_model: The model used for tokenization to define the window.
+
+    Returns:
+        A succinct contextual description (1-2 sentences) or an error message.
     """
-    # Input validation (optional but good practice)
-    if not document.strip() or not chunk.strip():
+    if not full_document_text.strip() or not chunk_text.strip():
         return "Context unavailable (empty input)."
+    if start_token_idx is None or end_token_idx is None or start_token_idx < 0 or end_token_idx <= start_token_idx:
+         print(f"Warning: Invalid token indices provided (start={start_token_idx}, end={end_token_idx}). Cannot extract window.")
+         return "Error generating context (invalid indices)."
+    if total_window_tokens <= 0:
+         print(f"Warning: Non-positive total_window_tokens ({total_window_tokens}) requested. Cannot extract window.")
+         return "Error generating context (invalid window size)."
 
-    doc_token_count = count_tokens(document) # Use default model for counting if model specific fails
-    if doc_token_count > token_limit:
-        print(f"Truncating document for context generation (limit: {token_limit} tokens)")
-        document = truncate_text(document, token_limit) # Use default model for truncating
+    try:
+        # 1. Tokenize the full document
+        try:
+             encoding = tiktoken.encoding_for_model("cl100k_base")
+        except Exception:
+             print(f"Warning: Using fallback 'cl100k_base' encoding for context window.")
+             encoding = tiktoken.get_encoding("cl100k_base")
 
+        document_tokens = encoding.encode(full_document_text)
+        total_doc_tokens = len(document_tokens)
+
+        # Handle case where document is smaller than window request
+        if total_doc_tokens <= total_window_tokens:
+            window_start_idx = 0
+            window_end_idx = total_doc_tokens
+            print(f"Info: Document ({total_doc_tokens} tokens) is smaller than requested window ({total_window_tokens}). Using full document as context window.")
+        else:
+            # 2. Calculate initial window boundaries trying to center the chunk
+            chunk_len = end_token_idx - start_token_idx
+            # Calculate tokens available *before* and *after* the ideal centered window space (excluding chunk itself)
+            context_tokens_available = total_window_tokens - chunk_len
+            if context_tokens_available < 0:
+                # Chunk itself is larger than the window, just use the chunk bounds (or slightly expanded if possible)
+                print(f"Warning: Chunk ({chunk_len} tokens) is larger than requested window ({total_window_tokens}). Expanding window slightly if possible.")
+                expand_by = max(0, (total_window_tokens - chunk_len) // 2) # Try to add a little padding if window allows
+                window_start_idx = max(0, start_token_idx - expand_by)
+                window_end_idx = min(total_doc_tokens, end_token_idx + expand_by)
+                # Recalculate actual size and adjust if still too small/large compared to total_window_tokens
+                actual_size = window_end_idx - window_start_idx
+                if actual_size < total_window_tokens:
+                    # Try expanding more towards the end if possible
+                    needed = total_window_tokens - actual_size
+                    window_end_idx = min(total_doc_tokens, window_end_idx + needed)
+                    actual_size = window_end_idx - window_start_idx # Recalc
+                    if actual_size < total_window_tokens: # Still too small? Expand towards beginning
+                        needed = total_window_tokens - actual_size
+                        window_start_idx = max(0, window_start_idx - needed)
+
+            else:
+                # Ideal split of remaining context tokens
+                ideal_before = context_tokens_available // 2
+                ideal_after = context_tokens_available - ideal_before # Handles odd numbers
+
+                # Calculate desired start/end based on ideal split
+                desired_start = start_token_idx - ideal_before
+                desired_end = end_token_idx + ideal_after
+
+                # 3. Adjust ("slide") the window based on document boundaries
+                overflow_start = 0 - desired_start if desired_start < 0 else 0
+                overflow_end = desired_end - total_doc_tokens if desired_end > total_doc_tokens else 0
+
+                if overflow_start > 0:
+                    # Hit beginning: shift window right
+                    window_start_idx = 0
+                    # Add the overflow amount to the end, respecting document boundary
+                    window_end_idx = min(total_doc_tokens, desired_end + overflow_start)
+                elif overflow_end > 0:
+                    # Hit end: shift window left
+                    window_end_idx = total_doc_tokens
+                    # Subtract the overflow amount from the start, respecting document boundary
+                    window_start_idx = max(0, desired_start - overflow_end)
+                else:
+                    # No overflow, window fits perfectly
+                    window_start_idx = desired_start
+                    window_end_idx = desired_end
+
+                # Final sanity check to ensure window size doesn't exceed total_window_tokens due to rounding/shifts near boundaries
+                # This can happen if chunk is very close to edge and shifting causes window to be slightly smaller
+                actual_window_size = window_end_idx - window_start_idx
+                if actual_window_size < total_window_tokens and total_doc_tokens > total_window_tokens:
+                    # Try to expand to fill the gap, prioritizing side away from boundary
+                    needed = total_window_tokens - actual_window_size
+                    if window_start_idx == 0: # At beginning, expand end
+                         window_end_idx = min(total_doc_tokens, window_end_idx + needed)
+                    elif window_end_idx == total_doc_tokens: # At end, expand start
+                         window_start_idx = max(0, window_start_idx - needed)
+                    else: # In middle, split expansion (though unlikely to hit this if initial calc was correct)
+                         expand_start = needed // 2
+                         expand_end = needed - expand_start
+                         window_start_idx = max(0, window_start_idx - expand_start)
+                         window_end_idx = min(total_doc_tokens, window_end_idx + expand_end)
+
+
+        # 4. Extract the window text
+        if window_start_idx >= window_end_idx:
+             # This might happen if total_window_tokens is very small or zero after adjustments
+             print(f"Warning: Calculated context window is empty or invalid (start={window_start_idx}, end={window_end_idx}). Using only chunk text for context prompt.")
+             text_window = chunk_text # Fallback: use only the chunk itself
+        else:
+             window_tokens = document_tokens[window_start_idx:window_end_idx]
+             text_window = encoding.decode(window_tokens, errors='replace').strip()
+             if not text_window:
+                 print(f"Warning: Decoded context window text is empty. Using only chunk text for context prompt.")
+                 text_window = chunk_text # Fallback
+
+    except Exception as e:
+        print(f"Error during context window extraction: {e}")
+        traceback.print_exc()
+        return "Error generating context (window extraction failed)."
+
+    # 5. Construct the prompt (remains the same as previous windowed version)
     prompt = f"""
-        You are an AI assistant tasked with generating contextual metadata for text chunks to improve semantic search performance.
+        You are an AI assistant helping to create contextual summaries for text chunks.
+        You will be given a window of text from a larger document, and the specific chunk within that window that needs context.
 
-        **Provided Document:**
-        <document>
-        {document}
-        </document>
+        **Provided Text Window:**
+        <text_window>
+        {text_window}
+        </text_window>
 
-        **Chunk Requiring Context:**
+        **Chunk Requiring Context (located within the window above):**
         <chunk>
-        {chunk}
+        {chunk_text}
         </chunk>
 
         **Instructions:**
-        1. Read the entire **Provided Document**.
-        2. Locate the **Chunk Requiring Context** within the document.
-        3. Determine the primary subject or theme being discussed in the immediate vicinity of the chunk (the surrounding paragraphs or section). Think about the heading or topic this chunk falls under.
-        4. Synthesize this surrounding subject into a highly succinct contextual description (maximum 1-2 sentences).
-        5. This description should act as a high-level "topic tag" or "situational context" for the chunk.
+        1. Read the **Provided Text Window**.
+        2. Identify the **Chunk Requiring Context** within the window.
+        3. Analyze the text *immediately surrounding* the chunk **within the window**.
+        4. Determine the primary subject or theme being discussed in that immediate vicinity. Think about the specific topic this chunk contributes to within the window's scope.
+        5. Synthesize this surrounding subject into a highly succinct contextual description (maximum 1-2 sentences).
+        6. This description should act as a high-level "topic tag" or "situational context" specifically relevant to the chunk's placement *within the provided window*.
 
         **Critical Requirements:**
-        - The description MUST focus on the **surrounding context**, NOT the specific details within the chunk itself. Do NOT summarize the chunk.
+        - The description MUST focus on the **surrounding context within the window**, NOT just the chunk itself, and NOT the broader document (which you haven't seen).
+        - Do NOT summarize the chunk. Do NOT summarize the entire window. Focus on the *local* topic around the chunk.
         - The output MUST be **only** the 1-2 sentence contextual description. No extra text, explanations, or labels like "Context:".
-
-        **Example Scenario:** If the chunk discusses a specific algorithm like 'Adam Optimizer', but it's located in a section about 'Training Deep Learning Models', a good context might be: "Discussing optimization algorithms for training deep learning models." A bad context would be: "Explains the Adam optimization algorithm."
 
         **Generated Contextual Description (Output Only):**
         """
 
     try:
-        # Ensure context_length is reasonable
-        if context_length <= 0 or context_length > 512:
-             context_length = DEFAULT_CONTEXT_LENGTH # Reset to default if invalid
+        # 6. Call the LLM
+        if summary_max_tokens <= 0 or summary_max_tokens > 512:
+             summary_max_tokens = DEFAULT_CONTEXT_LENGTH
 
-        # Call the generic response generator
-        response = generate_llm_response(prompt, context_length, temperature=0.5, model=model)
+        response = generate_llm_response(prompt, summary_max_tokens, temperature=0.5, model=context_model)
 
-        # Basic check for errors returned by generate_llm_response
+        # 7. Process the response
         if response.startswith("[Error") or response.startswith("[Blocked"):
              print(f"Warning: Failed to generate context via LLM: {response}")
-             return "Error generating context." # Return a generic error
+             return "Error generating context."
 
-        # Clean up potential LLM preamble if necessary (though prompt asks not to include it)
         response = response.replace("Context:", "").replace("Here is the context:", "").strip()
         return response if response else "Context could not be generated."
 
     except Exception as e:
-        # Catch unexpected errors during the call
-        print(f"Error in generate_chunk_context function with model {model}: {e}")
-        import traceback
-        traceback.print_exc() # Print stack trace for debugging
+        print(f"Error in generate_chunk_context function with model {context_model}: {e}")
+        traceback.print_exc()
         return "Error generating context."
-
-    except Exception as e:
-        print(f"!!! Critical Error during embedding generation for model {model}: {e}")
-        # import traceback; traceback.print_exc() # Enable for deep debugging
-        return None
-    return None # Should not be reached normally
+        print(f"Error in generate_chunk_context function with model {context_model}: {e}")
+        traceback.print_exc()
+        return "Error generating context."
 
 def get_embedding(text: str, model: str = EMBEDDING_MODEL, embedding_dimension: int = OUTPUT_EMBEDDING_DIMENSION, task_type: Optional[str] = None) -> Optional[np.ndarray]:
     """
@@ -589,63 +704,64 @@ def retrieve_chunks_bm25(query: str, db_path: str, collection_name: str, top_k: 
 # ---------------------------
 def index_document_phase1(document_path: str,
                           max_tokens: int = DEFAULT_MAX_TOKENS,
-                          overlap: int = DEFAULT_OVERLAP) -> List[Dict]:
+                          overlap: int = DEFAULT_OVERLAP,
+                          # Optionally add control for the total window size here
+                          context_total_window: int = 7000
+                         ) -> List[Dict]:
     """
-    Processes a single document for Phase 1: reads, chunks, gets context, tokenizes for BM25.
+    Processes a single document for Phase 1: reads, chunks, gets SLIDING WINDOW context, tokenizes for BM25.
     DOES NOT generate embeddings. Returns list of dicts {id, metadata, bm25_tokens}.
     Metadata includes 'has_embedding': False.
     """
-    file_name = os.path.basename(document_path)
-    processed_chunk_data = []
-
-    if not os.path.exists(document_path):
-        print(f"Error: Doc not found: {document_path}")
-        return []
-
-    try: file_hash = compute_file_hash(document_path)
-    except Exception as e: print(f"Error hashing {file_name}: {e}"); return []
-
-    processing_date = datetime.datetime.now().isoformat()
-
+    # ... (file reading, hashing, etc. - same as before) ...
     try:
         with open(document_path, "r", encoding="utf-8", errors='replace') as f:
             document = f.read()
-    except Exception as e: print(f"Error reading {file_name}: {e}"); return []
-    if not document.strip(): return [] # Skip empty files
+    except Exception as e: print(f"Error reading {os.path.basename(document_path)}: {e}"); return []
+    if not document.strip(): return []
 
-    raw_chunks = chunk_document_tokens(document, max_tokens=max_tokens, overlap=overlap)
-    if not raw_chunks: return []
+    raw_chunks_with_indices = chunk_document_tokens(document, max_tokens=max_tokens, overlap=overlap)
+    if not raw_chunks_with_indices: return []
 
-    for idx, (raw_chunk, start_tok, end_tok) in enumerate(raw_chunks):
+    processed_chunk_data = [] # Initialize here
+    file_hash = compute_file_hash(document_path) # Ensure hash is computed
+    processing_date = datetime.datetime.now().isoformat() # Ensure date is set
+
+    for idx, (raw_chunk, start_tok, end_tok) in enumerate(raw_chunks_with_indices):
         if not raw_chunk.strip(): continue
 
-        # Generate context (still useful for embedding later and display)
-        # generate_chunk_context will handle client check internally
-        chunk_context = generate_chunk_context(document, raw_chunk, model=CHUNK_CONTEXT_MODEL)
-        if "Error:" in chunk_context: # Check if context generation failed due to client issues etc.
-             print(f"Warning: Skipping chunk {idx} in {file_name} due to context generation failure: {chunk_context}")
-             continue # Skip this chunk if context failed significantly
+        # *** Generate context using the sliding window function ***
+        chunk_context = generate_chunk_context(
+            full_document_text=document,
+            chunk_text=raw_chunk,
+            start_token_idx=start_tok,
+            end_token_idx=end_tok,
+            total_window_tokens=context_total_window, # Pass the total window size
+            context_model=CHUNK_CONTEXT_MODEL
+        )
+
+        if "Error generating context" in chunk_context:
+             print(f"Warning: Skipping chunk {idx} in {os.path.basename(document_path)} due to context generation failure: {chunk_context}")
+             # Decide how to handle: skip or use placeholder context
+             chunk_context = "Context generation failed." # Using placeholder
 
         contextualized_text = f"{chunk_context}\n{raw_chunk}"
         tokens_count = count_tokens(raw_chunk)
 
-        # *** NO EMBEDDING GENERATED HERE ***
-
         chunk_id = f"{file_hash}_{idx}"
         metadata = {
-            "file_hash": file_hash, "file_name": file_name, "processing_date": processing_date,
+            "file_hash": file_hash, "file_name": os.path.basename(document_path), "processing_date": processing_date,
             "chunk_number": idx, "start_token": start_tok, "end_token": end_tok,
-            "text": raw_chunk, # Store raw chunk text
-            "context": chunk_context, # Store generated context
-            "contextualized_text": contextualized_text, # Store combined text for embedding later
+            "text": raw_chunk,
+            "context": chunk_context, # Store generated context (from sliding window)
+            "contextualized_text": contextualized_text,
             "tokens": tokens_count,
-            "has_embedding": False # <<< FLAG: Mark as needing embedding
+            "has_embedding": False
         }
-        bm25_tokens = tokenize_text_bm25(raw_chunk) # Tokenize raw text for BM25
+        bm25_tokens = tokenize_text_bm25(raw_chunk)
 
         processed_chunk_data.append({
             "id": chunk_id,
-            # "embedding": NO EMBEDDING FIELD
             "metadata": metadata,
             "bm25_tokens": bm25_tokens
         })
