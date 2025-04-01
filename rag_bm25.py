@@ -56,6 +56,7 @@ import re
 from rank_bm25 import BM25Okapi
 from google import genai
 from google.genai.types import EmbedContentConfig
+import traceback # For more detailed error logging
 
 
 # Removed: multiprocessing, functools
@@ -761,7 +762,7 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
 
 # --- Subquery and Answer Generation ---
 def generate_subqueries(initial_query: str, model: str = SUBQUERY_MODEL) -> List[str]:
-    n_queries=5
+    n_queries=1
     prompt = (f"Generate {n_queries} alternative or expanded queries based on:\n"
               f"'{initial_query}'\n"
               f"Return ONLY the queries, one per line. No numbering or introduction.")
@@ -807,14 +808,21 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
         context_tokens = count_tokens(combined_context, model=model)
 
     # Construct the final prompt
+    # open system_prompt.txt 
+    with open('final_answer_system_prompt.txt', 'r', encoding='utf-8') as f:
+        system_prompt = f.read()
+
     prompt = (
-        f"Answer the following question based *only* on the provided context. "
-        f"Cite sources using [Source: file_name, Chunk #N] format for every piece of information used, referring to the 'Sources Available' list.\n\n"
+        f"{system_prompt}\n\n"
         f"Context:\n---\n{combined_context}\n---\n\n"
         f"Sources Available:\n{references}\n\n"
         f"Question: {query}\n\n"
         f"Answer (with citations):"
     )
+
+    # save prompt to file
+    with open('final_prompt.txt', 'w', encoding='utf-8') as f: f.write(prompt)
+
 
     # Estimate prompt tokens to calculate max answer tokens
     prompt_base_tokens = count_tokens(prompt.replace(combined_context, ""), model=model) # Approx tokens without context
@@ -977,13 +985,14 @@ def query_index(query: str, db_path: str, collection_name: str,
     answer = generate_answer(query, combined_context, unique_chunks_list, model=answer_model)
     return answer
 
-def setup_test_mode(test_folder="cleaned_text/test_docs", test_db_path="test_rag_db", test_collection="test_collection", query="what color are apples?"):
+def setup_test_mode(test_folder="cleaned_text/test_docs", test_db_path="chunk_database/test_rag_db", test_collection="test_collection", query="what color are apples?"):
     """Creates test directory and dummy files if needed."""
     print("--- Running in Test Mode ---")
     os.makedirs(test_folder, exist_ok=True)
     if not os.listdir(test_folder):
         with open(os.path.join(test_folder, "test1.txt"), "w") as f: f.write("Red apples are sweet. BM25 scores terms.")
         with open(os.path.join(test_folder, "test2.txt"), "w") as f: f.write("Vector search finds similar concepts like fruit.")
+        with open(os.path.join(test_folder, "test3.txt"), "w") as f: f.write("Apples can be green too. Climate index storylines distractor")
         print("Created dummy test files.")
     return query, test_folder, test_db_path, test_collection
 
@@ -1029,7 +1038,7 @@ def parse_arguments(test_mode_enabled=True):
 
     if test_mode_enabled:
         query, test_folder, test_db_path, test_collection = setup_test_mode()
-        test_phase = "embed" # Control phase: "index", "embed", "query"
+        test_phase = "query" # Control phase: "index", "embed", "query"
         args_list = get_test_args(test_phase, query, test_folder, test_db_path, test_collection, DEFAULT_TOP_K)
         if args_list:
             args = parser.parse_args(args_list)
@@ -1298,56 +1307,161 @@ def find_chunks_to_embed(collection):
         return [], []
 
 def generate_embeddings_in_batches(ids_to_embed, metadatas_to_embed, batch_size, delay):
-    """Generates embeddings for the given chunks in batches."""
+    """Generates embeddings for the given chunks in batches using the client's batch API."""
     embeddings_to_update = []
     ids_to_update = []
     metadatas_to_update = []
     failed_ids = []
 
     num_batches = (len(ids_to_embed) + batch_size - 1) // batch_size
+    print(f"Processing {len(ids_to_embed)} chunks in {num_batches} batches of size {batch_size}...")
+
+    # --- Ensure Client is Available ---
+    # Check if the client needed for the embedding model is available
+    client_available = False
+    model_name_lower = EMBEDDING_MODEL.lower()
+    if any(m in model_name_lower for m in ["embedding-001", "text-embedding-004"]):
+        if gemini_client:
+            client_available = True
+        else:
+            print("ERROR: Google GenAI client (gemini_client) is not initialized. Cannot generate embeddings.")
+            # Mark all as failed if client is missing
+            return [], [], [], ids_to_embed
+    # Add checks for other potential providers/clients if needed
+    # elif 'openai' in model_name_lower:
+    #     if openai_client: client_available = True ...
+
+    if not client_available:
+        print(f"ERROR: Appropriate client for model '{EMBEDDING_MODEL}' not found.")
+        return [], [], [], ids_to_embed
+    # ---------------------------------
+
+
     for i in tqdm(range(num_batches), desc="Generating Embeddings", unit="batch"):
         start_idx = i * batch_size
         end_idx = start_idx + batch_size
         batch_ids = ids_to_embed[start_idx:end_idx]
         batch_metadatas = metadatas_to_embed[start_idx:end_idx]
 
-        current_batch_embeddings = []
-        current_batch_ids_ok = []
-        current_batch_metadatas_ok = []
+        # --- Prepare Batch Data ---
+        texts_in_batch = []
+        valid_indices_in_batch = [] # Keep track of original index within the batch slice
+        ids_in_batch_map = {} # Map valid_index -> chunk_id
+        metadatas_in_batch_map = {} # Map valid_index -> original metadata
 
-        for chunk_id, meta in zip(batch_ids, batch_metadatas):
+        for idx_in_slice, (chunk_id, meta) in enumerate(zip(batch_ids, batch_metadatas)):
             if not meta:
-                failed_ids.append(chunk_id); continue
+                print(f"Warning: Missing metadata for chunk {chunk_id} in batch {i+1}. Skipping.")
+                failed_ids.append(chunk_id)
+                continue
 
             text_to_embed = meta.get('contextualized_text', meta.get('text'))
             if not text_to_embed or not text_to_embed.strip():
-                failed_ids.append(chunk_id); continue
+                print(f"Warning: Empty text for chunk {chunk_id} in batch {i+1}. Skipping.")
+                failed_ids.append(chunk_id)
+                continue
 
-            try:
-                embedding_vector = get_embedding(text_to_embed, model=EMBEDDING_MODEL, task_type="retrieval_document")
-                if embedding_vector is not None and embedding_vector.ndim == 1 and embedding_vector.size > 0:
-                    current_batch_embeddings.append(embedding_vector.tolist())
-                    updated_meta = meta.copy()
-                    updated_meta['has_embedding'] = True
-                    current_batch_metadatas_ok.append(updated_meta)
-                    current_batch_ids_ok.append(chunk_id)
-                else:
-                    # print(f"Warning: Failed to get valid embedding for chunk {chunk_id}. Skipping update.") # Optional logging
-                    failed_ids.append(chunk_id)
-            except Exception as embed_err:
-                 print(f"\nError generating embedding for chunk {chunk_id}: {embed_err}")
+            # Preprocess text (as done in get_embedding)
+            text_to_embed = text_to_embed.replace("\n", " ").strip()
+            if not text_to_embed: # Check again after preprocessing
+                 print(f"Warning: Text became empty after preprocessing for chunk {chunk_id} in batch {i+1}. Skipping.")
                  failed_ids.append(chunk_id)
+                 continue
+
+            texts_in_batch.append(text_to_embed)
+            valid_indices_in_batch.append(idx_in_slice) # Store the original position within the slice
+            ids_in_batch_map[idx_in_slice] = chunk_id
+            metadatas_in_batch_map[idx_in_slice] = meta
 
 
-        if current_batch_ids_ok:
-            ids_to_update.extend(current_batch_ids_ok)
-            embeddings_to_update.extend(current_batch_embeddings)
-            metadatas_to_update.extend(current_batch_metadatas_ok)
+        if not texts_in_batch:
+            print(f"Skipping batch {i+1} as it contains no valid texts to embed.")
+            continue # Skip to the next batch
 
+        # --- Make Batch Embedding API Call ---
+        try:
+            # Ensure model name has prefix if needed (Gemini often does)
+            api_model_name = EMBEDDING_MODEL if EMBEDDING_MODEL.startswith("models/") else f"models/{EMBEDDING_MODEL}"
+
+            # Configure embedding options
+            # Use uppercase task_type for v1beta API (as shown in user example)
+            # retrieval_document is a good default for storing chunks
+            task_type_upper = "RETRIEVAL_DOCUMENT" # Explicitly set for embedding stored chunks
+
+            # Prepare config, only include dimension if it's set globally
+            embed_config_args = {'task_type': task_type_upper}
+            if OUTPUT_EMBEDDING_DIMENSION is not None:
+                embed_config_args['output_dimensionality'] = OUTPUT_EMBEDDING_DIMENSION
+
+            config = EmbedContentConfig(**embed_config_args)
+
+            # print(f"DEBUG: Calling embed_content for batch {i+1} with {len(texts_in_batch)} texts. Config: {config}")
+
+            # Call the batch embedding endpoint
+            response = gemini_client.models.embed_content(
+                model=api_model_name,
+                contents=texts_in_batch,
+                config=config
+            )
+
+            # --- Process Batch Response ---
+            if not response or not hasattr(response, 'embeddings'):
+                 print(f"\nError: Invalid or empty response received from embedding API for batch {i+1}. Failing all chunks in this batch.")
+                 # Mark all successfully *prepared* items in this batch as failed
+                 for idx_in_slice in valid_indices_in_batch:
+                     failed_ids.append(ids_in_batch_map[idx_in_slice])
+                 continue # Move to next batch
+
+            if len(response.embeddings) != len(texts_in_batch):
+                print(f"\nError: Mismatch between requested texts ({len(texts_in_batch)}) and received embeddings ({len(response.embeddings)}) for batch {i+1}. Failing all chunks in this batch.")
+                for idx_in_slice in valid_indices_in_batch:
+                     failed_ids.append(ids_in_batch_map[idx_in_slice])
+                continue # Move to next batch
+
+            # Iterate through the embeddings received, correlating them back to the original chunks
+            for response_idx, embedding_result in enumerate(response.embeddings):
+                # Get the original index within the batch slice
+                original_slice_idx = valid_indices_in_batch[response_idx]
+                chunk_id = ids_in_batch_map[original_slice_idx]
+                original_meta = metadatas_in_batch_map[original_slice_idx]
+
+                if hasattr(embedding_result, 'values') and isinstance(embedding_result.values, list) and len(embedding_result.values) > 0:
+                    # Successfully embedded
+                    embedding_vector = embedding_result.values
+                    embeddings_to_update.append(embedding_vector) # Already a list
+
+                    # Update metadata
+                    updated_meta = original_meta.copy()
+                    updated_meta['has_embedding'] = True
+                    metadatas_to_update.append(updated_meta)
+
+                    # Add ID to the list of chunks successfully processed
+                    ids_to_update.append(chunk_id)
+                else:
+                    # Embedding failed for this specific chunk in the batch
+                    print(f"\nWarning: Failed to get embedding values for chunk {chunk_id} within batch {i+1}. Skipping update for this chunk.")
+                    failed_ids.append(chunk_id)
+
+        except Exception as embed_err:
+             print(f"\n!!! Critical Error during batch embedding API call for batch {i+1}: {embed_err}")
+             print(traceback.format_exc()) # Print stack trace for debugging
+             # Mark all successfully prepared items in this batch as failed
+             for idx_in_slice in valid_indices_in_batch:
+                  failed_ids.append(ids_in_batch_map[idx_in_slice])
+             # Optional: break loop if one batch fails critically? Or continue? Current: continue.
+
+
+        # --- Optional Delay Between Batches ---
         if delay > 0 and i < num_batches - 1:
+            # print(f"Waiting {delay}s before next batch...") # Debug
             time.sleep(delay)
 
-    return ids_to_update, embeddings_to_update, metadatas_to_update, failed_ids
+    # --- Return results ---
+    # Make failed_ids unique
+    unique_failed_ids = list(set(failed_ids))
+    print(f"Embedding generation complete. Successful: {len(ids_to_update)}, Failed: {len(unique_failed_ids)}")
+
+    return ids_to_update, embeddings_to_update, metadatas_to_update, unique_failed_ids
 
 def update_embedded_chunks_in_chromadb(collection, ids, embeddings, metadatas):
     """Updates chunks in ChromaDB with their generated embeddings."""
