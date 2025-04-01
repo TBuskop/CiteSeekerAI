@@ -83,34 +83,20 @@ except ImportError:
 # ------------------------------------------------------
 
 # --- Config Imports ---
-try:
-    from config import (
-        OPENAI_API_KEY,
-        GEMINI_API_KEY,
-        EMBEDDING_MODEL,
-        CHUNK_CONTEXT_MODEL,
-        SUBQUERY_MODEL,
-        CHAT_MODEL,
-        DEFAULT_MAX_TOKENS,
-        DEFAULT_OVERLAP,
-        DEFAULT_CONTEXT_LENGTH,
-        DEFAULT_TOP_K,
-        OUTPUT_EMBEDDING_DIMENSION,
-    )
-except ImportError:
-    print("Error: config.py not found or missing required variables.")
-    print("Using environment variables or defaults if available.")
-    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-    EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
-    CHUNK_CONTEXT_MODEL = os.environ.get("CHUNK_CONTEXT_MODEL", "gemini-1.5-flash")
-    SUBQUERY_MODEL = os.environ.get("SUBQUERY_MODEL", "gemini-1.5-flash")
-    CHAT_MODEL = os.environ.get("CHAT_MODEL", "gemini-1.5-flash")
-    DEFAULT_MAX_TOKENS = int(os.environ.get("DEFAULT_MAX_TOKENS", 500))
-    DEFAULT_OVERLAP = int(os.environ.get("DEFAULT_OVERLAP", 50))
-    DEFAULT_CONTEXT_LENGTH = int(os.environ.get("DEFAULT_CONTEXT_LENGTH", 100))
-    DEFAULT_TOP_K = int(os.environ.get("DEFAULT_TOP_K", 5))
-    # exit(1) # Optionally exit if config is critical
+from config import (
+    OPENAI_API_KEY,
+    GEMINI_API_KEY,
+    EMBEDDING_MODEL,
+    CHUNK_CONTEXT_MODEL,
+    SUBQUERY_MODEL,
+    CHAT_MODEL,
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_OVERLAP,
+    DEFAULT_CONTEXT_LENGTH,
+    DEFAULT_TOP_K,
+    OUTPUT_EMBEDDING_DIMENSION,
+)
+
 
 # --- ChromaDB Configuration ---
 DEFAULT_CHROMA_COLLECTION_NAME = "rag_chunks_hybrid_default"
@@ -126,27 +112,13 @@ bm25_index_cache = {}
 bm25_ids_cache = {}
 
 # --- Global Variables for API Clients (initialized by main process) ---
-openai_client = None
 gemini_client = None
 
 def initialize_clients():
     """Initializes API clients based on config keys."""
-    global openai_client, gemini_client
+    global gemini_client
     # Reset clients first in case this is called multiple times
-    openai_client = None
     gemini_client = None
-
-    # print("Initializing API clients...") # Verbose logging
-
-    if OPENAI_API_KEY:
-        try:
-            from openai import OpenAI
-            openai_client = OpenAI(api_key=OPENAI_API_KEY)
-            # print("OpenAI client initialized.") # Verbose logging
-        except ImportError:
-            print("Warning - OpenAI library not installed.")
-        except Exception as e:
-            print(f"Warning - Failed to initialize OpenAI client: {e}")
 
     if GEMINI_API_KEY:
         try:
@@ -194,7 +166,7 @@ class ConfigurableEmbeddingFunction(EmbeddingFunction):
 
 
         self._task_type = task_type
-        # API clients (openai_client, gemini_client) are assumed to be
+        # API clients (gemini_client) are assumed to be
         # initialized globally before this function is used by ChromaDB.
         if not self._model_name:
              raise ValueError("Embedding model name must be provided either during init or globally via EMBEDDING_MODEL.")
@@ -396,11 +368,9 @@ def generate_chunk_context(document: str, chunk: str, token_limit: int = 30000,
 
 def get_embedding(text: str, model: str = EMBEDDING_MODEL, embedding_dimension: int = OUTPUT_EMBEDDING_DIMENSION, task_type: Optional[str] = None) -> Optional[np.ndarray]:
     """
-    Get embedding using OpenAI client or configured Google GenAI module,
+    Get embedding using Google,
     following the structure provided in the template.
     """
-    global openai_client # Needed for OpenAI call
-
     # 1. Basic Input Validation
     if not text or not text.strip():
         # print("Warning: Attempting to embed empty text. Returning None.")
@@ -412,27 +382,8 @@ def get_embedding(text: str, model: str = EMBEDDING_MODEL, embedding_dimension: 
         # Using the 'model' parameter passed to the function
         model_lower = model.lower() # Use lowercase for checks
 
-        # --- OpenAI Handling ---
-        if any(m in model_lower for m in ["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"]):
-            if not openai_client:
-                raise RuntimeError("OpenAI client not initialized. Cannot get OpenAI embedding.")
-
-            # Using the specific call structure from the template for OpenAI
-            response = openai_client.embeddings.create(
-                input=[text],
-                model=model, # Use the exact model name passed
-                encoding_format="float" # As specified in the template
-            )
-            # Check response structure (basic)
-            if response.data and response.data[0].embedding:
-                 vector = response.data[0].embedding
-                 return np.array(vector)
-            else:
-                 print(f"Error: Unexpected OpenAI embedding response structure for model {model}.")
-                 return None
-
         # --- Gemini Handling ---
-        elif any(m in model_lower for m in ["embedding-001", "text-embedding-004"]):
+        if any(m in model_lower for m in ["embedding-001", "text-embedding-004"]):
              if not genai: # Check if the genai module is configured
                  raise RuntimeError("Google GenAI library not available or not configured. Cannot get Gemini embedding.")
 
@@ -898,7 +849,7 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
     # 1. Generate Queries
     all_queries = [initial_query]
     # Ensure subquery model client is available (uses main process)
-    if not (openai_client if "gpt" in subquery_model else gemini_client):
+    if not gemini_client:
         print(f"Warning: Client for subquery model '{subquery_model}' not available. Using only initial query.")
     else:
         generated_subqueries = generate_subqueries(initial_query, model=subquery_model)
@@ -914,7 +865,7 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
 
     print("\n--- Retrieving Chunks (Hybrid Vector + BM25) ---")
     # Ensure embedding client is available for query embedding (uses main process)
-    if not (openai_client if "text-embedding" in EMBEDDING_MODEL else gemini_client):
+    if not gemini_client:
          return f"Error: Client for embedding model '{EMBEDDING_MODEL}' needed for query is not available."
 
     for q_idx, current_query in enumerate(all_queries):
@@ -974,7 +925,7 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
     # 5. Generate Final Answer
     print("\n--- Generating Final Answer (Iterative Hybrid Retrieval) ---")
     # Ensure answer model client is available (uses main process)
-    if not (openai_client if "gpt" in answer_model else gemini_client):
+    if not gemini_client:
         return f"Error: Client for answer model '{answer_model}' is not available."
 
     final_answer = generate_answer(initial_query, combined_context, unique_chunks_list, model=answer_model)
@@ -989,7 +940,7 @@ def query_index(query: str, db_path: str, collection_name: str,
 
     # 1. Retrieve Chunks (Hybrid)
     # Ensure embedding client is available (uses main process)
-    if not (openai_client if "text-embedding" in EMBEDDING_MODEL else gemini_client):
+    if not gemini_client:
          return f"Error: Client for embedding model '{EMBEDDING_MODEL}' needed for query is not available."
 
     vector_results = retrieve_chunks_for_query(query, db_path, collection_name, fetch_k)
@@ -1020,7 +971,7 @@ def query_index(query: str, db_path: str, collection_name: str,
     # 4. Generate Final Answer
     print("\n--- Generating Final Answer (Direct Hybrid Query) ---")
      # Ensure answer model client is available (uses main process)
-    if not (openai_client if "gpt" in answer_model else gemini_client):
+    if not gemini_client:
         return f"Error: Client for answer model '{answer_model}' is not available."
 
     answer = generate_answer(query, combined_context, unique_chunks_list, model=answer_model)
@@ -1326,8 +1277,7 @@ def main():
             # Check if necessary embedding client is available in the main process
             provider = "Unknown"
             client_ok = False
-            if EMBEDDING_MODEL in ["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"]: provider = "OpenAI"; client_ok = bool(openai_client)
-            elif EMBEDDING_MODEL in ["embedding-001", "models/embedding-001", "text-embedding-004", "models/text-embedding-004"]: provider = "Gemini"; client_ok = bool(gemini_client)
+            if EMBEDDING_MODEL in ["embedding-001", "models/embedding-001", "text-embedding-004", "models/text-embedding-004"]: provider = "Gemini"; client_ok = bool(gemini_client)
 
             if not client_ok:
                  print(f"Error: {provider} client needed for embedding model '{EMBEDDING_MODEL}' is not initialized. Cannot proceed.")
@@ -1456,9 +1406,9 @@ def main():
         elif args.mode == "query" or args.mode == "query_direct":
              # These modes run in the main process. Ensure necessary clients are initialized.
              # Check clients needed for: query embedding, subquery generation, final answer generation
-            query_embed_client_ok = bool(openai_client if "text-embedding" in EMBEDDING_MODEL else gemini_client)
-            subquery_client_ok = bool(openai_client if "gpt" in SUBQUERY_MODEL else gemini_client) if args.mode == "query" else True # Only needed for iterative
-            answer_client_ok = bool(openai_client if "gpt" in CHAT_MODEL else gemini_client)
+            query_embed_client_ok = bool(gemini_client)
+            subquery_client_ok = bool(gemini_client) if args.mode == "query" else True # Only needed for iterative
+            answer_client_ok = bool(gemini_client)
 
             if not query_embed_client_ok: print(f"Error: Client for query embedding model '{EMBEDDING_MODEL}' not available."); return
             if not subquery_client_ok: print(f"Error: Client for subquery model '{SUBQUERY_MODEL}' not available."); return
