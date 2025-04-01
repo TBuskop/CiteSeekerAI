@@ -49,27 +49,40 @@ def extract_text_from_pdf(pdf_path):
         print(f"[!] Error during PDF text extraction ({pdf_path.name}): {e}")
         return None
 
+import re
+
 def clean_academic_text(text):
-    if not text: return ""
+    if not text:
+        return ""
     lines = text.splitlines()
     cleaned_lines = []
     potential_header_footer = {}
+    
+    # Identify potential header/footer lines (e.g., page numbers)
     for line in lines:
         stripped_line = line.strip()
         if stripped_line and len(stripped_line) < 50:
-             if re.fullmatch(r'-?\s*\d+\s*-?', stripped_line):
-                  potential_header_footer[stripped_line] = potential_header_footer.get(stripped_line, 0) + 1
+            if re.fullmatch(r'-?\s*\d+\s*-?', stripped_line):
+                potential_header_footer[stripped_line] = potential_header_footer.get(stripped_line, 0) + 1
+                
     frequent_threshold = 3
     lines_to_remove = {line for line, count in potential_header_footer.items() if count >= frequent_threshold}
+    
+    # Remove header/footer lines
     for line in lines:
         stripped_line = line.strip()
         if stripped_line and stripped_line not in lines_to_remove:
             cleaned_lines.append(stripped_line)
+            
+    
+    # Join the lines into a single text and do additional clean-up.
     text = "\n".join(cleaned_lines)
     text = re.sub(r' +', ' ', text)
     text = re.sub(r'\n\s*\n\s*\n*', '\n\n', text)
     text = re.sub(r'(\w+)-\n(\w+)', r'\1\2', text)
+    
     return text.strip()
+
 
 def remove_references_section(text):
     """

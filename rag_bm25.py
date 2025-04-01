@@ -1579,7 +1579,7 @@ def run_query_mode(args):
 
 def main():
     """Main function to orchestrate the RAG script."""
-    test_mode_enabled = True # Set to True/False as needed
+    test_mode_enabled = False # Set to True/False as needed
 
     try:
         # 1. Parse Arguments (handles test mode internally)
