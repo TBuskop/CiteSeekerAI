@@ -22,5 +22,8 @@ DEFAULT_MAX_TOKENS = int(os.environ.get("DEFAULT_MAX_TOKENS", "300"))
 DEFAULT_OVERLAP = int(os.environ.get("DEFAULT_OVERLAP", "20"))
 DEFAULT_CONTEXT_LENGTH = int(os.environ.get("DEFAULT_CONTEXT_LENGTH", "20"))
 
+#Embedding configuration
+OUTPUT_EMBEDDING_DIMENSION= int(os.getenv("OUTPUT_EMBEDDING_DIMENSION", "768"))
+
 # Query configuration
 DEFAULT_TOP_K = int(os.getenv("DEFAULT_TOP_K", "5"))
