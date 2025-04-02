@@ -55,6 +55,7 @@ import pickle
 import re
 from rank_bm25 import BM25Okapi
 from google import genai
+from google.api_core import exceptions as google_exceptions # Import google exceptions for specific checking
 from google.genai.types import EmbedContentConfig
 import traceback # For more detailed error logging
 
@@ -302,6 +303,22 @@ def get_chroma_collection(db_path: str, collection_name: str, execution_mode: st
         print(f"!!! Error connecting/creating ChromaDB collection '{collection_name}' at path '{db_path}': {e}")
         traceback.print_exc() # Print detailed traceback
         raise # Re-raise the exception to signal failure
+
+def _update_db_batch(collection: chromadb.Collection, ids: List[str], embeddings: List[List[float]], metadatas: List[Dict]):
+    """Internal helper to update a single batch in ChromaDB."""
+    if not ids:
+        return # Nothing to update
+    try:
+        print(f"DEBUG: Updating {len(ids)} successfully embedded chunks in DB.")
+        collection.update(
+            ids=ids,
+            embeddings=embeddings,
+            metadatas=metadatas
+        )
+    except Exception as db_update_err:
+        print(f"\n!!! Error updating batch in ChromaDB (IDs: {ids[:5]}...): {db_update_err}")
+        # Consider how critical this is - should we add these IDs back to a failed list?
+        # For now, just log the error. The metadata won't be marked 'has_embedding: True'.
 
 # --- File Hashing ---
 def compute_file_hash(file_path: str) -> str:
@@ -1633,7 +1650,6 @@ def find_chunks_to_embed(collection):
         metadatas_to_embed = results.get('metadatas', [])
 
         if not ids_to_embed:
-            print("No chunks found needing embedding in this collection.")
             return [], []
         else:
             print(f"Found {len(ids_to_embed)} chunks to embed.")
@@ -1642,165 +1658,182 @@ def find_chunks_to_embed(collection):
         print(f"Error querying ChromaDB for chunks to embed: {e}")
         return [], []
 
-def generate_embeddings_in_batches(ids_to_embed, metadatas_to_embed, batch_size, delay):
-    """Generates embeddings for the given chunks in batches using the client's batch API."""
-    embeddings_to_update = []
-    ids_to_update = []
-    metadatas_to_update = []
-    failed_ids = []
+def generate_embeddings_in_batches(
+    collection: chromadb.Collection, # Pass the collection object directly
+    ids_to_embed: List[str],
+    metadatas_to_embed: List[Dict],
+    batch_size: int,
+    delay: float
+) -> List[str]: # Return only the list of failed IDs
+    """
+    Generates embeddings and updates ChromaDB incrementally after each successful batch.
+    Stops processing if a rate limit error (429) is encountered.
+
+    Args:
+        collection: The ChromaDB collection object to update.
+        ids_to_embed: List of chunk IDs needing embedding.
+        metadatas_to_embed: Corresponding metadata dictionaries.
+        batch_size: Number of chunks per API batch call.
+        delay: Delay in seconds between batch API calls.
+
+    Returns:
+        A list of unique chunk IDs that failed during the process (due to errors or rate limits).
+    """
+    all_failed_ids = [] # Track all failures across batches
+    total_processed_count = 0
 
     num_batches = (len(ids_to_embed) + batch_size - 1) // batch_size
     print(f"Processing {len(ids_to_embed)} chunks in {num_batches} batches of size {batch_size}...")
 
     # --- Ensure Client is Available ---
-    # Check if the client needed for the embedding model is available
     client_available = False
     model_name_lower = EMBEDDING_MODEL.lower()
     if any(m in model_name_lower for m in ["embedding-001", "text-embedding-004"]):
-        if gemini_client:
-            client_available = True
-        else:
-            print("ERROR: Google GenAI client (gemini_client) is not initialized. Cannot generate embeddings.")
-            # Mark all as failed if client is missing
-            return [], [], [], ids_to_embed
-    # Add checks for other potential providers/clients if needed
-    # elif 'openai' in model_name_lower:
-    #     if openai_client: client_available = True ...
+        if gemini_client: client_available = True
+    # Add checks for other providers if needed...
 
     if not client_available:
-        print(f"ERROR: Appropriate client for model '{EMBEDDING_MODEL}' not found.")
-        return [], [], [], ids_to_embed
-    # ---------------------------------
+        print(f"ERROR: Appropriate client for model '{EMBEDDING_MODEL}' not found. Cannot generate embeddings.")
+        return ids_to_embed # All failed if client is missing
 
-
-    for i in tqdm(range(num_batches), desc="Generating Embeddings", unit="batch"):
+    # --- Process Batches ---
+    for i in tqdm(range(num_batches), desc="Generating Embeddings & Updating DB", unit="batch"):
         start_idx = i * batch_size
         end_idx = start_idx + batch_size
-        batch_ids = ids_to_embed[start_idx:end_idx]
-        batch_metadatas = metadatas_to_embed[start_idx:end_idx]
+        current_batch_ids = ids_to_embed[start_idx:end_idx]
+        current_batch_metadatas = metadatas_to_embed[start_idx:end_idx]
 
-        # --- Prepare Batch Data ---
-        texts_in_batch = []
-        valid_indices_in_batch = [] # Keep track of original index within the batch slice
-        ids_in_batch_map = {} # Map valid_index -> chunk_id
-        metadatas_in_batch_map = {} # Map valid_index -> original metadata
+        batch_texts = []
+        batch_valid_indices = []
+        batch_ids_map = {}
+        batch_metadatas_map = {}
+        batch_initial_failed_ids = [] # IDs failing *before* API call in this batch
 
-        for idx_in_slice, (chunk_id, meta) in enumerate(zip(batch_ids, batch_metadatas)):
+        # --- Prepare Batch Data (Text Extraction & Preprocessing) ---
+        for idx_in_slice, (chunk_id, meta) in enumerate(zip(current_batch_ids, current_batch_metadatas)):
             if not meta:
-                print(f"Warning: Missing metadata for chunk {chunk_id} in batch {i+1}. Skipping.")
-                failed_ids.append(chunk_id)
+                # print(f"Warning: Missing metadata for chunk {chunk_id} in batch {i+1}. Skipping.")
+                batch_initial_failed_ids.append(chunk_id)
                 continue
 
             text_to_embed = meta.get('contextualized_text', meta.get('text'))
             if not text_to_embed or not text_to_embed.strip():
-                print(f"Warning: Empty text for chunk {chunk_id} in batch {i+1}. Skipping.")
-                failed_ids.append(chunk_id)
+                # print(f"Warning: Empty text for chunk {chunk_id} in batch {i+1}. Skipping.")
+                batch_initial_failed_ids.append(chunk_id)
                 continue
 
-            # Preprocess text (as done in get_embedding)
             text_to_embed = text_to_embed.replace("\n", " ").strip()
-            if not text_to_embed: # Check again after preprocessing
-                 print(f"Warning: Text became empty after preprocessing for chunk {chunk_id} in batch {i+1}. Skipping.")
-                 failed_ids.append(chunk_id)
-                 continue
+            if not text_to_embed:
+                # print(f"Warning: Text became empty after preprocessing for chunk {chunk_id} in batch {i+1}. Skipping.")
+                batch_initial_failed_ids.append(chunk_id)
+                continue
 
-            texts_in_batch.append(text_to_embed)
-            valid_indices_in_batch.append(idx_in_slice) # Store the original position within the slice
-            ids_in_batch_map[idx_in_slice] = chunk_id
-            metadatas_in_batch_map[idx_in_slice] = meta
-            # time out for 60 seconds
-            print(f"Sleeping for 60 seconds to avoid rate limits...")
-            time.sleep(70)
+            batch_texts.append(text_to_embed)
+            batch_valid_indices.append(idx_in_slice)
+            batch_ids_map[idx_in_slice] = chunk_id
+            batch_metadatas_map[idx_in_slice] = meta
 
+        # Add pre-API call failures to the main list
+        all_failed_ids.extend(batch_initial_failed_ids)
 
-        if not texts_in_batch:
-            print(f"Skipping batch {i+1} as it contains no valid texts to embed.")
+        if not batch_texts:
+            # print(f"Skipping batch {i+1} as it contains no valid texts to embed.")
+            # Apply delay even if batch is skipped to maintain overall rate
+            if delay > 0 and i < num_batches - 1: time.sleep(delay)
             continue # Skip to the next batch
 
         # --- Make Batch Embedding API Call ---
+        batch_embeddings_ok = []
+        batch_ids_ok = []
+        batch_metadatas_ok = []
+        batch_api_failed_ids = [] # IDs failing during/after API call in this batch
+        rate_limit_hit = False
+
         try:
-            # Ensure model name has prefix if needed (Gemini often does)
+            # Prepare API call parameters
             api_model_name = EMBEDDING_MODEL if EMBEDDING_MODEL.startswith("models/") else f"models/{EMBEDDING_MODEL}"
-
-            # Configure embedding options
-            # Use uppercase task_type for v1beta API (as shown in user example)
-            # retrieval_document is a good default for storing chunks
-            task_type_upper = "RETRIEVAL_DOCUMENT" # Explicitly set for embedding stored chunks
-
-            # Prepare config, only include dimension if it's set globally
+            task_type_upper = "RETRIEVAL_DOCUMENT"
             embed_config_args = {'task_type': task_type_upper}
             if OUTPUT_EMBEDDING_DIMENSION is not None:
                 embed_config_args['output_dimensionality'] = OUTPUT_EMBEDDING_DIMENSION
-
             config = EmbedContentConfig(**embed_config_args)
 
-            # print(f"DEBUG: Calling embed_content for batch {i+1} with {len(texts_in_batch)} texts. Config: {config}")
-
-            # Call the batch embedding endpoint
+            # print(f"DEBUG: Calling embed_content for batch {i+1} with {len(batch_texts)} texts...")
             response = gemini_client.models.embed_content(
                 model=api_model_name,
-                contents=texts_in_batch,
+                contents=batch_texts,
                 config=config
             )
 
             # --- Process Batch Response ---
             if not response or not hasattr(response, 'embeddings'):
-                 print(f"\nError: Invalid or empty response received from embedding API for batch {i+1}. Failing all chunks in this batch.")
+                 print(f"\nError: Invalid/empty API response for batch {i+1}. Failing batch.")
                  # Mark all successfully *prepared* items in this batch as failed
-                 for idx_in_slice in valid_indices_in_batch:
-                     failed_ids.append(ids_in_batch_map[idx_in_slice])
-                 continue # Move to next batch
+                 for idx_in_slice in batch_valid_indices: batch_api_failed_ids.append(batch_ids_map[idx_in_slice])
 
-            if len(response.embeddings) != len(texts_in_batch):
-                print(f"\nError: Mismatch between requested texts ({len(texts_in_batch)}) and received embeddings ({len(response.embeddings)}) for batch {i+1}. Failing all chunks in this batch.")
-                for idx_in_slice in valid_indices_in_batch:
-                     failed_ids.append(ids_in_batch_map[idx_in_slice])
-                continue # Move to next batch
+            elif len(response.embeddings) != len(batch_texts):
+                print(f"\nError: Mismatch text/embedding count for batch {i+1}. Failing batch.")
+                for idx_in_slice in batch_valid_indices: batch_api_failed_ids.append(batch_ids_map[idx_in_slice])
 
-            # Iterate through the embeddings received, correlating them back to the original chunks
-            for response_idx, embedding_result in enumerate(response.embeddings):
-                # Get the original index within the batch slice
-                original_slice_idx = valid_indices_in_batch[response_idx]
-                chunk_id = ids_in_batch_map[original_slice_idx]
-                original_meta = metadatas_in_batch_map[original_slice_idx]
+            else:
+                # Process successful response
+                for response_idx, embedding_result in enumerate(response.embeddings):
+                    original_slice_idx = batch_valid_indices[response_idx]
+                    chunk_id = batch_ids_map[original_slice_idx]
+                    original_meta = batch_metadatas_map[original_slice_idx]
 
-                if hasattr(embedding_result, 'values') and isinstance(embedding_result.values, list) and len(embedding_result.values) > 0:
-                    # Successfully embedded
-                    embedding_vector = embedding_result.values
-                    embeddings_to_update.append(embedding_vector) # Already a list
+                    if hasattr(embedding_result, 'values') and isinstance(embedding_result.values, list) and len(embedding_result.values) > 0:
+                        batch_embeddings_ok.append(embedding_result.values)
+                        updated_meta = original_meta.copy()
+                        updated_meta['has_embedding'] = True # Mark as successfully embedded
+                        batch_metadatas_ok.append(updated_meta)
+                        batch_ids_ok.append(chunk_id)
+                    else:
+                        # print(f"\nWarning: Failed to get values for chunk {chunk_id} in batch {i+1}.")
+                        batch_api_failed_ids.append(chunk_id)
 
-                    # Update metadata
-                    updated_meta = original_meta.copy()
-                    updated_meta['has_embedding'] = True
-                    metadatas_to_update.append(updated_meta)
-
-                    # Add ID to the list of chunks successfully processed
-                    ids_to_update.append(chunk_id)
-                else:
-                    # Embedding failed for this specific chunk in the batch
-                    print(f"\nWarning: Failed to get embedding values for chunk {chunk_id} within batch {i+1}. Skipping update for this chunk.")
-                    failed_ids.append(chunk_id)
+        except google_exceptions.ResourceExhausted as rate_limit_error:
+            # --- Rate Limit Specific Handling ---
+            rate_limit_hit = True
+            print(f"\n!!! Rate Limit Error (429) encountered during batch {i+1}: {rate_limit_error}")
+            print("Stopping further embedding in this run.")
+            # Mark all items prepared for *this specific batch* as failed because the API call failed
+            for idx_in_slice in batch_valid_indices: batch_api_failed_ids.append(batch_ids_map[idx_in_slice])
 
         except Exception as embed_err:
-             print(f"\n!!! Critical Error during batch embedding API call for batch {i+1}: {embed_err}")
-             print(traceback.format_exc()) # Print stack trace for debugging
-             # Mark all successfully prepared items in this batch as failed
-             for idx_in_slice in valid_indices_in_batch:
-                  failed_ids.append(ids_in_batch_map[idx_in_slice])
-             # Optional: break loop if one batch fails critically? Or continue? Current: continue.
+             # --- Other Critical Error Handling ---
+             print(f"\n!!! Critical Error during API call for batch {i+1}: {embed_err}")
+             traceback.print_exc()
+             # Mark all items prepared for this batch as failed
+             for idx_in_slice in batch_valid_indices: batch_api_failed_ids.append(batch_ids_map[idx_in_slice])
 
+        # --- Post-API Call ---
 
-        # --- Optional Delay Between Batches ---
+        # Add API-related failures for this batch to the main list
+        all_failed_ids.extend(batch_api_failed_ids)
+
+        # --- Update DB with successful results from THIS batch ---
+        if batch_ids_ok:
+            _update_db_batch(collection, batch_ids_ok, batch_embeddings_ok, batch_metadatas_ok)
+            total_processed_count += len(batch_ids_ok)
+
+        # --- Check if we need to stop due to rate limit ---
+        if rate_limit_hit:
+            break # Exit the loop immediately
+
+        # --- Apply Delay before next batch ---
         if delay > 0 and i < num_batches - 1:
-            # print(f"Waiting {delay}s before next batch...") # Debug
+            # print(f"Waiting {delay}s before next batch...")
             time.sleep(delay)
 
-    # --- Return results ---
-    # Make failed_ids unique
-    unique_failed_ids = list(set(failed_ids))
-    print(f"Embedding generation complete. Successful: {len(ids_to_update)}, Failed: {len(unique_failed_ids)}")
+    # --- End of Loop ---
+    print(f"\nEmbedding generation loop finished.")
+    print(f"Successfully processed and updated {total_processed_count} chunks in the database during this run.")
+    unique_failed_ids = list(set(all_failed_ids))
+    if unique_failed_ids:
+        print(f"Encountered {len(unique_failed_ids)} unique failures (check logs). These chunks were not updated.")
 
-    return ids_to_update, embeddings_to_update, metadatas_to_update, unique_failed_ids
+    return unique_failed_ids # Return list of all unique failed IDs
 
 def update_embedded_chunks_in_chromadb(collection, ids, embeddings, metadatas):
     """Updates chunks in ChromaDB with their generated embeddings."""
@@ -1836,41 +1869,122 @@ def update_embedded_chunks_in_chromadb(collection, ids, embeddings, metadatas):
 
 
 def run_embed_mode(args):
-    """Handles the logic for the 'embed' mode."""
+    """
+    Handles the logic for the 'embed' mode. It finds chunks lacking
+    embeddings, generates them in batches (updating the DB incrementally),
+    handles rate limits gracefully, and reports failures.
+
+    Args:
+        args: Parsed command-line arguments, expected to have attributes like
+              db_path, collection_name, embed_batch_size, embed_delay.
+    """
     print("--- Running Embed Mode (Phase 2) ---")
-    # Check if necessary client is available
+
+    # --- Client Availability Check ---
     provider = "Unknown"
-    client_ok = False
-    if EMBEDDING_MODEL in ["embedding-001", "models/embedding-001", "text-embedding-004", "models/text-embedding-004"]: provider = "Gemini"; client_ok = bool(gemini_client) # Add checks for other providers if needed
-
-    if not client_ok:
-        print(f"Error: {provider} client needed for embedding model '{EMBEDDING_MODEL}' is not initialized. Cannot proceed.")
-        return
-
+    client_ok = False # Initialize client_ok to False
     try:
+        # Access the global EMBEDDING_MODEL (ensure it's defined)
+        global EMBEDDING_MODEL
+        model_name_lower = EMBEDDING_MODEL.lower() # Use lowercase for checks
+
+        # --- Check for Gemini ---
+        if any(m in model_name_lower for m in ["embedding-001", "text-embedding-004"]):
+            provider = "Gemini"
+            try:
+                # Access the global gemini_client (ensure it's defined)
+                global gemini_client
+                if gemini_client: # Check if the client object exists and is not None
+                    client_ok = True
+                    print(f"DEBUG: {provider} client seems available.")
+                else:
+                    print(f"DEBUG: {provider} client (gemini_client) is None.")
+            except NameError:
+                print(f"DEBUG: Global variable 'gemini_client' not found.")
+
+        # --- Add checks for other potential providers here ---
+        # Example for OpenAI (adjust variable names as needed)
+        # elif 'gpt' in model_name_lower or 'text-embedding-ada-002' in model_name_lower:
+        #     provider = "OpenAI"
+        #     try:
+        #         global openai_client
+        #         if openai_client:
+        #             client_ok = True
+        #             print(f"DEBUG: {provider} client seems available.")
+        #         else:
+        #             print(f"DEBUG: {provider} client (openai_client) is None.")
+        #     except NameError:
+        #         print(f"DEBUG: Global variable 'openai_client' not found.")
+
+        # --- Final check ---
+        if not client_ok:
+            print(f"\nError: {provider} client needed for embedding model '{EMBEDDING_MODEL}' is not available or not initialized.")
+            print("Please ensure the required API key is set and the client was initialized successfully.")
+            return # Exit embed mode if the required client is not ready
+
+    except NameError as ne:
+        print(f"\nError: Required global variable not found during client check: {ne}")
+        print("This might indicate an issue with config loading or client initialization.")
+        return # Exit if essential config like EMBEDDING_MODEL is missing
+    except Exception as client_check_err:
+        print(f"\nAn unexpected error occurred during client check: {client_check_err}")
+        traceback.print_exc()
+        return # Exit on unexpected errors during check
+    # --- End of Client Availability Check ---
+
+
+    # --- Main Embed Mode Logic ---
+    try:
+        # Get the collection object, passing 'embed' mode
+        # This ensures the embedding function behaves correctly if called
         collection = get_chroma_collection(args.db_path, args.collection_name, execution_mode="embed")
 
-        # 1. Find chunks needing embedding
+        # 1. Find chunks needing embedding (those with has_embedding: False)
+        print("Finding chunks that need embeddings...")
         ids_to_embed, metadatas_to_embed = find_chunks_to_embed(collection)
-        if not ids_to_embed: return
 
-        # 2. Generate embeddings in batches
-        ids_ok, embeddings_ok, metadatas_ok, failed_embed_ids = generate_embeddings_in_batches(
-            ids_to_embed, metadatas_to_embed, args.embed_batch_size, args.embed_delay
+        if not ids_to_embed:
+            print("No chunks found needing embedding in this collection.")
+            print("\n--- Embed Mode (Phase 2) Complete ---")
+            return # Nothing more to do
+
+        print(f"Found {len(ids_to_embed)} chunks to process.")
+
+        # 2. Generate embeddings and update DB incrementally
+        # This function now handles batching, API calls, rate limits, and DB updates
+        failed_embed_ids = generate_embeddings_in_batches(
+            collection=collection, # Pass the collection object
+            ids_to_embed=ids_to_embed,
+            metadatas_to_embed=metadatas_to_embed,
+            batch_size=args.embed_batch_size,
+            delay=args.embed_delay
         )
 
-        # 3. Update ChromaDB
-        failed_update_ids = update_embedded_chunks_in_chromadb(collection, ids_ok, embeddings_ok, metadatas_ok)
+        # 3. Report final failures (DB update happened inside the function)
+        if failed_embed_ids:
+            print(f"\nSummary: Failed to process/embed {len(failed_embed_ids)} unique chunks during this run.")
+            print("These chunks were not updated and likely remain marked as 'has_embedding': False.")
+            print("You can re-run '--mode embed' to retry processing them.")
 
-        # 4. Report failures
-        all_failed_ids = set(failed_embed_ids + failed_update_ids)
-        if all_failed_ids:
-            print(f"\nWarning: Failed to process/embed/update {len(all_failed_ids)} unique chunks.")
-            print("These chunks may remain marked as 'has_embedding': False and can be retried.")
-            # Optional: Log failed_ids to a file
+            # Optional: Log failed_ids to a file for detailed review
+            log_filename = "embedding_failures.log"
+            try:
+                with open(log_filename, "a", encoding="utf-8") as f:
+                    timestamp = datetime.datetime.now().isoformat()
+                    f.write(f"--- Run at {timestamp} ---\n")
+                    f.write(f"Failed IDs ({len(failed_embed_ids)}):\n")
+                    for fid in failed_embed_ids:
+                         f.write(f"{fid}\n")
+                    f.write("-" * 20 + "\n")
+                print(f"List of failed chunk IDs appended to '{log_filename}'.")
+            except Exception as log_err:
+                print(f"Warning: Could not write failed IDs to log file '{log_filename}': {log_err}")
+        else:
+            print("\nSummary: All found chunks requiring embeddings were processed successfully.")
 
     except Exception as e:
-        print(f"!!! Error during embed mode execution: {e}")
+        # Catch any broad errors during the embed process (e.g., DB connection issues)
+        print(f"\n!!! An error occurred during the main embed mode execution: {e}")
         traceback.print_exc()
 
     print("\n--- Embed Mode (Phase 2) Complete ---")
