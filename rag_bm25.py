@@ -105,6 +105,7 @@ from config import (
     OUTPUT_EMBEDDING_DIMENSION,
     RERANKER_MODEL,
     DEFAULT_RERANK_CANDIDATE_COUNT,
+    DEFAULT_TOTAL_CONTEXT_WINDOW,
 )
 
 
@@ -143,114 +144,164 @@ def initialize_clients():
 
 
 class ConfigurableEmbeddingFunction(EmbeddingFunction):
-    """
-    A ChromaDB EmbeddingFunction that uses the script's configured
-    get_embedding function and respects the OUTPUT_EMBEDDING_DIMENSION.
-    """
     def __init__(self,
-                 model_name: Optional[str] = None, # Allow setting model later if needed
-                 output_dimension_override: Optional[int] = None, # Optional explicit override
-                 task_type: str = "retrieval_document"):
+                 model_name: Optional[str] = None,
+                 output_dimension_override: Optional[int] = None,
+                 task_type: str = "retrieval_document",
+                 current_mode: str = "unknown"): # Add mode parameter
         """
-        Initializes the embedding function.
-
-        Args:
-            model_name: The embedding model to use. Defaults to global EMBEDDING_MODEL.
-            output_dimension_override: Explicitly set dimension, otherwise uses global OUTPUT_EMBEDDING_DIMENSION.
-            task_type: Default task type for embedding calls.
+        Initializes the embedding function, sets dimension, and stores execution mode.
         """
-        # Use passed model_name or fall back to global default
         self._model_name = model_name if model_name else EMBEDDING_MODEL
-
-        # Determine the dimension: Use override if provided, otherwise use the globally loaded value
-        if output_dimension_override is not None:
-             self._output_dimension = output_dimension_override
-             print(f"DEBUG (EmbeddingFunction Init): Using override dimension {self._output_dimension}")
-        else:
-             # --- Access the global variable HERE, inside the method ---
-             self._output_dimension = OUTPUT_EMBEDDING_DIMENSION # This should now be defined
-            #  if self._output_dimension is not None:
-            #       print(f"DEBUG (EmbeddingFunction Init): Using global dimension {self._output_dimension}")
-            #  else:
-            #       print(f"DEBUG (EmbeddingFunction Init): Using model default dimension.")
-
-
-        self._task_type = task_type
-        # API clients (gemini_client) are assumed to be
-        # initialized globally before this function is used by ChromaDB.
         if not self._model_name:
              raise ValueError("Embedding model name must be provided either during init or globally via EMBEDDING_MODEL.")
+
+        self._mode = current_mode # Store the mode
+
+        determined_dimension: Optional[int] = None
+        if output_dimension_override is not None:
+             determined_dimension = output_dimension_override
+        else:
+             determined_dimension = OUTPUT_EMBEDDING_DIMENSION
+
+        self.dimension = determined_dimension
+        self._output_dimension = determined_dimension # Keep internal if needed
+
+        self._task_type = task_type
+
+        if self.dimension is None and self._mode != "index":
+             # Dimension is crucial if we need to generate real or zero vectors
+             raise ValueError("Embedding dimension must be set via config or override unless in 'index' mode where it might be inferred later (though risky).")
+        elif self.dimension is None and self._mode == "index":
+             print("WARNING (EmbeddingFunction Init): Dimension not set in 'index' mode. Upsert might fail if zero vectors are needed.")
 
 
     def __call__(self, input_texts: Documents) -> Embeddings:
         """
-        Generates embeddings for the given input texts.
-        (Keep the rest of the __call__ method implementation as before)
+        Generates embeddings or placeholders based on the mode.
         """
-        # ... (previous __call__ logic remains the same) ...
+        print(f"DEBUG: ConfigurableEmbeddingFunction.__call__ invoked in mode '{self._mode}' for {len(input_texts)} texts!")
+
+        # --- MODE: index ---
+        # If called during index mode (likely via implicit upsert), return zeros.
+        if self._mode == "index":
+            if self.dimension is None:
+                # This should ideally not happen if init logic is correct, but as a safeguard:
+                print("ERROR (EmbeddingFunction): Cannot generate zero vectors in 'index' mode without a known dimension!")
+                # Raising an error might be better than letting ChromaDB fail later
+                raise ValueError("Dimension required for placeholder vectors in index mode.")
+            print(f"INFO (EmbeddingFunction): In 'index' mode, returning zero vectors ({self.dimension}d) instead of calling API.")
+            zero_vector = [0.0] * self.dimension
+            return [zero_vector for _ in input_texts]
+
+        # --- MODES: embed, query, other ---
+        # Proceed with actual embedding generation
         all_embeddings: Embeddings = []
+        client_available = False # Check client availability again
+        model_name_lower = self._model_name.lower()
+        if any(m in model_name_lower for m in ["embedding-001", "text-embedding-004"]):
+            if gemini_client: client_available = True
+
+        if not client_available:
+            print(f"ERROR (EmbeddingFunction __call__): Client for model '{self._model_name}' not found in mode '{self._mode}'. Returning zero vectors.")
+            if self.dimension is None: raise ValueError("Dimension required for placeholder vectors on client failure.")
+            zero_vector = [0.0] * self.dimension
+            return [zero_vector for _ in input_texts] # Return zeros on client failure
+
+        # Generate real embeddings
         for text in input_texts:
+            embedding = None # Initialize embedding for this text
             try:
                 embedding = get_embedding(
                     text=text,
                     model=self._model_name,
-                    task_type=self._task_type
-                    # get_embedding internally uses the global OUTPUT_EMBEDDING_DIMENSION
+                    task_type=self._task_type,
+                    embedding_dimension=self.dimension
                 )
-                # ... (rest of the error handling and appending logic) ...
-                if embedding is not None and isinstance(embedding, np.ndarray):
-                    # Optional check: verify dimension if explicitly set
-                    if self._output_dimension is not None and len(embedding) != self._output_dimension:
-                         print(f"WARNING (EmbeddingFunction): Dimension mismatch! Expected {self._output_dimension}, got {len(embedding)} for model {self._model_name}. Using the vector anyway.")
+
+                if embedding is not None and isinstance(embedding, np.ndarray) and embedding.size > 0:
+                    # Optional dimension check
+                    if self.dimension is not None and len(embedding) != self.dimension:
+                         print(f"WARNING (EmbeddingFunction): Dimension mismatch! Expected {self.dimension}, got {len(embedding)}. Using vector anyway.")
                     all_embeddings.append(embedding.tolist())
                 else:
-                    print(f"ERROR (EmbeddingFunction): Failed to get embedding for text: '{text[:50]}...'. Skipping.")
-                    all_embeddings.append([]) # Append empty list to signify failure
-            except Exception as e:
-                print(f"ERROR (EmbeddingFunction): Exception during embedding for text '{text[:50]}...': {e}")
-                all_embeddings.append([]) # Append empty list on error
+                    # Failed to get a valid embedding (API error handled in get_embedding, or empty result)
+                    print(f"ERROR (EmbeddingFunction): Failed to get valid embedding for text: '{text[:50]}...'. Appending zero vector.")
+                    if self.dimension is None: raise ValueError("Dimension required for placeholder zero vector on embedding failure.")
+                    all_embeddings.append([0.0] * self.dimension) # Append ZEROS
 
-        # Filter/handle failures as before if necessary
-        # ...
+            except Exception as e:
+                # Catch errors from get_embedding itself (like the 429)
+                print(f"ERROR (EmbeddingFunction): Exception during embedding generation for text '{text[:50]}...': {e}. Appending zero vector.")
+                # traceback.print_exc() # Optionally print traceback here too
+                if self.dimension is None: raise ValueError("Dimension required for placeholder zero vector on exception.")
+                all_embeddings.append([0.0] * self.dimension) # Append ZEROS
 
         return all_embeddings
 
 # --- ChromaDB Client Setup ---
-def get_chroma_collection(db_path: str, collection_name: str) -> chromadb.Collection:
+def get_chroma_collection(db_path: str, collection_name: str, execution_mode: str) -> chromadb.Collection:
     """
-    Gets or creates a ChromaDB collection, explicitly setting the
-    embedding function based on global configuration.
+    Gets or creates a ChromaDB collection, passing the execution mode
+    to the embedding function to control its behavior (e.g., return zeros
+    during index phase). Ensures the collection is configured with the
+    correct dimension hint from the embedding function instance.
+
+    Args:
+        db_path: Path to the persistent database directory.
+        collection_name: Name of the ChromaDB collection.
+        execution_mode: The current script mode ('index', 'embed', 'query', etc.).
+
+    Returns:
+        A chromadb.Collection instance.
+
+    Raises:
+        ValueError: If the embedding function cannot determine the dimension
+                    when required by the execution mode.
+        Exception: Propagates exceptions from ChromaDB connection/creation.
     """
-    # ... (checks remain the same) ...
     try:
-        # Instantiate the custom embedding function.
-        # It will now internally fetch the global OUTPUT_EMBEDDING_DIMENSION.
-        # We pass the global model name explicitly for clarity.
+        # Instantiate the custom embedding function, passing the mode
+        # It will determine the dimension and store the mode internally.
         emb_func = ConfigurableEmbeddingFunction(
-            model_name=EMBEDDING_MODEL
-            # No need to pass output_dimension here anymore,
-            # unless you wanted to specifically override the global one
-            # for this collection instance (e.g., output_dimension_override=512)
+            model_name=EMBEDDING_MODEL, # Assumes EMBEDDING_MODEL is accessible
+            current_mode=execution_mode
+            # OUTPUT_EMBEDDING_DIMENSION is read globally inside ConfigurableEmbeddingFunction.__init__
         )
 
-        # ... (rest of the function remains the same: PersistentClient, get_or_create_collection) ...
+        # Log the dimension the function instance holds
+        print(f"DEBUG: Instantiated ConfigurableEmbeddingFunction for mode '{execution_mode}' with dimension: {emb_func.dimension}")
+
+        # Ensure the database directory exists
         os.makedirs(db_path, exist_ok=True)
+
+        # Create the persistent client
         chroma_client = chromadb.PersistentClient(path=db_path)
 
-        # print(f"DEBUG: Getting/Creating collection '{collection_name}' with EmbeddingFunction for model '{EMBEDDING_MODEL}' and configured dimension.")
+        print(f"DEBUG: Getting/Creating collection '{collection_name}' with EmbeddingFunction instance.")
 
+        # Get or create the collection, passing the embedding function instance.
+        # ChromaDB should use the .dimension attribute (if available) from emb_func
+        # during creation to set the index parameters correctly.
+        # The emb_func.__call__ method will behave based on the stored 'execution_mode'.
         collection = chroma_client.get_or_create_collection(
             name=collection_name,
-            embedding_function=emb_func,
-            metadata={"hnsw:space": "cosine"}
+            embedding_function=emb_func, # Pass the mode-aware instance
+            metadata={"hnsw:space": "cosine"} # Example metadata, adjust if needed
         )
+
+        print(f"DEBUG: Successfully retrieved/created collection '{collection_name}'.")
         return collection
 
+    except ValueError as ve:
+        # Catch potential dimension errors from embedding function init
+        print(f"!!! Configuration Error for collection '{collection_name}': {ve}")
+        raise # Re-raise config error
     except Exception as e:
-        # ... (error handling remains the same) ...
+        # Catch ChromaDB client/collection errors
         print(f"!!! Error connecting/creating ChromaDB collection '{collection_name}' at path '{db_path}': {e}")
-        import traceback; traceback.print_exc()
-        raise
+        traceback.print_exc() # Print detailed traceback
+        raise # Re-raise the exception to signal failure
 
 # --- File Hashing ---
 def compute_file_hash(file_path: str) -> str:
@@ -325,7 +376,7 @@ def generate_chunk_context(
     chunk_text: str,
     start_token_idx: int,
     end_token_idx: int,
-    total_window_tokens: int = 8000, # Use total window size
+    total_window_tokens: int = DEFAULT_TOTAL_CONTEXT_WINDOW, # Use total window size
     summary_max_tokens: int = DEFAULT_CONTEXT_LENGTH,
     context_model: str = CHUNK_CONTEXT_MODEL,
     encoding_model: str = EMBEDDING_MODEL
@@ -359,7 +410,7 @@ def generate_chunk_context(
     try:
         # 1. Tokenize the full document
         try:
-             encoding = tiktoken.encoding_for_model("cl100k_base")
+             encoding = tiktoken.get_encoding("cl100k_base")
         except Exception:
              print(f"Warning: Using fallback 'cl100k_base' encoding for context window.")
              encoding = tiktoken.get_encoding("cl100k_base")
@@ -706,7 +757,7 @@ def index_document_phase1(document_path: str,
                           max_tokens: int = DEFAULT_MAX_TOKENS,
                           overlap: int = DEFAULT_OVERLAP,
                           # Optionally add control for the total window size here
-                          context_total_window: int = 7000
+                          context_total_window: int = DEFAULT_TOTAL_CONTEXT_WINDOW
                          ) -> List[Dict]:
     """
     Processes a single document for Phase 1: reads, chunks, gets SLIDING WINDOW context, tokenizes for BM25.
@@ -775,12 +826,12 @@ def index_document_phase1(document_path: str,
 # Retrieval and Query Functions
 # ---------------------------
 def retrieve_chunks_for_query(query: str, db_path: str, collection_name: str,
-                              top_k: int) -> List[dict]:
+                              top_k: int, execution_mode: str) -> List[dict]:
     """Retrieve top-K chunks from ChromaDB (vector search), returning metadata."""
     if top_k <= 0: top_k = 1
     retrieved_chunks = []
     try:
-        collection = get_chroma_collection(db_path, collection_name)
+        collection = get_chroma_collection(db_path, collection_name, execution_mode=execution_mode)
 
         # Embed the query (uses main process client)
         query_vec = get_embedding(query, model=EMBEDDING_MODEL, task_type="retrieval_query")
@@ -825,7 +876,7 @@ def retrieve_chunks_for_query(query: str, db_path: str, collection_name: str,
 
 # --- RRF Combination Helper ---
 def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str, float]],
-                        db_path: str, collection_name: str, k_rrf: int = 60) -> List[Dict]:
+                        db_path: str, collection_name: str, execution_mode: str, k_rrf: int = 60) -> List[Dict]:
     """Combines vector and BM25 results using Reciprocal Rank Fusion (RRF)."""
     combined_scores: Dict[str, float] = {}
     chunk_metadata_cache: Dict[str, Dict] = {}
@@ -861,7 +912,7 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
         # print(f"Fetching metadata for {len(unique_ids_to_fetch)} BM25-specific chunks...") # Debug
         if unique_ids_to_fetch:
             try:
-                collection = get_chroma_collection(db_path, collection_name)
+                collection = get_chroma_collection(db_path, collection_name, execution_mode=execution_mode)
                 # Fetch in batches for potentially large number of IDs
                 batch_size_fetch = 200 # Adjust as needed
                 num_batches_fetch = (len(unique_ids_to_fetch) + batch_size_fetch - 1) // batch_size_fetch
@@ -1080,7 +1131,8 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
                         subquery_model: str = SUBQUERY_MODEL,
                         answer_model: str = CHAT_MODEL,
                         reranker_model: Optional[str] = RERANKER_MODEL, # Use config default
-                        rerank_candidate_count: int = DEFAULT_RERANK_CANDIDATE_COUNT) -> str: # Use config default
+                        rerank_candidate_count: int = DEFAULT_RERANK_CANDIDATE_COUNT,
+                        execution_mode: str = "query") -> str: # Use config default
     """Iterative RAG with HYBRID retrieval (Vector + BM25 + RRF) and optional Re-ranking."""
     # 1. Generate Queries
     # --- *** FIX: Initialize all_queries HERE, before the if/else *** ---
@@ -1112,7 +1164,7 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
 
     for q_idx, current_query in enumerate(all_queries):
          print(f"  Querying ({q_idx+1}/{len(all_queries)}): \"{current_query[:100]}...\"")
-         vector_results_all.extend(retrieve_chunks_for_query(current_query, db_path, collection_name, fetch_k))
+         vector_results_all.extend(retrieve_chunks_for_query(current_query, db_path, collection_name, fetch_k, execution_mode=execution_mode))
          bm25_results_all.extend(retrieve_chunks_bm25(current_query, db_path, collection_name, fetch_k))
 
     # 3. Deduplicate and Combine using RRF
@@ -1141,7 +1193,7 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
 
     # Combine using RRF - Get up to fetch_k combined results for potential reranking
     combined_chunks_rrf = combine_results_rrf(
-        deduped_vector_results, deduped_bm25_results, db_path, collection_name
+        deduped_vector_results, deduped_bm25_results, db_path, collection_name, execution_mode=execution_mode
     )
     combined_chunks_rrf = combined_chunks_rrf[:fetch_k] # Limit to candidates for reranking
 
@@ -1192,7 +1244,8 @@ def query_index(query: str, db_path: str, collection_name: str,
                 top_k: int = DEFAULT_TOP_K,
                 answer_model: str = CHAT_MODEL,
                 reranker_model: Optional[str] = RERANKER_MODEL, # Use config default
-                rerank_candidate_count: int = DEFAULT_RERANK_CANDIDATE_COUNT) -> str: # Use config default
+                rerank_candidate_count: int = DEFAULT_RERANK_CANDIDATE_COUNT,
+                execution_mode: str = "query_direct") -> str: # Use config default
     """Direct query using HYBRID retrieval (Vector + BM25 + RRF) and optional Re-ranking."""
     print(f"--- Running Direct Hybrid Query ---")
     print(f"Query: {query}")
@@ -1206,14 +1259,14 @@ def query_index(query: str, db_path: str, collection_name: str,
     if not gemini_client: # Adjust client check if necessary
          return f"Error: Client for embedding model '{EMBEDDING_MODEL}' needed for query is not available."
 
-    vector_results = retrieve_chunks_for_query(query, db_path, collection_name, fetch_k)
+    vector_results = retrieve_chunks_for_query(query, db_path, collection_name, fetch_k, execution_mode=execution_mode)
     bm25_results = retrieve_chunks_bm25(query, db_path, collection_name, fetch_k)
     print(f"Retrieved {len(vector_results)} vector candidates, {len(bm25_results)} BM25 candidates.")
 
     # 2. Combine using RRF
     print("Combining via RRF...")
     combined_chunks_rrf = combine_results_rrf(
-        vector_results, bm25_results, db_path, collection_name
+        vector_results, bm25_results, db_path, collection_name, execution_mode=execution_mode
     )
     combined_chunks_rrf = combined_chunks_rrf[:fetch_k] # Limit to candidates for reranking
 
@@ -1305,7 +1358,7 @@ def parse_arguments(test_mode_enabled=True):
     parser.add_argument("--force_reindex", action="store_true",
                         help="Force reprocessing (chunking/storing) of all source files in 'index' mode, "
                              "resetting 'has_embedding' flag. Does not automatically trigger 'embed'.")
-    parser.add_argument("--embed_batch_size", type=int, default=50,
+    parser.add_argument("--embed_batch_size", type=int, default=140,
                         help="Number of chunks to process in each batch during 'embed' mode.")
     parser.add_argument("--embed_delay", type=float, default=0.1,
                          help="Optional delay (seconds) between embedding batches in 'embed' mode (to avoid rate limits).")
@@ -1363,7 +1416,7 @@ def find_files_to_index(folder_path, document_path):
     else: print(f"Found {len(potential_files)} potential source file(s).")
     return potential_files
 
-def filter_files_for_processing(potential_files, db_path, collection_name, force_reindex):
+def filter_files_for_processing(potential_files, db_path, collection_name, force_reindex, execution_mode: str):
     """Checks ChromaDB for existing file hashes and filters the list of files."""
     files_to_process = []
     skipped_files_count = 0
@@ -1372,7 +1425,7 @@ def filter_files_for_processing(potential_files, db_path, collection_name, force
     if not force_reindex:
         print("Checking ChromaDB for already indexed files (based on hash)...")
         try:
-            collection = get_chroma_collection(db_path, collection_name)
+            collection = get_chroma_collection(db_path, collection_name, execution_mode=execution_mode)
             existing_data = collection.get(include=['metadatas']) # Fetch metadata
             if existing_data and existing_data.get('metadatas'):
                 count = 0
@@ -1435,7 +1488,7 @@ def process_files_sequentially(files_to_process):
     return all_phase1_chunks, failed_files_info
 
 def update_chromadb_raw_chunks(collection, all_phase1_chunks):
-    """Adds/Updates raw chunk data (Phase 1) to ChromaDB."""
+    """Adds/Updates raw chunk data (Phase 1) to ChromaDB, omitting embeddings."""
     if not all_phase1_chunks:
         print("No new raw chunks to add/update in ChromaDB.")
         return
@@ -1443,9 +1496,10 @@ def update_chromadb_raw_chunks(collection, all_phase1_chunks):
     print(f"Adding/Updating {len(all_phase1_chunks)} raw chunks in ChromaDB...")
     chroma_ids = [chunk['id'] for chunk in all_phase1_chunks]
     chroma_metadatas = [chunk['metadata'] for chunk in all_phase1_chunks]
-    chroma_documents = [chunk['metadata'].get('text', '') for chunk in all_phase1_chunks] # Ensure text is included
+    # Ensure documents contain the raw text for storage/BM25 later
+    chroma_documents = [chunk['metadata'].get('text', '') for chunk in all_phase1_chunks]
 
-    batch_size = 500
+    batch_size = 140
     num_batches = (len(chroma_ids) + batch_size - 1) // batch_size
     for i in tqdm(range(num_batches), desc="Adding/Upserting Raw Chunks to ChromaDB"):
         start_idx = i * batch_size
@@ -1456,14 +1510,22 @@ def update_chromadb_raw_chunks(collection, all_phase1_chunks):
 
         if not batch_ids: continue
         try:
+            # *** REVERTED CHANGE: OMIT the embeddings parameter entirely ***
+            # ChromaDB should now use the dimension established during collection creation
+            # and NOT call the embedding function just because we provide documents.
+            print(f"DEBUG: Calling upsert for batch {i+1} (omitting embeddings parameter)") # Add log
             collection.upsert(
                 ids=batch_ids,
                 metadatas=batch_metadatas,
-                documents=batch_documents # Pass raw text for upsert
+                documents=batch_documents
+                # NO 'embeddings=' parameter here!
             )
+            print(f"DEBUG: Upsert for batch {i+1} completed.") # Add log
         except Exception as upsert_err:
             print(f"\n!!! Error upserting batch {i+1}/{num_batches} to ChromaDB: {upsert_err}")
-            # Consider logging failed IDs or retrying?
+            # Add traceback to see the full error if it still happens
+            import traceback
+            traceback.print_exc()
 
     print("Finished adding/upserting raw chunks to ChromaDB.")
 
@@ -1526,14 +1588,14 @@ def run_index_mode(args):
 
     # 2. Filter based on existing hashes (unless forced)
     files_to_process, skipped_count = filter_files_for_processing(
-        potential_files, args.db_path, args.collection_name, args.force_reindex
+        potential_files, args.db_path, args.collection_name, args.force_reindex,  execution_mode="index"
     )
     if not files_to_process:
         print("No new files need processing.")
         # If forcing, we might still want to rebuild BM25 even if no *new* files
         if args.force_reindex:
              print("Force re-index requested, proceeding to BM25 rebuild with existing data.")
-             collection = get_chroma_collection(args.db_path, args.collection_name)
+             collection = get_chroma_collection(args.db_path, args.collection_name, execution_mode="index")
              rebuild_bm25_index(collection, args.db_path, args.collection_name)
         return
 
@@ -1546,7 +1608,7 @@ def run_index_mode(args):
         return
 
     try:
-        collection = get_chroma_collection(args.db_path, args.collection_name)
+        collection = get_chroma_collection(args.db_path, args.collection_name, execution_mode="index")
         update_chromadb_raw_chunks(collection, all_phase1_chunks)
         rebuild_bm25_index(collection, args.db_path, args.collection_name)
     except Exception as db_bm25_err:
@@ -1646,6 +1708,9 @@ def generate_embeddings_in_batches(ids_to_embed, metadatas_to_embed, batch_size,
             valid_indices_in_batch.append(idx_in_slice) # Store the original position within the slice
             ids_in_batch_map[idx_in_slice] = chunk_id
             metadatas_in_batch_map[idx_in_slice] = meta
+            # time out for 60 seconds
+            print(f"Sleeping for 60 seconds to avoid rate limits...")
+            time.sleep(70)
 
 
         if not texts_in_batch:
@@ -1744,7 +1809,7 @@ def update_embedded_chunks_in_chromadb(collection, ids, embeddings, metadatas):
         return
 
     print(f"\nUpdating {len(ids)} chunks in ChromaDB with new embeddings...")
-    update_batch_size = 500
+    update_batch_size = 140
     failed_update_ids = [] # Track failures during DB update
     num_update_batches = (len(ids) + update_batch_size - 1) // update_batch_size
 
@@ -1783,7 +1848,7 @@ def run_embed_mode(args):
         return
 
     try:
-        collection = get_chroma_collection(args.db_path, args.collection_name)
+        collection = get_chroma_collection(args.db_path, args.collection_name, execution_mode="embed")
 
         # 1. Find chunks needing embedding
         ids_to_embed, metadatas_to_embed = find_chunks_to_embed(collection)
@@ -1837,11 +1902,13 @@ def run_query_mode(args):
             final_answer = iterative_rag_query(args.query, args.db_path, args.collection_name,
                                                top_k=args.top_k,
                                                subquery_model=SUBQUERY_MODEL,
-                                               answer_model=CHAT_MODEL)
+                                               answer_model=CHAT_MODEL,
+                                               execution_mode=args.mode)
     else: # query_direct
             final_answer = query_index(args.query, args.db_path, args.collection_name,
                                        top_k=args.top_k,
-                                       answer_model=CHAT_MODEL)
+                                       answer_model=CHAT_MODEL,
+                                       execution_mode=args.mode)
 
     # Print the final result
     print("\n" + "="*20 + " Final Answer " + "="*20)
