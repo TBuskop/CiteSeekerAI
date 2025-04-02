@@ -4,7 +4,6 @@
 /merged_texts
 /pdfs
 /__pycache__
-test.py
 test.txt
 test.ipynb
 combined_context.txt
