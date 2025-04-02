@@ -189,7 +189,7 @@ def save_text_file(text, output_path):
 
 def main():
     # --- Define Default Base Project Name ---
-    default_project = "paper_2_intro" # Changed from "test" for clarity
+    default_project = "droughts" # Changed from "test" for clarity
 
     # --- Define Default Paths using the project name ---
     # Use current working directory as base for defaults
