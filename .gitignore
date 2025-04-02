@@ -14,3 +14,5 @@ prompt.txt
 .gitignore
 /chunk_database
 final_prompt.txt
+final_answer.txt
+generated_subqueries.txt
