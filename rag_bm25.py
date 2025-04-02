@@ -677,6 +677,8 @@ def generate_llm_response(prompt: str, max_tokens: int, temperature: float = 1, 
     """
     Generate a response from the configured LLM provider.
     """
+    supported_models =  ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-8b", "gemini-2.5-pro-exp-03-25"]
+
     if model is None:
         raise ValueError("A model must be specified")
     if model.lower() in ["gpt-3.5-turbo", "gpt-4", "gpt-4o"]:
@@ -687,7 +689,8 @@ def generate_llm_response(prompt: str, max_tokens: int, temperature: float = 1, 
             max_tokens=max_tokens,
         )
         return response.choices[0].message.content.strip()
-    elif model.lower() in ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-8b"]:
+    
+    elif model.lower() in supported_models:
         generate_content_config = genai.types.GenerateContentConfig(
             temperature=temperature,
             max_output_tokens=max_tokens,
@@ -702,7 +705,7 @@ def generate_llm_response(prompt: str, max_tokens: int, temperature: float = 1, 
         )
         return response.text.strip()
     else:
-        raise ValueError(f"Unsupported model: {model}")
+        raise ValueError(f"Unsupported model: {model}, supported modes: {supported_models}")
 
 
 # ---------------------------
@@ -1056,16 +1059,37 @@ def rerank_chunks(query: str, chunks: List[Dict], model_name: Optional[str], top
 
 # --- Subquery and Answer Generation ---
 def generate_subqueries(initial_query: str, model: str = SUBQUERY_MODEL) -> List[str]:
-    n_queries=1
-    prompt = (f"Generate {n_queries} alternative or expanded queries based on:\n"
-              f"'{initial_query}'\n"
-              f"Return ONLY the queries, one per line. No numbering or introduction.")
+    # Recommendation: Use n_queries = 3-5
+    n_queries = 4 # Example value
+
+    prompt = f"""You are an expert research assistant specializing in climate science literature search using academic databases.
+                Your task is to decompose the user's original query into {n_queries} specific and diverse sub-queries suitable for retrieving relevant academic papers on climate science, climate change, and climate impacts.
+
+                These sub-queries should help a Retrieval-Augmented Generation (RAG) system find distinct pieces of evidence, data, or analysis from scientific literature that collectively address the original query.
+
+                Consider breaking down the query by:
+                *   Specific climate phenomena (e.g., sea level rise, extreme heat events, ocean acidification)
+                *   Geographic regions or ecosystems (e.g., Arctic, Sahel region, coral reefs)
+                *   Time scales or periods (e.g., paleo-climate, future projections, specific decades)
+                *   Methodologies (e.g., climate modeling, observational data analysis, impact assessments)
+                *   Specific impacts (e.g., impacts on agriculture, human health, biodiversity)
+                *   Underlying mechanisms or drivers (e.g., greenhouse gas emissions, aerosol effects, climate feedbacks)
+
+                Original Query:
+                '{initial_query}'
+
+                Generate exactly {n_queries} focused sub-queries based on the Original Query, suitable for searching academic climate literature.
+                Return ONLY the sub-queries, each on a new line. Do not include numbering, bullet points, explanations, or introductory text. Avoid overly broad reformulations of the original query.
+                """
     try:
         # Uses main process client
         response_text = generate_llm_response(prompt, max_tokens=250, temperature=0.7, model=model)
         if "[Error generating response" in response_text or "[Blocked" in response_text:
              raise RuntimeError(f"Subquery LLM failed or blocked: {response_text}")
         lines = response_text.strip().splitlines()
+
+        # save response to file for debugging
+        with open('generated_subqueries.txt', 'w', encoding='utf-8') as f: f.write(response_text)
         # Clean up potential list markers
         subqueries = [re.sub(r"^\s*[\d\.\-\*]+\s*", "", line).strip() for line in lines if line.strip()]
         return subqueries[:n_queries] if subqueries else [initial_query]
@@ -1088,7 +1112,7 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
     )
 
     # Truncate context based on model limit (use a conservative estimate)
-    MODEL_CONTEXT_LIMITS = { "gpt-4": 8000, "gpt-4o": 128000, "gpt-3.5-turbo": 16000, "gemini-1.5-flash": 1000000, "gemini-1.0-pro": 30720 }
+    MODEL_CONTEXT_LIMITS = { "gpt-4": 8000, "gpt-4o": 128000, "gpt-3.5-turbo": 16000, "gemini-1.5-flash": 1000000, "gemini-1.5-pro": 2000000, "gemini-2.0-flash": 1000000, "gemini-2.0-flash-lite": 1000000, "gemini-2.5-pro-exp-03-25": 1000000 }
     clean_model_name = model.split('/')[-1] if '/' in model else model # Handle model names like 'models/gemini...'
     model_token_limit = MODEL_CONTEXT_LIMITS.get(clean_model_name, 8000) # Default to 8k if unknown
     # Leave ample room for prompt instructions, query, citations, and the answer itself
@@ -1123,7 +1147,7 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
     prompt_total_tokens = prompt_base_tokens + context_tokens # Estimate total prompt tokens
     # Calculate max tokens for the answer, leave buffer
     answer_max_tokens = max(150, model_token_limit - prompt_total_tokens - 200) # Min 150, buffer 200
-    answer_max_tokens = min(answer_max_tokens, 4096) # Hard cap answer length
+    answer_max_tokens = min(answer_max_tokens, 10000) # Hard cap answer length
 
     # Optional: Save final prompt for debugging
     # try: with open('final_prompt.txt', 'w', encoding='utf-8') as f: f.write(prompt)
@@ -2027,6 +2051,9 @@ def run_query_mode(args):
     # Print the final result
     print("\n" + "="*20 + " Final Answer " + "="*20)
     print(final_answer)
+    # save file
+    with open("final_answer.txt", "w", encoding="utf-8") as f:
+        f.write(final_answer)
     print("="*54 + "\n")
 
 
