@@ -1196,7 +1196,7 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
 
     print(f"Generating final answer using {model} (context tokens: ~{context_tokens}, prompt tokens: ~{prompt_total_tokens}, max answer tokens: {answer_max_tokens})...")
     # Use main process client
-    final_answer = generate_llm_response(prompt, max_tokens=answer_max_tokens, temperature=2, model=model)
+    final_answer = generate_llm_response(prompt, max_tokens=answer_max_tokens, temperature=0.1, model=model)
 
     # Basic check if generation failed
     if "[Error generating response" in final_answer or "[Blocked" in final_answer:
