@@ -1,4 +1,46 @@
-numpy
-openai
-python-dotenv
-tqdm
+# requirements.txt
+# Packages required to run the rag_bm25.py script.
+
+# Core libraries
+numpy>=1.21.0        # For numerical operations, especially with embeddings
+tqdm>=4.60.0         # For progress bars during indexing and embedding
+python-dotenv>=0.19.0 # Often used with config.py to load environment variables like API keys (Implicit Requirement - Good Practice)
+
+# Vector Database
+chromadb>=0.4.24      # Vector database for storing and retrieving chunks/embeddings
+                      # May install dependencies like hnswlib, pydantic, etc.
+
+# Text Processing & Chunking
+tiktoken>=0.5.0       # For token counting and token-based chunking (used by OpenAI/compatible models)
+nltk>=3.6.5           # For text tokenization and stopwords (used by BM25)
+
+# Retrieval & Ranking
+rank_bm25>=0.2.2      # For BM25 lexical search algorithm
+
+# Language Model Interaction & Embeddings
+google-generativeai>=0.4.0 # For interacting with Google Gemini models (embeddings, chat, context generation)
+# google-api-core>=2.11.0  # Often a dependency of google-generativeai, handles API calls/exceptions
+
+# Optional Re-ranking (Script handles its absence)
+sentence-transformers>=2.2.0 # For the CrossEncoder model used in re-ranking
+                             # Note: This package can be large as it may pull in PyTorch or TensorFlow.
+                             # If re-ranking isn't needed, this can be omitted.
+
+# Notes:
+# 1. NLTK Data: The script attempts to download necessary NLTK data ('punkt', 'stopwords').
+#    If the download fails (e.g., due to network restrictions), you might need to download them manually:
+#    >>> import nltk
+#    >>> nltk.download('punkt')
+#    >>> nltk.download('stopwords')
+#
+# 2. Version Pinning: Specific versions are suggested based on common usage, but not strictly enforced by the script.
+#    For reproducible environments, consider pinning exact versions using 'pip freeze > requirements.txt'
+#    after setting up a working environment.
+#
+# 3. Configuration: The script relies on a `config.py` file for API keys and model names.
+#    Ensure this file exists and is correctly populated. `python-dotenv` is included as it's
+#    a common way to manage secrets loaded into `config.py`.
+#
+# 4. System Dependencies: Some packages (like `hnswlib` potentially used by `chromadb`) might have
+#    system-level dependencies (e.g., C++ compilers). Check the documentation for `chromadb`
+#    if you encounter installation issues.
