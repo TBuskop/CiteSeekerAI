@@ -697,13 +697,43 @@ def generate_llm_response(prompt: str, max_tokens: int, temperature: float = 1, 
             response_mime_type="text/plain",
         )
 
+        try: # Add a try/except block specifically around the API call for better debugging
+            response = gemini_client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=generate_content_config
+            )
+            print(f"DEBUG: Full Response for {model}: {response}") # <-- ADD THIS LINE
 
-        response = gemini_client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=generate_content_config
-        )
-        return response.text.strip()
+            # Check for blocking BEFORE accessing .text
+            if response.prompt_feedback and response.prompt_feedback.block_reason:
+                block_reason_str = str(response.prompt_feedback.block_reason) # Get enum string
+                print(f"WARN: Response blocked by safety filters for {model}. Reason: {block_reason_str}")
+                # Return a specific error string or raise an exception
+                return f"[Blocked due to Safety Filters: {block_reason_str}]"
+
+            # Check if candidates exist and have content
+            if not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
+                print(f"WARN: No valid content parts received from {model}.")
+                # Check finish_reason if available
+                finish_reason = "Unknown"
+                if response.candidates and response.candidates[0].finish_reason:
+                    finish_reason = str(response.candidates[0].finish_reason) # Get enum string
+                print(f"WARN: Finish Reason: {finish_reason}")
+                # Return a specific error string or raise an exception
+                return f"[Error generating response: No content parts. Finish Reason: {finish_reason}]"
+
+            # If checks pass, it should be safe to access .text
+            if response.text is None:
+                print(f"ERROR: response.text is None even after passing checks for {model}. Response: {response}")
+                return "[Error generating response: response.text is None]"
+
+            return response.text.strip()
+
+        except Exception as e:
+            print(f"ERROR: Exception during Gemini API call for {model}: {e}")
+            # You might want to return a specific error string or re-raise
+            return f"[Error during API call: {e}]"
     else:
         raise ValueError(f"Unsupported model: {model}, supported modes: {supported_models}")
 
@@ -1062,28 +1092,37 @@ def generate_subqueries(initial_query: str, model: str = SUBQUERY_MODEL) -> List
     # Recommendation: Use n_queries = 3-5
     n_queries = 4 # Example value
 
-    prompt = f"""You are an expert research assistant specializing in climate science literature search using academic databases.
-                Your task is to decompose the user's original query into {n_queries} specific and diverse sub-queries suitable for retrieving relevant academic papers on climate science, climate change, and climate impacts.
+    prompt = f"""You are an expert research assistant specializing in generating precise search queries for climate science, climate impacts, climate change literature databases.
+                Your task is to decompose the user's original query into {n_queries} specific and diverse sub-queries optimized for a hybrid retrieval system combining lexical (like BM25) and semantic (vector-based) search.
 
-                These sub-queries should help a Retrieval-Augmented Generation (RAG) system find distinct pieces of evidence, data, or analysis from scientific literature that collectively address the original query.
+                The goal is to retrieve distinct, relevant chunks of information from academic papers on climate science, climate change, and climate impacts, which will then be reranked to best answer the original query.
 
-                Consider breaking down the query by:
-                *   Specific climate phenomena (e.g., sea level rise, extreme heat events, ocean acidification)
-                *   Geographic regions or ecosystems (e.g., Arctic, Sahel region, coral reefs)
-                *   Time scales or periods (e.g., paleo-climate, future projections, specific decades)
-                *   Methodologies (e.g., climate modeling, observational data analysis, impact assessments)
-                *   Specific impacts (e.g., impacts on agriculture, human health, biodiversity)
-                *   Underlying mechanisms or drivers (e.g., greenhouse gas emissions, aerosol effects, climate feedbacks)
+                **Query Optimization Guidelines:**
+                *   **Hybrid System Focus:** Generate queries that work well for *both* keyword matching and semantic understanding. Prioritize precise keywords and concepts.
+                *   **Keyword & Operator Driven:** Formulate queries primarily using essential keywords. Strategically use boolean operators (`AND`, `OR`) and exact phrase matching (`"..."`) to increase precision for the lexical search component. For example, `"sea level rise" AND "future projections" AND "Mediterranean"`.
+                *   **Facet Coverage & Diversity:** Ensure each sub-query targets a *distinct facet* or angle of the original query. Use the decomposition strategies below to ensure variety. Avoid significant overlap between sub-queries.
+                *   **Specificity:** Use terminology common in academic climate science literature. Avoid vague terms.
+                *   **Format:** Generate search terms/phrases, not full natural language questions.
+
+                **Decomposition Strategies to Consider:**
+                *   Specific climate phenomena (e.g., `"sea level rise"`, `"extreme heat events"`, `"ocean acidification"`)
+                *   Geographic regions or ecosystems (e.g., `"Arctic"`, `"Sahel region"`, `"coral reefs"`)
+                *   Time scales or periods (e.g., `"paleo-climate"`, `"future projections"`, `"21st century"`)
+                *   Methodologies (e.g., `"climate modeling"`, `"observational data analysis"`, `"impact assessment methodology"`)
+                *   Specific impacts (e.g., `impacts AND "agriculture"`, `impacts AND "human health"`, `impacts AND "biodiversity"`)
+                *   Underlying mechanisms or drivers (e.g., `"greenhouse gas emissions"`, `"aerosol effects"`, `"climate feedbacks"`)
+                *   **Policy impacts or mitigation/adaptation strategies** (e.g., `"climate adaptation strategies"`, `"disaster risk management" AND "climate change"`, `"climate finance" AND "developing countries"`, `"mitigation policy"`) # <-- Added this line
+                *   Comparisons or Definitions (e.g., `"X definition"`, `"comparison between X and Y"`, `"X versus Y"`)
 
                 Original Query:
                 '{initial_query}'
 
-                Generate exactly {n_queries} focused sub-queries based on the Original Query, suitable for searching academic climate literature.
+                Generate exactly {n_queries} focused sub-queries based on the Original Query, optimized according to the guidelines above.
                 Return ONLY the sub-queries, each on a new line. Do not include numbering, bullet points, explanations, or introductory text. Avoid overly broad reformulations of the original query.
                 """
     try:
         # Uses main process client
-        response_text = generate_llm_response(prompt, max_tokens=250, temperature=0.7, model=model)
+        response_text = generate_llm_response(prompt, max_tokens=1000, temperature=0.7, model=model) # Temperature might be lowered slightly (e.g., 0.5-0.6) for more focused keyword generation if needed
         if "[Error generating response" in response_text or "[Blocked" in response_text:
              raise RuntimeError(f"Subquery LLM failed or blocked: {response_text}")
         lines = response_text.strip().splitlines()
@@ -1092,6 +1131,8 @@ def generate_subqueries(initial_query: str, model: str = SUBQUERY_MODEL) -> List
         with open('generated_subqueries.txt', 'w', encoding='utf-8') as f: f.write(response_text)
         # Clean up potential list markers
         subqueries = [re.sub(r"^\s*[\d\.\-\*]+\s*", "", line).strip() for line in lines if line.strip()]
+        # Basic validation: remove empty strings or lines that look like instructions
+        subqueries = [q for q in subqueries if q and len(q.split()) > 1 and not q.lower().startswith("generate")]
         return subqueries[:n_queries] if subqueries else [initial_query]
     except Exception as e:
         print(f"Error generating subqueries with {model}: {e}. Using original query."); return [initial_query]
@@ -1155,7 +1196,7 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
 
     print(f"Generating final answer using {model} (context tokens: ~{context_tokens}, prompt tokens: ~{prompt_total_tokens}, max answer tokens: {answer_max_tokens})...")
     # Use main process client
-    final_answer = generate_llm_response(prompt, max_tokens=answer_max_tokens, temperature=0.1, model=model)
+    final_answer = generate_llm_response(prompt, max_tokens=answer_max_tokens, temperature=2, model=model)
 
     # Basic check if generation failed
     if "[Error generating response" in final_answer or "[Blocked" in final_answer:
