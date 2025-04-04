@@ -434,34 +434,6 @@ class ScopusScraper:
                 logger.warning("Timeout waiting for results page URL. Checking for results elements.")
                 # Proceed to check for elements even if URL didn't change as expected
 
-            # Wait for results to load - try different selectors for results container
-            result_selectors = [
-                'section[data-testid="search-results-section"]', # New UI?
-                '.searchResults',
-                '.SearchResultsPage',
-                'div[data-testid="search-results"]'
-            ]
-            
-            results_found = False
-            for selector in result_selectors:
-                 try:
-                     self.page.wait_for_selector(selector, timeout=15000) # Increased timeout slightly
-                     logger.info(f"Found search results container with selector: {selector}")
-                     results_found = True
-                     break
-                 except PlaywrightTimeoutError:
-                     continue # Try next selector
-
-            if not results_found:
-                logger.warning("Could not detect standard search results container.")
-                self._save_screenshot("search_results_container_error")
-                # Check if we are still on a page that looks like results
-                if "results/results.uri" in self.page.url:
-                     logger.info("Still on results URL, proceeding cautiously.")
-                else:
-                     logger.error(f"Unexpected URL after search and no results container found: {self.page.url}")
-                     return False # Fail if no container and wrong URL
-
             # Check initial search results count
             logger.info("Getting initial search results count")
             results_count_text = self._get_results_count()
@@ -505,60 +477,25 @@ class ScopusScraper:
 
     def _get_results_count(self) -> Optional[str]:
         """
-        Get the number of results from the search results page.
+        Get the number of results from the search results page by targeting
+        the specific H2 tag with the defined class names.
         
         Returns:
-            The results count as a string, or None if not found
+            The results count as a string, or None if not found.
         """
         try:
-            # Try to get the count from H2 element that contains "documents found" text
-            h2_selectors = [
-                'h2:has-text("documents found")',
-                'h2.Typography-module__lVnit',
-                'h2[class*="Typography"]'
-            ]
+            # Define the specific selector matching the tag's class names
+            specific_selector = (
+                # only find h2 tag containing documents found
+                'h2:has-text("documents found")'
+            )
             
-            # Try H2 selectors first (most accurate)
-            for selector in h2_selectors:
-                if self.page.is_visible(selector):
-                    text = self.page.text_content(selector)
-                    logger.info(f"Found results count in H2: '{text}'")
-                    return text
+            if self.page.is_visible(specific_selector):
+                text = self.page.text_content(specific_selector)
+                logger.info(f"Found specific results count in H2: '{text}'")
+                return text
             
-            # Fallback to other count selectors
-            count_selectors = [
-                '.resultsCount',
-                '[data-testid="results-count"]',
-                'span:has-text("results")',
-                'div.results-count',
-                'span:has-text("documents found")',
-                'div:has-text("documents found")'
-            ]
-            
-            for selector in count_selectors:
-                if self.page.is_visible(selector):
-                    results_count = self.page.text_content(selector)
-                    logger.info(f"Search returned {results_count}")
-                    return results_count
-            
-            # Look for any element containing "documents found" text as a last resort
-            docs_found_text = self.page.evaluate('''
-                () => {
-                    const elements = document.querySelectorAll('*');
-                    for (const el of elements) {
-                        if (el.textContent && el.textContent.includes('documents found')) {
-                            return el.textContent.trim();
-                        }
-                    }
-                    return null;
-                }
-            ''')
-            
-            if docs_found_text:
-                logger.info(f"Found results via JavaScript: {docs_found_text}")
-                return docs_found_text
-            
-            logger.warning("Could not find results count")
+            logger.warning("Could not find the specific results count tag")
             return None
         except Exception as e:
             logger.error(f"Error getting results count: {str(e)}")

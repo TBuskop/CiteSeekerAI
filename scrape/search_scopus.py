@@ -16,20 +16,10 @@ import logging
 import time
 from pathlib import Path
 import argparse
-from typing import Optional
-
-# change run path to current directory
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
+from typing import Optional, Tuple
 
 # load environment variables from .env file
 from dotenv import load_dotenv
-load_dotenv(override=True)  # Override existing environment variables
-
-# Load credentials and configuration from environment variables 
-# using the new variable names from the .env file
-USERNAME = os.getenv("SCOPUS_USERNAME")
-PASSWORD = os.getenv("SCOPUS_PASSWORD")
-INSTITUTION = os.getenv("SCOPUS_INSTITUTION")
 
 # Import required modules
 from scopus_scraper import ScopusScraper
@@ -100,120 +90,153 @@ def parse_arguments():
 
     return parser.parse_args()
 
-def main():
-    """Run Scopus search and download results."""
-    args = parse_arguments()
+def run_scopus_search(query: str = None, headless: bool = False, 
+                     year_from: Optional[int] = None, year_to: Optional[int] = None, 
+                     download_dir: str = "data/downloads/csv",
+                     username: Optional[str] = None, 
+                     password: Optional[str] = None,
+                     institution: Optional[str] = None) -> Tuple[bool, Optional[Path]]:
+    """
+    Run a search on Scopus and download results as CSV.
     
-    # Use credentials from args (which default to .env values if available)
-    username = args.username
-    password = args.password
-    institution = args.institution
-    
-    # Add fallback check for old environment variable names
-    if not username:
-        username = os.getenv("USER_NAME")  # Try old variable name
-        logger.warning("SCOPUS_USERNAME not found, falling back to USER_NAME")
-    
-    if not password:
-        password = os.getenv("PASSWORD")  # Try old variable name
-        logger.warning("SCOPUS_PASSWORD not found, falling back to PASSWORD")
+    Args:
+        query: Search query string
+        headless: Whether to run browser in headless mode
+        year_from: Start year for filtering results
+        year_to: End year for filtering results
+        download_dir: Directory to save downloaded files
+        username: Scopus username (overrides env variables)
+        password: Scopus password (overrides env variables)
+        institution: Institution name (overrides env variables)
         
-    if not institution:
-        institution = os.getenv("UNI_NAME")  # Try old variable name
-        logger.warning("SCOPUS_INSTITUTION not found, falling back to UNI_NAME")
-
-    if not username or not password:
-        logger.error("Scopus username and password are required. Set SCOPUS_USERNAME and SCOPUS_PASSWORD in .env file.")
-        sys.exit(1)
-
-    logger.info(f"Using institution: {institution}")
-    logger.info(f"Using username: {username}")
-    logger.info("Password: [masked for security]")
-    
-    # Create screenshots directory
-    screenshots_dir = Path(__file__).parent / "screenshots"
-    screenshots_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Screenshots will be saved to: {screenshots_dir}")
-    
-    # Set up download directory from args
-    download_dir = Path(args.download_dir)
-    download_dir.mkdir(exist_ok=True, parents=True)
-    logger.info(f"Downloads will be saved to: {download_dir}")
-    
-    
-    # Step 1: Initialize the Scopus scraper
-    logger.info("Step 1: Initializing Scopus scraper...")
-    
-    csv_path: Optional[Path] = None # Define csv_path before try block
-    scraper = None # Define scraper for potential use in except block
+    Returns:
+        Tuple containing (success: bool, csv_path: Optional[Path])
+    """
     try:
-        # Initialize the scraper
+        # Change to the directory of this script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        os.chdir(script_dir)
+        
+        # Load environment variables
+        load_dotenv(override=True)
+        
+        # Get credentials from args or environment variables
+        username = username or os.getenv("SCOPUS_USERNAME")
+        password = password or os.getenv("SCOPUS_PASSWORD")
+        institution = institution or os.getenv("SCOPUS_INSTITUTION")
+        
+        # Add fallback check for old environment variable names
+        if not username:
+            username = os.getenv("USER_NAME")
+            logger.warning("SCOPUS_USERNAME not found, falling back to USER_NAME")
+        
+        if not password:
+            password = os.getenv("PASSWORD")
+            logger.warning("SCOPUS_PASSWORD not found, falling back to PASSWORD")
+            
+        if not institution:
+            institution = os.getenv("UNI_NAME")
+            logger.warning("SCOPUS_INSTITUTION not found, falling back to UNI_NAME")
+
+        if not username or not password:
+            logger.error("Scopus username and password are required.")
+            return False, None
+
+        logger.info(f"Using institution: {institution}")
+        logger.info(f"Using username: {username}")
+        logger.info("Password: [masked for security]")
+        
+        # Create screenshots directory
+        screenshots_dir = Path(script_dir) / "screenshots"
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Screenshots will be saved to: {screenshots_dir}")
+        
+        # Set up download directory
+        download_dir_path = Path(download_dir)
+        download_dir_path.mkdir(exist_ok=True, parents=True)
+        logger.info(f"Downloads will be saved to: {download_dir_path}")
+        
+        # Get default query if none provided
+        if query is None:
+            # Try to read query from generated_search_string.txt
+            default_query_file = Path(script_dir) / "generated_search_string.txt"
+            if default_query_file.exists():
+                try:
+                    query = default_query_file.read_text().strip()
+                    logger.info(f"Using query from {default_query_file}")
+                except Exception as e:
+                    logger.warning(f"Could not read {default_query_file}. Error: {e}")
+                    query = "\"climate change\" AND \"coastal erosion\" AND adaptation AND \"Europe\"" # Fallback
+            else:
+                logger.info(f"{default_query_file} not found, using fallback default query.")
+                query = "\"climate change\" AND \"coastal erosion\" AND adaptation AND \"Europe\"" # Fallback
+        
+        # Initialize the scraper and perform search
+        csv_path = None
         with ScopusScraper(
-            headless=args.headless,
-            download_dir=download_dir,
-            institution=institution, # Pass institution
-            screenshots_dir=screenshots_dir # Pass screenshots directory
+            headless=headless,
+            download_dir=download_dir_path,
+            institution=institution,
+            screenshots_dir=screenshots_dir
         ) as scraper:
             logger.info("Scopus scraper initialized successfully.")
             
-            # Step 2: Log in to Scopus
-            logger.info("Step 2: Logging in to Scopus...")
-            # Check return value from login method
+            # Login to Scopus
             login_success = scraper.login(username=username, password=password)
             if not login_success:
                 logger.error("Login failed. Check credentials and network connection.")
-                return None
+                return False, None
             logger.info("Logged in successfully.")
             
-            # Step 3: Perform search query
-            logger.info(f"Step 3: Performing search query: {args.query}")
-            search_success = scraper.search(args.query)
+            # Perform search
+            search_success = scraper.search(query)
             if not search_success:
                 logger.error("Search failed. Check your query and try again.")
-                return None
+                return False, None
             logger.info("Search completed successfully.")
             
-            # Step 4: Apply date filters if specified
-            # if args.year_from or args.year_to:
-            #     logger.info(f"Step 4: Applying date filters: {args.year_from} to {args.year_to}")
-            #     # Fix method name: apply_date_filters -> apply_date_filter
-            #     filter_success = scraper.apply_date_filter(args.year_from, args.year_to)
-            #     if not filter_success:
-            #         logger.warning("Failed to apply date filters, continuing with unfiltered results")
-            #     else:
-            #         logger.info("Date filters applied successfully")
-            # else:
-            #     logger.info("Step 4: No date filters specified, skipping.")
+            # Apply date filters if specified
+            if year_from or year_to:
+                logger.info(f"Applying date filters: {year_from} to {year_to}")
+                filter_success = scraper.apply_date_filter(year_from, year_to)
+                if not filter_success:
+                    logger.warning("Failed to apply date filters, continuing with unfiltered results")
+                else:
+                    logger.info("Date filters applied successfully")
             
-            # Step 5: Export results to CSV
-            logger.info("Step 5: Exporting results to CSV...")
-            # Create a meaningful filename with timestamp
+            # Export results to CSV
+            logger.info("Exporting results to CSV...")
             timestamp = time.strftime("%Y%m%d-%H%M%S")
-            safe_query_part = "".join(c if c.isalnum() else '_' for c in args.query)[:50]
+            safe_query_part = "".join(c if c.isalnum() else '_' for c in query)[:50]
             filename = f"scopus_{safe_query_part}_{timestamp}"
             
-            # Fix method name: export_results_to_csv -> export_to_csv
             csv_path = scraper.export_to_csv(filename)
             if not csv_path:
                 logger.error("Failed to export results to CSV.")
-                return None
+                return False, None
             
             logger.info(f"Results exported to CSV at: {csv_path}")
-            return csv_path
+            return True, csv_path
             
     except Exception as e:
         logger.exception(f"An unexpected error occurred: {e}")
-        # Try to save screenshot if scraper exists and has a page
-        if scraper and hasattr(scraper, 'page') and scraper.page:
-            try:
-                scraper._save_screenshot("unexpected_error")
-            except Exception as screenshot_error:
-                logger.error(f"Failed to save error screenshot: {screenshot_error}")
-        return None
+        return False, None
 
+# Keep the original script functionality when run directly
 if __name__ == "__main__":
-    csv_file = main()
-    if csv_file:
+    args = parse_arguments()
+    success, csv_file = run_scopus_search(
+        query=args.query,
+        headless=args.headless,
+        year_from=args.year_from,
+        year_to=args.year_to,
+        download_dir=args.download_dir,
+        username=args.username,
+        password=args.password,
+        institution=args.institution
+    )
+    
+    if success and csv_file:
         print(f"\nSearch results saved to: {csv_file}")
         sys.exit(0)  # Success
     else:

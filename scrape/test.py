@@ -1,171 +1,124 @@
 # Script to generate a search string using Gemini API and then search Scopus with it
-import subprocess
 import sys
 import os
-import argparse
 from pathlib import Path
+from typing import Optional, Dict, Any
 
 # load environment variables from .env file
 from dotenv import load_dotenv
 load_dotenv(override=True)  # Override existing environment variable
 
-def parse_arguments():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Run search string generation and Scopus search")
-    parser.add_argument(
-        "--query", 
-        type=str, 
-        default="what are plausibilistic climate storylines and how are they different from other climate storylines?",
-        help="Research question for generating the search string"
-    )
-    parser.add_argument(
-        "--skip-generation", 
-        action="store_true",
-        help="Skip search string generation and use existing generated_search_string.txt"
-    )
-    parser.add_argument(
-        "--headless", 
-        action="store_true", 
-        help="Run browser in headless mode for Scopus search"
-    )
-    parser.add_argument(
-        "--year-from",
-        type=int,
-        help="Start year for filtering Scopus results"
-    )
-    parser.add_argument(
-        "--year-to",
-        type=int,
-        help="End year for filtering Scopus results"
-    )
-    return parser.parse_args()
+# Import functions from other modules
+from get_search_string import generate_search_string
+from search_scopus import run_scopus_search
 
-def generate_search_string(query):
-    """Run get_search_string.py to generate a search string from the research question."""
-    # Ensure the script runs with the correct Python interpreter
-    python_executable = sys.executable
+# Configuration variables - modify these directly instead of using CLI arguments
+DEFAULT_QUERY = "what are plausibilistic climate storylines and how are they different from other climate storylines?"
+SKIP_GENERATION = False  # Set to True to skip search string generation
+HEADLESS_BROWSER = False  # Set to True to run browser in headless mode
+YEAR_FROM = None  # Start year for filtering (e.g., 2015)
+YEAR_TO = None  # End year for filtering (e.g., 2023)
+DOWNLOAD_DIR = "data/downloads/csv"  # Directory to save downloaded files
+
+def run_search_process(query: str = None, skip_generation: bool = False, headless: bool = False,
+                      year_from: Optional[int] = None, year_to: Optional[int] = None,
+                      download_dir: str = "data/downloads/csv") -> Dict[str, Any]:
+    """
+    Run the complete search process: generate search string and search Scopus.
     
-    # Get the directory of the current script (test.py)
-    current_dir = os.path.dirname(os.path.abspath(__file__))
+    Args:
+        query: Research question for generating the search string
+        skip_generation: Skip search string generation and use existing generated_search_string.txt
+        headless: Run browser in headless mode for Scopus search
+        year_from: Start year for filtering Scopus results
+        year_to: End year for filtering Scopus results
+        download_dir: Directory to save downloaded files
     
-    # Construct the path to get_search_string.py
-    script_path = os.path.join(current_dir, "get_search_string.py")
+    Returns:
+        Dictionary with results:
+        {
+            'success': bool,  # Overall success
+            'search_string': Optional[str],  # Generated search string if available
+            'csv_path': Optional[Path],  # Path to the downloaded CSV if available
+            'error': Optional[str]  # Error message if any step failed
+        }
+    """
+    result = {
+        'success': False,
+        'search_string': None,
+        'csv_path': None,
+        'error': None
+    }
     
-    # Modify get_search_string.py on the fly to use the provided query
-    with open(script_path, 'r') as file:
-        script_content = file.read()
+    # Use default query if none provided
+    if query is None:
+        query = "what are plausibilistic climate storylines and how are they different from other climate storylines?"
     
-    # Replace the initial_query with the new one
-    script_content = script_content.replace(
-        'initial_query = "what are plausibilistic climate storylines and how are they different from other climate storylines? Write me a short literature review on this topic."',
-        f'initial_query = "{query} Write me a short literature review on this topic."'
-    )
-    
-    # Create a temporary modified script
-    temp_script_path = os.path.join(current_dir, "_temp_get_search_string.py")
-    with open(temp_script_path, 'w') as file:
-        file.write(script_content)
-    
-    try:
+    # First, generate the search string if not skipped
+    if not skip_generation:
         print(f"Generating search string from query: '{query}'")
-        result = subprocess.run(
-            [python_executable, temp_script_path],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        print("Search string generation output:")
-        print(result.stdout)
-        if result.stderr:
-            print("Errors:", result.stderr)
+        success, search_string = generate_search_string(query)
         
-        # Check if the generated_search_string.txt file exists
-        search_string_file = Path(current_dir) / "generated_search_string.txt"
-        if search_string_file.exists():
-            with open(search_string_file, 'r') as file:
-                search_string = file.read().strip()
-            print(f"Generated search string: {search_string}")
-            return True
-        else:
-            print("Error: generated_search_string.txt was not created.")
-            return False
-    except subprocess.CalledProcessError as e:
-        print(f"Search string generation failed with error code {e.returncode}")
-        print(f"Output: {e.stdout}")
-        print(f"Error: {e.stderr}")
-        return False
-    except Exception as e:
-        print(f"An unexpected error occurred during search string generation: {e}")
-        return False
-    finally:
-        # Remove the temporary script
-        if os.path.exists(temp_script_path):
-            os.remove(temp_script_path)
-
-def run_scopus_search(headless=False, year_from=None, year_to=None):
-    """Run search_scopus.py with the generated search string."""
-    # Ensure the script runs with the correct Python interpreter
-    python_executable = sys.executable
+        if not success:
+            result['error'] = "Failed to generate search string"
+            return result
+        
+        result['search_string'] = search_string
+    else:
+        print("Skipping search string generation. Using existing generated_search_string.txt")
+        # Try to read the existing file
+        try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            search_string_file = Path(current_dir) / "generated_search_string.txt"
+            if search_string_file.exists():
+                with open(search_string_file, 'r') as file:
+                    result['search_string'] = file.read().strip()
+            else:
+                result['error'] = "No existing generated_search_string.txt found"
+                return result
+        except Exception as e:
+            result['error'] = f"Error reading existing search string file: {str(e)}"
+            return result
     
-    # Get the directory of the current script (test.py)
-    current_dir = os.path.dirname(os.path.abspath(__file__))
+    # Then run the Scopus search
+    print(f"Running Scopus search with the {'generated' if not skip_generation else 'existing'} search string")
+    success, csv_path = run_scopus_search(
+        query=result['search_string'],  # Use the search string we obtained
+        headless=headless,
+        year_from=year_from,
+        year_to=year_to,
+        download_dir=download_dir
+    )
     
-    # Construct the path to search_scopus.py
-    script_path = os.path.join(current_dir, "search_scopus.py")
+    if not success:
+        result['error'] = "Failed to execute Scopus search"
+        return result
     
-    # Define the command arguments
-    command = [
-        python_executable,
-        script_path
-    ]
-    
-    # Add optional arguments
-    if headless:
-        command.append("--headless")
-    
-    if year_from is not None:
-        command.extend(["--year-from", str(year_from)])
-    
-    if year_to is not None:
-        command.extend(["--year-to", str(year_to)])
-    
-    print(f"Running Scopus search: {' '.join(command)}")
-    
-    # Run the script
-    try:
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
-        print("Scopus search executed successfully.")
-        print("Output:\n", result.stdout)
-        if result.stderr:
-            print("Errors:\n", result.stderr)
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"Scopus search failed with error code {e.returncode}")
-        print("Output:\n", e.stdout)
-        print("Errors:\n", e.stderr)
-        return False
-    except FileNotFoundError:
-        print(f"Error: Could not find the script '{script_path}' or the python executable '{python_executable}'.")
-        return False
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-        return False
+    result['csv_path'] = csv_path
+    result['success'] = True
+    return result
 
 def main():
     """Main function to run both scripts in sequence."""
-    args = parse_arguments()
+    # Use the globally defined configuration variables
+    result = run_search_process(
+        query=DEFAULT_QUERY,
+        skip_generation=SKIP_GENERATION,
+        headless=HEADLESS_BROWSER,
+        year_from=YEAR_FROM,
+        year_to=YEAR_TO,
+        download_dir=DOWNLOAD_DIR
+    )
     
-    # First, generate the search string if not skipped
-    if not args.skip_generation:
-        success = generate_search_string(args.query)
-        if not success:
-            print("Failed to generate search string. Exiting.")
-            return False
+    # Return success or failure based on result
+    if result['success']:
+        print(f"Search process completed successfully.")
+        if result['csv_path']:
+            print(f"Results saved to: {result['csv_path']}")
+        return True
     else:
-        print("Skipping search string generation. Using existing generated_search_string.txt")
-        
-    # Then run the Scopus search
-    return run_scopus_search(headless=args.headless, year_from=args.year_from, year_to=args.year_to)
+        print(f"Search process failed: {result['error']}")
+        return False
 
 if __name__ == "__main__":
     success = main()
