@@ -9,29 +9,39 @@ from dotenv import load_dotenv
 # Load environment variables from .env file if present
 load_dotenv(override=True)  # Force override of existing environment variables
 
-# OpenAI API configuration
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# API Keys (Load from environment variables)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") # Example, keep if you might use OpenAI
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
-CHUNK_CONTEXT_MODEL = os.getenv("CHUNK_CONTEXT_MODEL")
-SUBQUERY_MODEL = os.getenv("SUBQUERY_MODEL")
-CHAT_MODEL = os.getenv("CHAT_MODEL")
 
-# Chunking configuration - explicitly force the correct default value if not found
-DEFAULT_MAX_TOKENS = int(os.environ.get("DEFAULT_MAX_TOKENS", "300"))
-DEFAULT_OVERLAP = int(os.environ.get("DEFAULT_OVERLAP", "20"))
-DEFAULT_CONTEXT_LENGTH = int(os.environ.get("DEFAULT_CONTEXT_LENGTH", "20"))
-DEFAULT_TOTAL_CONTEXT_WINDOW = int(os.environ.get("DEFAULT_TOTAL_CONTEXT_WINDOW", "4000"))
+# Model Configuration
+# Make sure EMBEDDING_MODEL is defined, e.g., "models/text-embedding-004" or "models/embedding-001"
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "models/text-embedding-004")
+CHUNK_CONTEXT_MODEL = os.getenv("CHUNK_CONTEXT_MODEL", "models/gemini-1.5-flash")
+SUBQUERY_MODEL = os.getenv("SUBQUERY_MODEL", "models/gemini-1.5-flash")
+CHAT_MODEL = os.getenv("CHAT_MODEL", "models/gemini-1.5-flash") # Or your preferred chat model
+RERANKER_MODEL = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2") # Optional
 
-#Embedding configuration
-OUTPUT_EMBEDDING_DIMENSION= int(os.getenv("OUTPUT_EMBEDDING_DIMENSION", "768"))
+# Chunking Parameters
+DEFAULT_MAX_TOKENS = int(os.getenv("DEFAULT_MAX_TOKENS", 500))
+DEFAULT_OVERLAP = int(os.getenv("DEFAULT_OVERLAP", 50))
+DEFAULT_TOTAL_CONTEXT_WINDOW = int(os.getenv("DEFAULT_TOTAL_CONTEXT_WINDOW", 1024)) # Window for context generation
 
-# Query configuration
-DEFAULT_TOP_K = int(os.getenv("DEFAULT_TOP_K", "5"))
+# Retrieval Parameters
+DEFAULT_CONTEXT_LENGTH = int(os.getenv("DEFAULT_CONTEXT_LENGTH", 64)) # Max tokens for generated context summary
+DEFAULT_TOP_K = int(os.getenv("DEFAULT_TOP_K", 5))
+DEFAULT_RERANK_CANDIDATE_COUNT = int(os.getenv("DEFAULT_RERANK_CANDIDATE_COUNT", 50)) # How many candidates to feed reranker
 
-# --- Re-ranker Configuration ---
-# Model examples: 'cross-encoder/ms-marco-MiniLM-L-6-v2', 'cross-encoder/ms-marco-TinyBERT-L-2-v2'
-# Or set to None to disable re-ranking
-RERANKER_MODEL = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
-# Number of candidates to fetch *before* re-ranking
-DEFAULT_RERANK_CANDIDATE_COUNT = int(os.getenv("DEFAULT_RERANK_CANDIDATE_COUNT", "100"))
+# Embedding Configuration
+# Set this based on your chosen EMBEDDING_MODEL's output dimension if not truncating
+# e.g., 768 for embedding-001, 768 for text-embedding-004 (default), 1536 for text-embedding-ada-002
+# Set to None if you don't want to explicitly override or request truncation.
+OUTPUT_EMBEDDING_DIMENSION = int(os.getenv("OUTPUT_EMBEDDING_DIMENSION", 768)) if os.getenv("OUTPUT_EMBEDDING_DIMENSION") else None
+
+# ChromaDB Configuration
+DEFAULT_CHROMA_COLLECTION_NAME = "rag_chunks_hybrid_default"
+
+# --- Validate Essential Config ---
+if not GEMINI_API_KEY:
+    print("Warning: GEMINI_API_KEY environment variable not set.")
+    # Depending on usage, you might want to raise an error here if Gemini is essential
+    # raise ValueError("GEMINI_API_KEY is required.")
