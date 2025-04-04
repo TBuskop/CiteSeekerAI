@@ -7,7 +7,9 @@ def main():
     # Initialize clients if rag_bm25.py doesn't do it internally on startup
     # print("Initializing API clients...")
     # initialize_clients() # Usually the target script handles its own initialization
-
+    # change run path to rag folder
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    
     db_path = "chunk_database/chunks_db"
     collection_name = "test_collection"
     folder_path = "cleaned_text/paper_2_intro"
