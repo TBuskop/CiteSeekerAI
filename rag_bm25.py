@@ -1152,6 +1152,17 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
         for i, chunk in enumerate(retrieved_chunks) if chunk # Add index if needed: f"{i+1}. {chunk...}"
     )
 
+    # create a unique list of top-level references (e.g., file_name, year, publisher, doi) for citation
+    unique_top_level_reference_list = []
+    for chunk in retrieved_chunks:
+        if chunk and 'file_name' in chunk and chunk['file_name'] not in unique_top_level_reference_list:
+            unique_top_level_reference_list.append(chunk['file_name'])
+    
+    # sort the unique list on alphabetically on file_name
+    unique_top_level_reference_list.sort()
+    # create a string from the list with each entry on a new line and -
+    unique_top_level_reference_list = "\n".join([f"- {ref}" for ref in unique_top_level_reference_list])
+
     # Truncate context based on model limit (use a conservative estimate)
     MODEL_CONTEXT_LIMITS = { "gpt-4": 8000, "gpt-4o": 128000, "gpt-3.5-turbo": 16000, "gemini-1.5-flash": 1000000, "gemini-1.5-pro": 2000000, "gemini-2.0-flash": 1000000, "gemini-2.0-flash-lite": 1000000, "gemini-2.5-pro-exp-03-25": 1000000 }
     clean_model_name = model.split('/')[-1] if '/' in model else model # Handle model names like 'models/gemini...'
@@ -1197,7 +1208,8 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
     print(f"Generating final answer using {model} (context tokens: ~{context_tokens}, prompt tokens: ~{prompt_total_tokens}, max answer tokens: {answer_max_tokens})...")
     # Use main process client
     final_answer = generate_llm_response(prompt, max_tokens=answer_max_tokens, temperature=0.1, model=model)
-
+    # add references to the final answer
+    final_answer = f"{final_answer}\n\nReferences used:\n{unique_top_level_reference_list}"
     # Basic check if generation failed
     if "[Error generating response" in final_answer or "[Blocked" in final_answer:
          print(f"Warning: Final answer generation failed or was blocked.")
