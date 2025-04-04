@@ -1,5 +1,6 @@
 from google import genai
 import os
+import re
 
 # change run to current directory
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -16,13 +17,13 @@ prompt = prompt.replace("[User Climate Research Question Here]", initial_query)
 
 # load environment variables from .env file
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 generate_content_config = genai.types.GenerateContentConfig(
             temperature=temperature,
-            max_output_tokens=max_tokens,
+            max_output_tokens=6000,
             response_mime_type="text/plain",
         )
 
@@ -32,21 +33,23 @@ try: # Add a try/except block specifically around the API call for better debugg
         contents=prompt,
         config=generate_content_config
     )
-    print("search string generated successfully:")
-    print(response.text)
+    print("Search string generated successfully:")
+    
+    # Remove all backticks including those that might be in code blocks (```)
+    cleaned_response = re.sub(r'`+', '', response.text)
+    
+    print(cleaned_response)
 
-    # save the response to a file
+    # Save the cleaned response to a file
     with open("generated_search_string.txt", "w") as f:
-        # remove any ` characters from the response
-        f.write(response.text)
+        f.write(cleaned_response)
 
-    # load the generated search string from the file
+    # Log the final result after cleaning
     with open("generated_search_string.txt", "r") as f:
         generated_search_string = f.read().strip()
-        # remove any ` characters from the response
-        generated_search_string = generated_search_string.replace("`", "")
-        print("Generated search string:")
-
+        print(f"Generated search string ready for use: {generated_search_string}")
 
 except genai.exceptions.InvalidArgument as e:
     print(f"Invalid argument: {e}")
+except Exception as e:
+    print(f"Error generating search string: {e}")
