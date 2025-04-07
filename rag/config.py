@@ -36,7 +36,8 @@ DEFAULT_RERANK_CANDIDATE_COUNT = int(os.getenv("DEFAULT_RERANK_CANDIDATE_COUNT",
 # e.g., 768 for embedding-001, 768 for text-embedding-004 (default), 1536 for text-embedding-ada-002
 # Set to None if you don't want to explicitly override or request truncation.
 OUTPUT_EMBEDDING_DIMENSION = int(os.getenv("OUTPUT_EMBEDDING_DIMENSION", 768)) if os.getenv("OUTPUT_EMBEDDING_DIMENSION") else None
-
+DEFAULT_EMBED_BATCH_SIZE = 50
+DEFAULT_EMBED_DELAY = 25
 # ChromaDB Configuration
 DEFAULT_CHROMA_COLLECTION_NAME = "rag_chunks_hybrid_default"
 
