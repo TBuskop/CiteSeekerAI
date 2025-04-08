@@ -5,11 +5,11 @@ from typing import List, Dict, Tuple, Any, Optional
 from tqdm import tqdm
 
 # --- Local Imports ---
-from .chroma_manager import get_chroma_collection, _update_db_batch # Use the helper from chroma_manager
-from .llm_interface import get_embedding, GOOGLE_GENAI_AVAILABLE, gemini_client # Need client status/object
-from .config import EMBEDDING_MODEL, OUTPUT_EMBEDDING_DIMENSION
+from rag.chroma_manager import get_chroma_collection, _update_db_batch # Use the helper from chroma_manager
+from rag.llm_interface import get_embedding, GOOGLE_GENAI_AVAILABLE, gemini_client # Need client status/object
+from rag.config import EMBEDDING_MODEL, OUTPUT_EMBEDDING_DIMENSION
 # --- Add default values from config for fallback ---
-from .config import DEFAULT_EMBED_BATCH_SIZE, DEFAULT_EMBED_DELAY
+from rag.config import DEFAULT_EMBED_BATCH_SIZE, DEFAULT_EMBED_DELAY
 
 # --- Google API Exceptions ---
 try:
@@ -24,25 +24,31 @@ except ImportError:
 
 
 # --- Find Chunks Needing Embedding ---
-def find_chunks_to_embed(collection) -> Tuple[List[str], List[Dict]]:
+def find_chunks_to_embed(collection) -> Tuple[List[str], List[Dict], List[str]]: # Add List[str] for documents
     """Finds chunks in the collection marked with 'has_embedding': False."""
     print(f"Checking collection '{collection.name}' for chunks needing embedding...")
     ids_to_embed = []
     metadatas_to_embed = []
+    documents_to_embed = [] # Initialize list for documents
     try:
         # Use get() with the where filter to retrieve the actual items
         results = collection.get(
             where={"has_embedding": False},
-            include=['metadatas'] # Only need metadata to get text
+            include=['metadatas', 'documents'] # Include 'documents'
         )
         ids_to_embed = results.get('ids', [])
         metadatas_to_embed = results.get('metadatas', [])
+        documents_to_embed = results.get('documents', []) # Get the documents
 
         if not ids_to_embed:
             print(f"No chunks found needing embedding in collection '{collection.name}'.")
         else:
             # The actual count is simply the length of the retrieved IDs
             print(f"Found {len(ids_to_embed)} chunks to embed.")
+            # Add a check for mismatched lengths (shouldn't happen ideally)
+            if len(ids_to_embed) != len(documents_to_embed):
+                print(f"Warning: Mismatch between number of IDs ({len(ids_to_embed)}) and documents ({len(documents_to_embed)}) retrieved.")
+                # Handle this case? For now, proceed but log warning.
 
     except TypeError as te:
         # Catch if .get() also doesn't support where in some version (though it should)
@@ -52,7 +58,7 @@ def find_chunks_to_embed(collection) -> Tuple[List[str], List[Dict]]:
         print(f"Error querying ChromaDB for chunks to embed: {e}")
         print("Traceback:", traceback.format_exc())
 
-    return ids_to_embed, metadatas_to_embed
+    return ids_to_embed, metadatas_to_embed, documents_to_embed # Return documents
 
 
 # --- Generate Embeddings in Batches ---
@@ -60,6 +66,7 @@ def generate_embeddings_in_batches(
     collection, # Pass the collection object directly
     ids_to_embed: List[str],
     metadatas_to_embed: List[Dict],
+    documents_to_embed: List[str], # Add documents parameter
     batch_size: int,
     delay: float,
     client: Optional[Any] # Accept the client object
@@ -72,6 +79,7 @@ def generate_embeddings_in_batches(
         collection: The ChromaDB collection object to update.
         ids_to_embed: List of chunk IDs needing embedding.
         metadatas_to_embed: Corresponding metadata dictionaries.
+        documents_to_embed: Corresponding document texts.
         batch_size: Number of chunks per API batch call.
         delay: Delay in seconds between batch API calls.
         client: The initialized API client object (e.g., Gemini client).
@@ -93,24 +101,28 @@ def generate_embeddings_in_batches(
         end_idx = min(start_idx + batch_size, len(ids_to_embed)) # Ensure end_idx doesn't exceed list length
         current_batch_ids = ids_to_embed[start_idx:end_idx]
         current_batch_metadatas = metadatas_to_embed[start_idx:end_idx]
+        current_batch_documents = documents_to_embed[start_idx:end_idx] # Slice documents too
 
         if not current_batch_ids: continue # Skip empty batch slice
 
         batch_texts_to_embed = []
         batch_ids_prepared = []
         batch_metadatas_prepared = []
-        batch_indices_map = {} # Map list index within batch_texts_to_embed back to original ID/metadata
 
         # --- Prepare Batch Data (Extract Text) ---
-        for idx_in_batch, chunk_id in enumerate(current_batch_ids):
+        # Iterate using index to access corresponding document and metadata
+        for idx_in_batch in range(len(current_batch_ids)):
+            chunk_id = current_batch_ids[idx_in_batch]
             meta = current_batch_metadatas[idx_in_batch]
+            doc_text = current_batch_documents[idx_in_batch] # Get text from documents list
+
             if not meta:
                 # print(f"Warning: Missing metadata for chunk {chunk_id} in batch {i+1}. Skipping.")
                 all_failed_ids.add(chunk_id)
                 continue
 
-            # Prioritize contextualized text, fallback to raw text for embedding
-            text_to_embed = meta.get('contextualized_text', meta.get('text'))
+            # Use the retrieved document text directly
+            text_to_embed = doc_text
             if not text_to_embed or not text_to_embed.strip():
                 # print(f"Warning: Empty text for chunk {chunk_id} in batch {i+1}. Skipping.")
                 all_failed_ids.add(chunk_id)
@@ -123,11 +135,9 @@ def generate_embeddings_in_batches(
                 continue
 
             # Store prepared data
-            current_index = len(batch_texts_to_embed)
             batch_texts_to_embed.append(text_to_embed)
             batch_ids_prepared.append(chunk_id)
             batch_metadatas_prepared.append(meta)
-            batch_indices_map[current_index] = chunk_id
 
 
         if not batch_texts_to_embed:
@@ -265,7 +275,7 @@ def run_embed_mode_logic(config_params: Dict[str, Any], collection: 'chromadb.Co
     Accepts a configuration dictionary and the initialized client object.
     """
     print("Finding chunks that need embeddings...")
-    ids_to_embed, metadatas_to_embed = find_chunks_to_embed(collection)
+    ids_to_embed, metadatas_to_embed, documents_to_embed = find_chunks_to_embed(collection)
 
     if not ids_to_embed:
         print("No chunks found needing embedding in this collection.")
@@ -283,6 +293,7 @@ def run_embed_mode_logic(config_params: Dict[str, Any], collection: 'chromadb.Co
         collection=collection,
         ids_to_embed=ids_to_embed,
         metadatas_to_embed=metadatas_to_embed,
+        documents_to_embed=documents_to_embed, # Pass documents
         batch_size=batch_size, # Use extracted value
         delay=delay,           # Use extracted value
         client=client          # Pass the client object

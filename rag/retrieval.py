@@ -3,10 +3,10 @@ import traceback
 from typing import List, Dict, Tuple, Optional, Any
 
 # --- Local Imports ---
-from .chroma_manager import get_chroma_collection
-from .bm25_manager import load_bm25_index, tokenize_text_bm25, RANK_BM25_AVAILABLE, BM25Okapi
-from .llm_interface import get_embedding
-from .config import EMBEDDING_MODEL, RERANKER_MODEL, DEFAULT_RERANK_CANDIDATE_COUNT
+from rag.chroma_manager import get_chroma_collection
+from rag.bm25_manager import load_bm25_index, tokenize_text_bm25, RANK_BM25_AVAILABLE, BM25Okapi
+from rag.llm_interface import get_embedding
+from rag.config import EMBEDDING_MODEL, RERANKER_MODEL, DEFAULT_RERANK_CANDIDATE_COUNT
 
 # --- Sentence Transformers Import ---
 try:
@@ -51,7 +51,7 @@ def retrieve_chunks_vector(query: str, db_path: str, collection_name: str,
         results = collection.query(
             query_embeddings=[query_vec.tolist()],
             n_results=top_k,
-            include=['metadatas', 'distances']
+            include=['metadatas', 'distances', 'documents'] # Include 'documents'
             # Optional: Filter for 'has_embedding: True' if paranoid, but query should only match embedded items
             # where={"has_embedding": True} # This might slow down query if not needed
         )
@@ -61,6 +61,7 @@ def retrieve_chunks_vector(query: str, db_path: str, collection_name: str,
              metadatas = results.get('metadatas', [[]])[0]
              distances = results.get('distances', [[]])[0]
              ids = results.get('ids', [[]])[0] # For debug or consistency checks
+             documents = results.get('documents', [[]])[0] # Get documents
              print(f"DEBUG (retrieve_chunks_vector): Found {len(ids)} vector results.") # Add log
              for i, meta in enumerate(metadatas):
                  if meta is None: 
@@ -70,17 +71,21 @@ def retrieve_chunks_vector(query: str, db_path: str, collection_name: str,
                  # Ensure necessary fields exist before adding
                  # Use chunk_id from results['ids'] for consistency
                  chunk_id = ids[i] if i < len(ids) else None
-                 if chunk_id and 'file_hash' in meta and 'chunk_number' in meta:
+                 # REMOVED: Check for 'file_hash' and 'chunk_number' as they are not relevant for abstract collection
+                 if chunk_id: # Check only if chunk_id exists
                      dist = distances[i] if i < len(distances) else None
+                     doc_text = documents[i] if i < len(documents) else None # Get corresponding document text
                      # Add retrieval info to metadata
                      meta['vector_distance'] = dist
                      # Calculate similarity (cosine: 1 - distance)
                      meta['vector_similarity'] = (1.0 - dist) if dist is not None and dist <= 2.0 else 0.0 # Cosine distance is 0-2
                      meta['retrieved_by'] = meta.get('retrieved_by', []) + ['vector'] # Track retrieval method
                      meta['chunk_id'] = chunk_id # Ensure chunk_id is in metadata
+                     meta['text'] = doc_text # Add the document text under the 'text' key
                      retrieved_chunks.append(meta)
                  else:
-                      print(f"Warning: Vector result metadata missing key fields (ID: {chunk_id}). Skipping.")
+                      # This case should be less likely now, primarily if ids[i] itself is None/empty
+                      print(f"Warning: Vector result missing chunk_id (Index: {i}). Skipping.")
 
         else:
              print(f"DEBUG (retrieve_chunks_vector): No vector results found in ChromaDB response for query '{query[:50]}...'") # Add log
@@ -196,13 +201,16 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
                  batch_ids = bm25_ids_to_fetch_metadata[i*batch_size_fetch : (i+1)*batch_size_fetch]
                  if not batch_ids: continue
                  try:
-                     fetched_data = collection.get(ids=batch_ids, include=['metadatas'])
+                     # Include 'documents' when fetching for BM25 results
+                     fetched_data = collection.get(ids=batch_ids, include=['metadatas', 'documents'])
                      if fetched_data and fetched_data.get('ids'):
                           fetched_metadatas = fetched_data.get('metadatas', [])
+                          fetched_documents = fetched_data.get('documents', []) # Get documents
                           for j, fetched_id in enumerate(fetched_data['ids']):
                               # Check if ID is relevant and metadata exists
                               if fetched_id in combined_scores and j < len(fetched_metadatas):
                                   meta = fetched_metadatas[j]
+                                  doc_text = fetched_documents[j] if j < len(fetched_documents) else None # Get corresponding text
                                   if meta and fetched_id not in chunk_metadata_cache: # Ensure metadata is not None and not already cached
                                       # Find the original BM25 score for this ID
                                       original_bm25_score = next((s for id, s in bm25_results if id == fetched_id), None)
@@ -212,6 +220,7 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
                                       meta['vector_similarity'] = None
                                       meta['retrieved_by'] = ['bm25'] # Mark as retrieved by BM25
                                       meta['chunk_id'] = fetched_id # Ensure chunk_id is present
+                                      meta['text'] = doc_text # Add the document text under the 'text' key
                                       chunk_metadata_cache[fetched_id] = meta
                                   # else: print(f"Warning: Null or already cached metadata fetched for BM25 chunk ID {fetched_id}") # Debug
                  except Exception as batch_fetch_err:
@@ -295,12 +304,16 @@ def rerank_chunks(query: str, chunks: List[Dict],
         # Add scores back to the corresponding chunks in the original list
         for pair_idx, score in enumerate(scores):
             original_chunk_idx = chunk_indices_map[pair_idx]
-            chunks[original_chunk_idx]['rerank_score'] = float(score) # Ensure it's a float
+            # Ensure the key exists before assigning, though it should have been added if skipped
+            if original_chunk_idx < len(chunks):
+                 chunks[original_chunk_idx]['rerank_score'] = float(score) # Ensure it's a float
+            # else: This case should not happen if map is correct
 
         # Sort the original chunk list by the new rerank_score (higher is better)
         # Chunks skipped earlier will have -inf score and end up last.
         reranked_chunks = sorted(chunks, key=lambda c: c.get('rerank_score', -float('inf')), reverse=True)
 
+        # Correct the print statement to use top_n
         print(f"Re-ranking complete. Returning top {top_n} based on cross-encoder scores.")
         return reranked_chunks[:top_n]
 
@@ -309,4 +322,5 @@ def rerank_chunks(query: str, chunks: List[Dict],
         print(traceback.format_exc())
         print("Warning: Falling back to original chunk order (before re-ranking).")
         # Fallback: return top_n based on the order they came in (likely RRF sorted)
+        # Ensure fallback also respects top_n
         return sorted(chunks, key=lambda c: c.get('rrf_score', 0.0), reverse=True)[:top_n]

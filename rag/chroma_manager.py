@@ -6,11 +6,11 @@ import chromadb
 from chromadb import Documents, EmbeddingFunction, Embeddings
 
 # --- Local Imports ---
-from .config import EMBEDDING_MODEL, OUTPUT_EMBEDDING_DIMENSION
+from rag.config import EMBEDDING_MODEL, OUTPUT_EMBEDDING_DIMENSION
 # Import get_embedding carefully to avoid circular dependency if possible,
 # or pass embedding function instance/callable.
 # For ConfigurableEmbeddingFunction, we need get_embedding.
-from .llm_interface import get_embedding
+from rag.llm_interface import get_embedding
 
 
 # --- Custom Embedding Function for ChromaDB ---

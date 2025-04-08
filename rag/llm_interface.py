@@ -4,7 +4,7 @@ import re
 from typing import List, Optional, Dict, Any
 
 # --- Config Imports ---
-from .config import (
+from rag.config import (
     GEMINI_API_KEY,
     EMBEDDING_MODEL,
     CHUNK_CONTEXT_MODEL,
@@ -14,7 +14,7 @@ from .config import (
     OUTPUT_EMBEDDING_DIMENSION,
     DEFAULT_TOTAL_CONTEXT_WINDOW,
 )
-from .utils import count_tokens, truncate_text # Import necessary utils
+from rag.utils import count_tokens, truncate_text # Import necessary utils
 
 # --- API Client Imports and Setup ---
 try:

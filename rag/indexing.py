@@ -5,10 +5,10 @@ from typing import List, Dict, Tuple
 from tqdm import tqdm
 
 # --- Local Imports ---
-from .utils import compute_file_hash, chunk_document_tokens, count_tokens
-from .llm_interface import generate_chunk_context
-from .chroma_manager import get_chroma_collection
-from .bm25_manager import build_and_save_bm25_index, tokenize_text_bm25 # Import tokenizer if needed here
+from rag.utils import compute_file_hash, chunk_document_tokens, count_tokens
+from rag.llm_interface import generate_chunk_context
+from rag.chroma_manager import get_chroma_collection
+from rag.bm25_manager import build_and_save_bm25_index, tokenize_text_bm25 # Import tokenizer if needed here
 from .config import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_OVERLAP,

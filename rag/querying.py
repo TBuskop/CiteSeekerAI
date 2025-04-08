@@ -12,17 +12,17 @@ except ImportError:
     GENAI_AVAILABLE = False
 
 # --- Local Imports ---
-from .utils import count_tokens, truncate_text
+from rag.utils import count_tokens, truncate_text
 # Import the llm_interface module itself
-from . import llm_interface
-from .retrieval import (
+from rag import llm_interface
+from rag.retrieval import (
     retrieve_chunks_vector,
     retrieve_chunks_bm25,
     combine_results_rrf,
     rerank_chunks,
     SENTENCE_TRANSFORMERS_AVAILABLE # Check reranker availability
 )
-from .config import (
+from rag.config import (
     SUBQUERY_MODEL,
     CHAT_MODEL,
     RERANKER_MODEL,
@@ -30,6 +30,123 @@ from .config import (
     DEFAULT_TOP_K,
     EMBEDDING_MODEL # Needed for client checks
 )
+
+# --- Retrieval and Reranking Logic ---
+def retrieve_and_rerank_chunks(
+    query: str,
+    db_path: str,
+    collection_name: str,
+    top_k: int = DEFAULT_TOP_K,
+    reranker_model: Optional[str] = RERANKER_MODEL,
+    rerank_candidate_count: int = DEFAULT_RERANK_CANDIDATE_COUNT,
+    execution_mode: str = "retrieval_only" # Default mode for this function
+) -> List[Dict]:
+    """
+    Performs hybrid retrieval (vector + BM25), RRF combination, and optional reranking.
+
+    Args:
+        query (str): The search query.
+        db_path (str): Path to the ChromaDB database directory.
+        collection_name (str): Name of the ChromaDB collection.
+        top_k (int): The final number of chunks to return after ranking/reranking.
+        reranker_model (Optional[str]): The model name for reranking, or None to skip.
+        rerank_candidate_count (int): The number of candidates to fetch for reranking.
+        execution_mode (str): Identifier for the execution context (e.g., for logging/tracking).
+
+    Returns:
+        List[Dict]: A list of the final ranked/reranked chunk dictionaries, sorted by relevance.
+                     Returns an empty list if no chunks are found or an error occurs.
+    """
+    # Determine how many candidates to fetch initially
+    fetch_k = rerank_candidate_count if reranker_model and SENTENCE_TRANSFORMERS_AVAILABLE else top_k
+    fetch_k = max(fetch_k, top_k) # Ensure we fetch at least top_k
+
+    print(f"\n--- Retrieving Top {fetch_k} Initial Candidates (Hybrid Vector + BM25) ---")
+    print(f"  Query: \"{query[:100]}...\"")
+
+    # 1. Retrieve Chunks (Hybrid)
+    try:
+        vector_results = retrieve_chunks_vector(query, db_path, collection_name, fetch_k, execution_mode=execution_mode)
+        bm25_results = retrieve_chunks_bm25(query, db_path, collection_name, fetch_k)
+    except Exception as e:
+        print(f"Error during initial retrieval: {e}")
+        traceback.print_exc()
+        return []
+
+    # 2. Deduplicate and Combine using RRF (Handle potential empty results)
+    print(f"\n--- Combining {len(vector_results)} Vector & {len(bm25_results)} BM25 results via RRF ---")
+
+    # Deduplicate vector results (handle potential missing keys gracefully)
+    deduped_vector_results_dict: Dict[str, Dict] = {}
+    for chunk_meta in vector_results:
+        chunk_id = chunk_meta.get('chunk_id')
+        if not chunk_id: continue
+        current_dist = chunk_meta.get('vector_distance', float('inf'))
+        if chunk_id not in deduped_vector_results_dict or current_dist < deduped_vector_results_dict[chunk_id].get('vector_distance', float('inf')):
+             deduped_vector_results_dict[chunk_id] = chunk_meta
+    deduped_vector_results = list(deduped_vector_results_dict.values())
+
+    # Deduplicate BM25 results
+    deduped_bm25_results_dict: Dict[str, float] = {}
+    for chunk_id, score in bm25_results:
+         if chunk_id and (chunk_id not in deduped_bm25_results_dict or score > deduped_bm25_results_dict[chunk_id]):
+              deduped_bm25_results_dict[chunk_id] = score
+    deduped_bm25_results = list(deduped_bm25_results_dict.items())
+
+    print(f"Unique Vector candidates: {len(deduped_vector_results)}, Unique BM25 candidates: {len(deduped_bm25_results)}")
+
+    if not deduped_vector_results and not deduped_bm25_results:
+        print("No candidates found from either vector or BM25 search.")
+        return []
+
+    try:
+        combined_chunks_rrf = combine_results_rrf(
+            deduped_vector_results, deduped_bm25_results, db_path, collection_name, execution_mode=execution_mode
+        )
+        # Limit to fetch_k *before* reranking
+        combined_chunks_rrf = combined_chunks_rrf[:fetch_k]
+    except Exception as e:
+        print(f"Error during RRF combination: {e}")
+        traceback.print_exc()
+        return []
+
+    if not combined_chunks_rrf:
+        print("No chunks remaining after RRF combination.")
+        return []
+
+    # 3. Optional Re-ranking Step
+    if reranker_model and SENTENCE_TRANSFORMERS_AVAILABLE:
+        print(f"\n--- Reranking Top {len(combined_chunks_rrf)} RRF Candidates using {reranker_model} ---")
+        try:
+            final_chunks_list = rerank_chunks(
+                query,
+                combined_chunks_rrf, # Pass the RRF combined list
+                reranker_model,
+                top_k # Rerank and return the final top_k
+            )
+        except Exception as e:
+            print(f"Error during reranking: {e}")
+            traceback.print_exc()
+            # Fallback to RRF results if reranking fails
+            print("Warning: Reranking failed. Falling back to RRF results.")
+            final_chunks_list = combined_chunks_rrf[:top_k]
+    else:
+        final_chunks_list = combined_chunks_rrf[:top_k] # Take top_k from RRF results
+        if reranker_model and not SENTENCE_TRANSFORMERS_AVAILABLE:
+            print("\nInfo: Skipping re-ranking step (sentence-transformers not installed). Using RRF results.")
+        elif not reranker_model:
+            print("\nInfo: Skipping re-ranking step (no reranker model specified). Using RRF results.")
+
+    if not final_chunks_list:
+        print("No relevant chunks found after retrieval and potential re-ranking.")
+        return []
+
+    # 4. Sort final list (important even if not reranked, RRF provides scores)
+    final_chunks_list.sort(key=lambda c: c.get('rerank_score', c.get('rrf_score', -float('inf'))), reverse=True)
+
+    print(f"\n--- Returning Top {len(final_chunks_list)} Final Chunks ---")
+    return final_chunks_list
+
 
 # --- Answer Generation ---
 def generate_answer(query: str, combined_context: str, retrieved_chunks: List[dict],
@@ -188,77 +305,50 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
         print("--- Skipping subquery generation (no subquery model specified) ---")
 
 
-    # 2. Retrieve Chunks (Hybrid) for all queries
-    vector_results_all: List[Dict] = []
-    bm25_results_all: List[Tuple[str, float]] = []
+    # 2. Retrieve and Rank Chunks for ALL queries combined
+    all_final_chunks = []
+    processed_chunk_ids = set() # Keep track of processed chunks to avoid duplicates from subqueries
 
-    fetch_k = rerank_candidate_count if reranker_model and SENTENCE_TRANSFORMERS_AVAILABLE else top_k
-    fetch_k = max(fetch_k, top_k)
+    # Determine fetch_k for retrieval based on reranking needs
+    fetch_k_retrieval = rerank_candidate_count if reranker_model and SENTENCE_TRANSFORMERS_AVAILABLE else top_k
+    fetch_k_retrieval = max(fetch_k_retrieval, top_k)
 
-    print(f"\n--- Retrieving Top {fetch_k} Initial Candidates per query (Hybrid Vector + BM25) ---")
-
+    print(f"\n--- Retrieving & Ranking for {len(all_queries)} queries (Initial fetch_k={fetch_k_retrieval}) ---")
     for q_idx, current_query in enumerate(all_queries):
-         print(f"  Querying ({q_idx+1}/{len(all_queries)}): \"{current_query[:100]}...\"")
-         # Use functions from retrieval module
-         vector_results_q = retrieve_chunks_vector(current_query, db_path, collection_name, fetch_k, execution_mode=execution_mode)
-         vector_results_all.extend(vector_results_q)
-         bm25_results_q = retrieve_chunks_bm25(current_query, db_path, collection_name, fetch_k)
-         bm25_results_all.extend(bm25_results_q)
+        print(f"\nProcessing Query {q_idx+1}/{len(all_queries)}: \"{current_query[:100]}...\"")
+        # Use the new function for retrieval and ranking for *each* query
+        # Note: We retrieve potentially more (fetch_k_retrieval) and rerank down to top_k *per query* here.
+        # We might want to adjust this logic later (e.g., combine all results *before* final reranking)
+        # but for now, this keeps it simpler.
+        query_chunks = retrieve_and_rerank_chunks(
+            query=current_query,
+            db_path=db_path,
+            collection_name=collection_name,
+            top_k=top_k, # Get top_k *per query* after potential reranking
+            reranker_model=reranker_model,
+            rerank_candidate_count=fetch_k_retrieval, # Fetch enough candidates for reranking
+            execution_mode=f"{execution_mode}_subquery_{q_idx+1}"
+        )
+        # Add unique chunks to the overall list
+        for chunk in query_chunks:
+            chunk_id = chunk.get('chunk_id')
+            if chunk_id and chunk_id not in processed_chunk_ids:
+                all_final_chunks.append(chunk)
+                processed_chunk_ids.add(chunk_id)
 
-    # 3. Deduplicate and Combine using RRF
-    print(f"\n--- Combining {len(vector_results_all)} Vector & {len(bm25_results_all)} BM25 candidate results via RRF ---")
+    if not all_final_chunks:
+        return "No relevant chunks found across all queries after retrieval and potential re-ranking."
 
-    # Deduplicate vector results
-    deduped_vector_results_dict: Dict[str, Dict] = {}
-    for chunk_meta in vector_results_all:
-        chunk_id = chunk_meta.get('chunk_id')
-        if not chunk_id: continue
-        current_dist = chunk_meta.get('vector_distance', float('inf'))
-        if chunk_id not in deduped_vector_results_dict or current_dist < deduped_vector_results_dict[chunk_id].get('vector_distance', float('inf')):
-             deduped_vector_results_dict[chunk_id] = chunk_meta
-    deduped_vector_results = list(deduped_vector_results_dict.values())
+    # Re-sort the combined list based on the best score (rerank or rrf)
+    all_final_chunks.sort(key=lambda c: c.get('rerank_score', c.get('rrf_score', -float('inf'))), reverse=True)
+    # Optionally limit the total number of chunks used for the final answer
+    final_chunks_for_answer = all_final_chunks[:top_k]
 
-    # Deduplicate BM25 results
-    deduped_bm25_results_dict: Dict[str, float] = {}
-    for chunk_id, score in bm25_results_all:
-         if chunk_id and (chunk_id not in deduped_bm25_results_dict or score > deduped_bm25_results_dict[chunk_id]):
-              deduped_bm25_results_dict[chunk_id] = score
-    deduped_bm25_results = list(deduped_bm25_results_dict.items())
-
-    print(f"Unique Vector candidates: {len(deduped_vector_results)}, Unique BM25 candidates: {len(deduped_bm25_results)}")
-
-    # Combine using RRF from retrieval module
-    combined_chunks_rrf = combine_results_rrf(
-        deduped_vector_results, deduped_bm25_results, db_path, collection_name, execution_mode=execution_mode
-    )
-    combined_chunks_rrf = combined_chunks_rrf[:fetch_k]
-
-    # 4. Optional Re-ranking Step
-    if reranker_model and SENTENCE_TRANSFORMERS_AVAILABLE:
-         # Use rerank_chunks from retrieval module
-         final_chunks_list = rerank_chunks(
-             initial_query,
-             combined_chunks_rrf,
-             reranker_model,
-             top_k
-         )
-    else:
-         final_chunks_list = combined_chunks_rrf[:top_k]
-         if reranker_model and not SENTENCE_TRANSFORMERS_AVAILABLE:
-              print("Info: Skipping re-ranking step (sentence-transformers not installed). Using RRF results.")
-         elif not reranker_model:
-              print("Info: Skipping re-ranking step (no reranker model specified). Using RRF results.")
-
-
-    if not final_chunks_list:
-        return "No relevant chunks found after retrieval and potential re-ranking."
-
-    # 5. Process Final Chunks & Generate Context String
-    final_chunks_list.sort(key=lambda c: c.get('rerank_score', c.get('rrf_score', -float('inf'))), reverse=True)
-
-    print(f"\n--- Processing Top {len(final_chunks_list)} Final Chunks for Context ---")
+    # 3. Process Final Chunks & Generate Context String
+    print(f"\n--- Processing Top {len(final_chunks_for_answer)} Combined Chunks for Context ---")
     context_parts = []
-    for chunk in final_chunks_list:
+    # Use the combined and re-sorted list
+    for chunk in final_chunks_for_answer:
         content = chunk.get('contextualized_text', '').strip() or chunk.get('text', '')
         context_parts.append(
             f"Source Document: {chunk.get('file_name', 'N/A')} [Chunk #{chunk.get('chunk_number', '?')}]\n"
@@ -266,9 +356,10 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
         )
     combined_context = "\n\n---\n\n".join(context_parts)
 
-    # 6. Generate Final Answer
+    # 4. Generate Final Answer
     print("\n--- Generating Final Answer (Iterative Hybrid Retrieval) ---")
-    final_answer = generate_answer(initial_query, combined_context, final_chunks_list, model=answer_model)
+    # Pass the combined list for citation generation
+    final_answer = generate_answer(initial_query, combined_context, final_chunks_for_answer, model=answer_model)
     return final_answer
 
 
@@ -303,41 +394,22 @@ def query_index(query: str, db_path: str, collection_name: str,
     answer_client_ok = True
     # ---------------------
 
-    fetch_k = rerank_candidate_count if reranker_model and SENTENCE_TRANSFORMERS_AVAILABLE else top_k
-    fetch_k = max(fetch_k, top_k)
-    print(f"Retrieving Top {fetch_k} initial candidates...")
-
-    # 1. Retrieve Chunks (Hybrid) - Single Query
-    vector_results = retrieve_chunks_vector(query, db_path, collection_name, fetch_k, execution_mode=execution_mode)
-    bm25_results = retrieve_chunks_bm25(query, db_path, collection_name, fetch_k)
-    print(f"Retrieved {len(vector_results)} vector candidates, {len(bm25_results)} BM25 candidates.")
-
-    # 2. Combine using RRF
-    print("Combining via RRF...")
-    combined_chunks_rrf = combine_results_rrf(
-        vector_results, bm25_results, db_path, collection_name, execution_mode=execution_mode
+    # 1. Retrieve and Rank Chunks using the new function
+    final_chunks_list = retrieve_and_rerank_chunks(
+        query=query,
+        db_path=db_path,
+        collection_name=collection_name,
+        top_k=top_k,
+        reranker_model=reranker_model,
+        rerank_candidate_count=rerank_candidate_count,
+        execution_mode=execution_mode
     )
-    combined_chunks_rrf = combined_chunks_rrf[:fetch_k] # Limit for reranking
-
-    # 3. Optional Re-ranking Step
-    if reranker_model and SENTENCE_TRANSFORMERS_AVAILABLE:
-         final_chunks_list = rerank_chunks(
-             query,
-             combined_chunks_rrf,
-             reranker_model,
-             top_k
-         )
-    else:
-         final_chunks_list = combined_chunks_rrf[:top_k]
-         if reranker_model and not SENTENCE_TRANSFORMERS_AVAILABLE: print("Info: Skipping re-ranking (sentence-transformers unavailable).")
-         elif not reranker_model: print("Info: Skipping re-ranking (no model specified).")
-
 
     if not final_chunks_list:
         return "No relevant chunks found after retrieval and potential re-ranking."
 
-    # 4. Process Final Chunks & Generate Context
-    final_chunks_list.sort(key=lambda c: c.get('rerank_score', c.get('rrf_score', -float('inf'))), reverse=True)
+    # 2. Process Final Chunks & Generate Context
+    # Sorting is already done by retrieve_and_rerank_chunks
     print(f"\n--- Processing Top {len(final_chunks_list)} Final Chunks (Direct Query) ---")
     context_parts = []
     for chunk in final_chunks_list:
@@ -348,7 +420,7 @@ def query_index(query: str, db_path: str, collection_name: str,
         )
     combined_context = "\n\n---\n\n".join(context_parts)
 
-    # 5. Generate Final Answer
+    # 3. Generate Final Answer
     print("\n--- Generating Final Answer (Direct Hybrid Query) ---")
     answer = generate_answer(query, combined_context, final_chunks_list, model=answer_model)
     return answer
