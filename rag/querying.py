@@ -62,7 +62,8 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
     }
     # Clean model name for lookup
     clean_model_name = model.split('/')[-1].split(':')[0] # Handle prefixes/suffixes
-    model_token_limit = MODEL_CONTEXT_LIMITS.get(clean_model_name, 8000) # Default to 8k
+    model_token_limit = MODEL_CONTEXT_LIMITS.get(clean_model_name, 128000) # Default to 8k
+    print("DEBUG: Model token limit for", clean_model_name, "is", model_token_limit)
 
     # Calculate max context tokens, leaving room for prompt, query, citations, answer
     # Be conservative: leave ~20-30% for overhead and answer
@@ -113,6 +114,12 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
     answer_max_tokens = min(answer_max_tokens, 4096) # E.g., max 4k tokens for the answer itself
 
     print(f"Generating final answer using {model} (context tokens: ~{context_tokens}, prompt tokens: ~{prompt_total_tokens}, max answer tokens: {answer_max_tokens})...")
+    # save prompt, query and context to file for debugging
+    try:
+        with open('final_prompt.txt', 'w', encoding='utf-8') as f:
+            f.write(prompt)
+    except Exception as e:
+        print(f"Warning: Could not write final_prompt.txt: {e}")
 
     # Generate the answer using the LLM interface
     final_answer_raw = llm_interface.generate_llm_response(prompt, max_tokens=answer_max_tokens, temperature=0.1, model=model) # Low temp for factual answers

@@ -55,7 +55,6 @@ def retrieve_chunks_vector(query: str, db_path: str, collection_name: str,
             # Optional: Filter for 'has_embedding: True' if paranoid, but query should only match embedded items
             # where={"has_embedding": True} # This might slow down query if not needed
         )
-        print(f"DEBUG (retrieve_chunks_vector): Raw ChromaDB query results: {results}") # Add log for raw results
 
         # Process results
         if results and results.get('ids') and results['ids'][0]:

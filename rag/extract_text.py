@@ -14,6 +14,9 @@ from google.api_core import exceptions as google_exceptions
 # ------------------------------
 
 # --- Configuration ---
+
+import dotenv
+dotenv.load_dotenv() # Load environment variables from .env file
 GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not GOOGLE_API_KEY:
@@ -188,8 +191,10 @@ def save_text_file(text, output_path):
 # ------------------------------
 
 def main():
+    # change run path
+    os.chdir(os.path.dirname(os.path.abspath(__file__))) # Ensure the script runs in its own directory
     # --- Define Default Base Project Name ---
-    default_project = "droughts" # Changed from "test" for clarity
+    default_project = "paper_2_intro" # Changed from "test" for clarity
 
     # --- Define Default Paths using the project name ---
     # Use current working directory as base for defaults
