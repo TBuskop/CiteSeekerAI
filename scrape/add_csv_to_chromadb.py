@@ -69,7 +69,8 @@ def _generate_id(doi: Optional[str], index: int) -> str:
 def ingest_csv_to_chroma(
     csv_file_path: str,
     db_path: str = DEFAULT_DB_PATH,
-    collection_name: str = DEFAULT_COLLECTION_NAME
+    collection_name: str = DEFAULT_COLLECTION_NAME,
+    force_reindex: bool = False
 ):
     """
     Reads a CSV, adds publication data to ChromaDB without embeddings,
@@ -144,7 +145,18 @@ def ingest_csv_to_chroma(
 
             # Generate ID
             doc_id = _generate_id(doi, index)
-            doc_text = str(abstract).strip() # Get the abstract text
+            
+            # --- New: Skip row if already in DB via doi and not force_reindex ---
+            if doi and doi.strip() and not force_reindex:
+                existing = index_collection.get(ids=[doc_id])
+                if existing.get('ids'):
+                    print(f"Skipping row {index} (doc_id: {doc_id}) already in database.")
+                    continue
+            # --- End New ---
+
+            # --- Changed: Combine title with abstract ---
+            merged_text = f"{title.strip()}\n{str(abstract).strip()}"
+            # --- End Change ---
 
             # Prepare metadata
             metadata = {
@@ -162,12 +174,12 @@ def ingest_csv_to_chroma(
 
 
             ids_to_add.append(doc_id)
-            documents_to_add.append(doc_text) # Store the abstract text for Chroma upsert
+            documents_to_add.append(merged_text) # Store the merged text for Chroma upsert
             metadatas_to_add.append(metadata)
 
             # --- Accumulate for BM25 ---
             all_processed_ids.append(doc_id)
-            all_processed_documents.append(doc_text)
+            all_processed_documents.append(merged_text)
             # --- End Accumulate ---
             processed_rows += 1
 
@@ -301,6 +313,7 @@ if __name__ == "__main__":
     # Optional: Specify a different database path or collection name
     database_path = DEFAULT_DB_PATH
     collection = DEFAULT_COLLECTION_NAME
+    force_reindex=False
     # --- End Configuration ---
 
     if not os.path.exists(csv_path):
@@ -310,5 +323,6 @@ if __name__ == "__main__":
         ingest_csv_to_chroma(
             csv_file_path=csv_path,
             db_path=database_path,
-            collection_name=collection
+            collection_name=collection,
+            force_reindex=force_reindex # Optional: Set to True to force reindexing
         )
