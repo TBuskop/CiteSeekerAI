@@ -672,6 +672,7 @@ class ScopusScraper:
                 select_all_checkbox = self.page.query_selector('#bulkSelectDocument-primary-document-search-results-toolbar')
                 
                 if select_all_checkbox:
+                    time.sleep(5)
                     logger.info("Found new UI with Select All checkbox - using new export flow")
                     
                     # Click the Select All checkbox
