@@ -39,7 +39,6 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Run a search on Scopus and download results")
     # read generated_search_string.txt and use it as the default query
     default_query_file = Path("generated_search_string.txt")
-    default_query = "\"climate change\" AND \"coastal erosion\" AND adaptation AND \"Europe\"" # Fallback default
     if default_query_file.exists():
         try:
             default_query = default_query_file.read_text().strip()
@@ -53,7 +52,6 @@ def parse_arguments():
     parser.add_argument(
         "--query", 
         type=str, 
-        default=default_query, 
         help="Search query to use (default: content of generated_search_string.txt or fallback)"
     )
     parser.add_argument(
@@ -65,7 +63,6 @@ def parse_arguments():
     parser.add_argument(
         "--institution", 
         type=str,
-        default=INSTITUTION,
         help="Institution name (optional, overrides .env)"
     )
     parser.add_argument(
@@ -85,8 +82,8 @@ def parse_arguments():
         help="End year for filtering results"
     )
     # Add arguments for credentials as optional overrides
-    parser.add_argument("--username", type=str, default=USERNAME, help="Scopus username (overrides .env)")
-    parser.add_argument("--password", type=str, default=PASSWORD, help="Scopus password (overrides .env)")
+    parser.add_argument("--username", type=str, help="Scopus username (overrides .env)")
+    parser.add_argument("--password", type=str, help="Scopus password (overrides .env)")
 
     return parser.parse_args()
 
