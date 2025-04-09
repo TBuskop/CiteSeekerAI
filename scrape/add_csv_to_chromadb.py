@@ -57,13 +57,38 @@ def _clean_numeric(value: Any) -> Optional[int]:
     except (ValueError, TypeError):
         return None # Strategy: Use None if conversion fails
 
-def _generate_id(doi: Optional[str], index: int) -> str:
-    """Generate a unique ID using DOI if available, otherwise fallback to row index."""
+def _generate_id(doi: Optional[str], index: int, seen_ids: set) -> str:
+    """
+    Generate a unique ID using DOI if available, otherwise fallback to row index.
+    Ensures the returned ID is unique by checking against seen_ids.
+    
+    Args:
+        doi: The DOI string or None
+        index: The row index in the CSV
+        seen_ids: Set of IDs already generated in this session
+    
+    Returns:
+        A unique ID string
+    """
     if doi and isinstance(doi, str) and doi.strip():
-        return doi.strip()
+        base_id = doi.strip()
     else:
         # Fallback strategy: Use a prefix and the row index
-        return f"row_{index}"
+        base_id = f"row_{index}"
+    
+    # Ensure uniqueness
+    if base_id in seen_ids:
+        # If already seen, append a suffix to make unique
+        suffix = 1
+        while f"{base_id}_{suffix}" in seen_ids:
+            suffix += 1
+        unique_id = f"{base_id}_{suffix}"
+    else:
+        unique_id = base_id
+    
+    # Add to seen IDs set
+    seen_ids.add(unique_id)
+    return unique_id
 
 # --- Main Ingestion Function ---
 def ingest_csv_to_chroma(
@@ -80,6 +105,7 @@ def ingest_csv_to_chroma(
         csv_file_path: Path to the input CSV file.
         db_path: Path to the ChromaDB persistence directory.
         collection_name: Name of the ChromaDB collection.
+        force_reindex: If True, reindex documents even if they exist in DB
     """
     print(f"--- Starting CSV Ingestion ---")
     print(f"CSV Source: {csv_file_path}")
@@ -106,7 +132,18 @@ def ingest_csv_to_chroma(
         print(f"Reading CSV file: {csv_file_path}...")
         # Strategy: Keep missing string values as NaN initially, handle during iteration
         df = pd.read_csv(csv_file_path, keep_default_na=True)
-        print(f"Read {len(df)} rows from CSV.")
+        
+        # Remove duplicate DOIs before processing if they exist
+        if 'DOI' in df.columns:
+            original_count = len(df)
+            # Remove rows with duplicate DOIs (keeping first occurrence)
+            df = df.drop_duplicates(subset=['DOI'], keep='first')
+            # Print info about duplicates
+            dup_count = original_count - len(df)
+            if dup_count > 0:
+                print(f"Removed {dup_count} rows with duplicate DOIs from CSV.")
+        
+        print(f"Processing {len(df)} rows from CSV.")
     except FileNotFoundError:
         print(f"Error: CSV file not found at '{csv_file_path}'")
         return
@@ -124,6 +161,9 @@ def ingest_csv_to_chroma(
     # --- End BM25 lists ---
     skipped_rows = 0
     processed_rows = 0
+
+    # Track IDs we've seen to avoid duplicates
+    seen_ids = set()
 
     print("Processing CSV rows for indexing...")
     for index, row in df.iterrows():
@@ -143,16 +183,16 @@ def ingest_csv_to_chroma(
             year = _clean_numeric(row.get('Year'))
             cited_by = _clean_numeric(row.get('Cited by'))
 
-            # Generate ID
-            doc_id = _generate_id(doi, index)
+            # Generate unique ID using updated function with seen_ids tracking
+            doc_id = _generate_id(doi, index, seen_ids)
             
-            # --- New: Skip row if already in DB via doi and not force_reindex ---
-            if doi and doi.strip() and not force_reindex:
+            # --- Skip row if already in DB via ID and not force_reindex ---
+            if not force_reindex:
                 existing = index_collection.get(ids=[doc_id])
                 if existing.get('ids'):
                     print(f"Skipping row {index} (doc_id: {doc_id}) already in database.")
                     continue
-            # --- End New ---
+            # --- End Skip ---
 
             # --- Changed: Combine title with abstract ---
             merged_text = f"{title.strip()}\n{str(abstract).strip()}"
@@ -171,7 +211,6 @@ def ingest_csv_to_chroma(
             }
             # Filter out None values from metadata for cleaner storage
             metadata = {k: v for k, v in metadata.items() if v is not None}
-
 
             ids_to_add.append(doc_id)
             documents_to_add.append(merged_text) # Store the merged text for Chroma upsert
@@ -309,7 +348,7 @@ if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     # --- Configuration ---
     # Replace with the actual path to your CSV file
-    csv_path = "./data/downloads/csv/scopus_plausibilistic_climate_storyline_OR_plausible_20250404-171808.csv"
+    csv_path = "./data/downloads/csv/scopus_climate_OR_climate_change_OR_climate_variabil_20250409-092020.csv"
     # Optional: Specify a different database path or collection name
     database_path = DEFAULT_DB_PATH
     collection = DEFAULT_COLLECTION_NAME
