@@ -228,7 +228,7 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
     # Calculate max tokens for the answer, leave a buffer
     answer_max_tokens = max(150, model_token_limit - prompt_total_tokens - 200) # Min 150 tokens, buffer 200
     # Apply a reasonable hard cap to answer length if needed
-    answer_max_tokens = min(answer_max_tokens, 4096) # E.g., max 4k tokens for the answer itself
+    answer_max_tokens = max(answer_max_tokens, 4096) # E.g., max 4k tokens for the answer itself
 
     print(f"Generating final answer using {model} (context tokens: ~{context_tokens}, prompt tokens: ~{prompt_total_tokens}, max answer tokens: {answer_max_tokens})...")
     # save prompt, query and context to file for debugging
