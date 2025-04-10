@@ -261,7 +261,7 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
                         reranker_model: Optional[str] = RERANKER_MODEL,
                         rerank_candidate_count: int = DEFAULT_RERANK_CANDIDATE_COUNT,
                         execution_mode: str = "query") -> str:
-    """Performs iterative RAG with subquery generation, hybrid retrieval, RRF, and optional reranking."""
+    """Performs iterative RAG with subquery generation, separate hybrid retrieval, RRF, and optional reranking."""
 
     # --- Updated Client Checks using module namespace ---
     print(f"DEBUG (querying.iterative_rag_query): Checking client...")
@@ -278,88 +278,92 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
     else:
         print(f"DEBUG (querying.iterative_rag_query): isinstance check PASSED.") # Add success log
 
-
-    # If we reach here, the client library is available and the client object seems valid.
-    query_embed_client_ok = True
-    subquery_client_ok = True # Assume ok, specific model errors handled later
-    answer_client_ok = True   # Assume ok, specific model errors handled later
-
-    # Check subquery model only if it's actually configured and needed
-    if subquery_model and not subquery_client_ok:
-        # This check might be redundant now but kept for clarity
-        return f"[Error: Client for subquery model '{subquery_model}' not available or invalid.]"
-    # ---------------------
-
     # 1. Generate Subqueries (if subquery model is available)
-    all_queries = [initial_query]
-    if subquery_model: # Check if a model is configured
-        # Use generate_subqueries from llm_interface
-        generated_subqueries = llm_interface.generate_subqueries(initial_query, model=subquery_model)
-        if generated_subqueries and generated_subqueries != [initial_query]:
-            print("--- Generated Subqueries ---")
-            for idx, subq in enumerate(generated_subqueries): print(f"  {idx+1}. {subq}")
-            all_queries.extend(generated_subqueries)
-        else:
-            print("--- Using only the initial query (no distinct subqueries generated or subquery model unavailable) ---")
+    if subquery_model:
+        subquery_result = llm_interface.generate_subqueries(initial_query, model=subquery_model)
+        bm25_queries = subquery_result.get("bm25_queries", [initial_query])
+        vector_search_queries = subquery_result.get("vector_search_queries", [initial_query])
+        print(f"--- Generated {len(bm25_queries)} BM25 and {len(vector_search_queries)} Vector subqueries ---")
     else:
-        print("--- Skipping subquery generation (no subquery model specified) ---")
+        bm25_queries = [initial_query]
+        vector_search_queries = [initial_query]
+        print("--- Skipping subquery generation ---")
 
-
-    # 2. Retrieve and Rank Chunks for ALL queries combined
-    all_final_chunks = []
-    processed_chunk_ids = set() # Keep track of processed chunks to avoid duplicates from subqueries
-
-    # Determine fetch_k for retrieval based on reranking needs
-    fetch_k_retrieval = rerank_candidate_count if reranker_model and SENTENCE_TRANSFORMERS_AVAILABLE else top_k
-    fetch_k_retrieval = max(fetch_k_retrieval, top_k)
-
-    print(f"\n--- Retrieving & Ranking for {len(all_queries)} queries (Initial fetch_k={fetch_k_retrieval}) ---")
-    for q_idx, current_query in enumerate(all_queries):
-        print(f"\nProcessing Query {q_idx+1}/{len(all_queries)}: \"{current_query[:100]}...\"")
-        # Use the new function for retrieval and ranking for *each* query
-        # Note: We retrieve potentially more (fetch_k_retrieval) and rerank down to top_k *per query* here.
-        # We might want to adjust this logic later (e.g., combine all results *before* final reranking)
-        # but for now, this keeps it simpler.
-        query_chunks = retrieve_and_rerank_chunks(
-            query=current_query,
-            db_path=db_path,
-            collection_name=collection_name,
-            top_k=top_k, # Get top_k *per query* after potential reranking
-            reranker_model=reranker_model,
-            rerank_candidate_count=fetch_k_retrieval, # Fetch enough candidates for reranking
-            execution_mode=f"{execution_mode}_subquery_{q_idx+1}"
-        )
-        # Add unique chunks to the overall list
-        for chunk in query_chunks:
-            chunk_id = chunk.get('chunk_id')
-            if chunk_id and chunk_id not in processed_chunk_ids:
-                all_final_chunks.append(chunk)
-                processed_chunk_ids.add(chunk_id)
-
-    if not all_final_chunks:
-        return "No relevant chunks found across all queries after retrieval and potential re-ranking."
-
-    # Re-sort the combined list based on the best score (rerank or rrf)
-    all_final_chunks.sort(key=lambda c: c.get('rerank_score', c.get('rrf_score', -float('inf'))), reverse=True)
-    # Optionally limit the total number of chunks used for the final answer
-    final_chunks_for_answer = all_final_chunks[:top_k]
-
-    # 3. Process Final Chunks & Generate Context String
-    print(f"\n--- Processing Top {len(final_chunks_for_answer)} Combined Chunks for Context ---")
+    # 2. Retrieve Chunks Separately for BM25 and Vector Queries
+    all_vector_results = []
+    processed_vector_ids = set()
+    fetch_k_per_query = rerank_candidate_count if reranker_model and SENTENCE_TRANSFORMERS_AVAILABLE else top_k
+    fetch_k_per_query = max(fetch_k_per_query, top_k)
+    
+    print(f"\n--- Retrieving Chunks for Vector Queries (fetch_k={fetch_k_per_query}) ---")
+    for idx, query in enumerate(vector_search_queries):
+        print(f"Vector Query {idx+1}/{len(vector_search_queries)}: \"{query[:100]}...\"")
+        try:
+            results = retrieve_chunks_vector(query, db_path, collection_name, fetch_k_per_query,
+                                             execution_mode=f"{execution_mode}_vector_{idx+1}")
+            for chunk in results:
+                cid = chunk.get("chunk_id")
+                if cid and cid not in processed_vector_ids:
+                    all_vector_results.append(chunk)
+                    processed_vector_ids.add(cid)
+        except Exception as e:
+            print(f"Error during vector retrieval for query: {query[:50]}...: {e}")
+            traceback.print_exc()
+    
+    all_bm25_results = []
+    processed_bm25_ids = set()
+    print(f"\n--- Retrieving Chunks for BM25 Queries (fetch_k={fetch_k_per_query}) ---")
+    for idx, query in enumerate(bm25_queries):
+        print(f"BM25 Query {idx+1}/{len(bm25_queries)}: \"{query[:100]}...\"")
+        try:
+            results = retrieve_chunks_bm25(query, db_path, collection_name, fetch_k_per_query)
+            for cid, score in results:
+                if cid and cid not in processed_bm25_ids:
+                    all_bm25_results.append((cid, score))
+                    processed_bm25_ids.add(cid)
+        except Exception as e:
+            print(f"Error during BM25 retrieval for query: {query[:50]}...: {e}")
+            traceback.print_exc()
+    
+    print(f"\n--- Combining {len(all_vector_results)} Vector & {len(all_bm25_results)} BM25 results via RRF ---")
+    try:
+        combined_chunks = combine_results_rrf(all_vector_results, all_bm25_results, db_path, collection_name,
+                                              execution_mode=execution_mode)
+    except Exception as e:
+        print(f"Error during RRF combination: {e}")
+        traceback.print_exc()
+        return "An error occurred while combining search results."
+    
+    if not combined_chunks:
+        print("No chunks remaining after RRF combination.")
+        return "Could not find relevant information after combining search results."
+    
+    # 3. Optional Re-ranking Step
+    if reranker_model and SENTENCE_TRANSFORMERS_AVAILABLE:
+        print(f"\n--- Reranking Top {len(combined_chunks)} Candidates using {reranker_model} ---")
+        try:
+            final_chunks = rerank_chunks(initial_query, combined_chunks, reranker_model, top_k)
+        except Exception as e:
+            print(f"Error during reranking: {e}")
+            traceback.print_exc()
+            final_chunks = combined_chunks[:top_k]
+    else:
+        final_chunks = combined_chunks[:top_k]
+    
+    if not final_chunks:
+        return "No relevant chunks found after retrieval and potential re-ranking."
+    
+    # 4. Process Final Chunks & Generate Context String, then generate answer
+    print(f"\n--- Processing Top {len(final_chunks)} Final Chunks for Context ---")
     context_parts = []
-    # Use the combined and re-sorted list
-    for chunk in final_chunks_for_answer:
+    for chunk in final_chunks:
         content = chunk.get('contextualized_text', '').strip() or chunk.get('text', '')
         context_parts.append(
             f"Source Document: {chunk.get('file_name', 'N/A')} [Chunk #{chunk.get('chunk_number', '?')}]\n"
             f"Content:\n{content}"
         )
     combined_context = "\n\n---\n\n".join(context_parts)
-
-    # 4. Generate Final Answer
-    print("\n--- Generating Final Answer (Iterative Hybrid Retrieval) ---")
-    # Pass the combined list for citation generation
-    final_answer = generate_answer(initial_query, combined_context, final_chunks_for_answer, model=answer_model)
+    final_answer = generate_answer(initial_query, combined_context, final_chunks, model=answer_model)
     return final_answer
 
 

@@ -1,6 +1,8 @@
 import numpy as np
 import traceback
 import re
+import json
+import os
 from typing import List, Optional, Dict, Any
 
 # --- Config Imports ---
@@ -267,7 +269,7 @@ def generate_llm_response(prompt: str, max_tokens: int, temperature: float = 0.7
                          print(f"WARN: No valid text content received from {api_model_name}. Finish Reason: {finish_reason}")
                          # Check if content parts exist but are empty
                          no_parts = True
-                         if hasattr(response, 'candidates') and response.candidates and hasattr(response.candidates[0], 'content') and hasattr(response.candidates[0].content, 'parts'):
+                         if hasattr(response, 'candidates') and response.candidates and hasattr(response.candidates[0].content, 'parts'):
                              no_parts = not bool(response.candidates[0].content.parts)
                          if no_parts:
                              print(f"WARN: Response candidates[0].content.parts is empty or missing.")
@@ -342,34 +344,45 @@ def generate_chunk_context(
 
 
 # --- Subquery Generation ---
-def generate_subqueries(initial_query: str, model: str = SUBQUERY_MODEL, n_queries: int = 4) -> List[str]:
+def generate_subqueries(initial_query: str, model: str = SUBQUERY_MODEL) -> Dict[str, List[str]]:
     """
-    Generates diverse sub-queries from an initial query for hybrid retrieval.
+    Generates diverse sub-queries from an initial query using a prompt that returns a JSON object
+    with 'bm25_queries' and 'vector_search_queries'. Falls back to the initial query if processing fails.
     """
-    prompt = f"""You are an expert research assistant specializing in generating precise search queries for academic literature databases using hybrid retrieval (lexical + semantic).
-                Decompose the user's query into {n_queries} specific, diverse sub-queries optimized for retrieving distinct, relevant chunks.
-
-                **Guidelines:**
-                *   **Hybrid Focus:** Use precise keywords, concepts, boolean operators (`AND`, `OR`), and exact phrases (`"..."`) for lexical search, while maintaining semantic meaning.
-                *   **Facet Coverage:** Target distinct facets (phenomena, regions, methods, impacts, time scales, comparisons, policy, etc.) of the original query. Avoid overlap.
-                *   **Specificity:** Use academic terminology. Avoid vague terms.
-                *   **Format:** Generate search terms/phrases, not natural language questions. Return ONLY the sub-queries, each on a new line. No numbering, bullets, or explanations.
-
-                Original Query:
-                '{initial_query}'
-
-                Generate exactly {n_queries} focused sub-queries:
-                """
+    default_result = {"bm25_queries": [initial_query], "vector_search_queries": [initial_query]}
+    prompt_path = os.path.join(os.path.dirname(__file__), "subquery_prompt.txt")
     try:
-        response_text = generate_llm_response(prompt, max_tokens=8000, temperature=0.6, model=model) 
-        if response_text.startswith("[Error") or response_text.startswith("[Blocked"):
-             raise RuntimeError(f"Subquery LLM failed or blocked: {response_text}")
-
-        lines = response_text.strip().splitlines()
-        subqueries = [re.sub(r"^\s*[\d\.\-\*]+\s*", "", line).strip() for line in lines if line.strip()]
-        subqueries = [q for q in subqueries if q and len(q.split()) > 1 and not q.lower().startswith(("generate", "here are"))]
-
-        return subqueries[:n_queries] if subqueries else [initial_query]
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            prompt_template = f.read()
+        prompt = prompt_template.replace("<initial_query>", initial_query)
     except Exception as e:
-        print(f"Error generating subqueries with {model}: {e}. Using original query.")
-        return [initial_query]
+        print(f"Error reading subquery prompt file: {e}. Using initial query only.")
+        return default_result
+
+    try:
+        response_text = generate_llm_response(prompt, max_tokens=4096, temperature=0.3, model=model)
+        if not response_text or response_text.startswith("[Error") or response_text.startswith("[Blocked"):
+            raise RuntimeError(f"Subquery LLM failed or returned error: {response_text}")
+        # Remove potential markdown fences
+        response_text = re.sub(r"^```json\s*", "", response_text, flags=re.IGNORECASE | re.MULTILINE)
+        response_text = re.sub(r"\s*```$", "", response_text, flags=re.IGNORECASE | re.MULTILINE)
+        response_text = response_text.strip()
+        parsed_json = json.loads(response_text)
+        if not (isinstance(parsed_json, dict) and "bm25_queries" in parsed_json and "vector_search_queries" in parsed_json):
+            raise ValueError("JSON structure invalid")
+        bm25_queries = [q for q in parsed_json["bm25_queries"] if isinstance(q, str) and q.strip()]
+        vector_search_queries = [q for q in parsed_json["vector_search_queries"] if isinstance(q, str) and q.strip()]
+        if not bm25_queries:
+            bm25_queries = [initial_query]
+            print("Warning: BM25 queries empty; using initial query.")
+        if not vector_search_queries:
+            vector_search_queries = [initial_query]
+            print("Warning: Vector search queries empty; using initial query.")
+        return {"bm25_queries": bm25_queries, "vector_search_queries": vector_search_queries}
+    except json.JSONDecodeError as json_err:
+        print(f"JSON decoding error: {json_err}. Raw response:\n{response_text}")
+        return default_result
+    except Exception as e:
+        print(f"Error generating subqueries: {e}")
+        traceback.print_exc()
+        return default_result
