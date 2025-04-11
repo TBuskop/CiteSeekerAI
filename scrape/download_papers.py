@@ -728,7 +728,7 @@ def download_dois(proposed_dois: List[str], output_directory: str) -> None:
         if not doi or not isinstance(doi, str):
             print(f"Skipping invalid proposed DOI: {doi}")
             continue
-        filename_doi = re.sub(r'[^\w\d.-]', '_', doi) + ".txt" # Add .txt extension
+        filename_doi = re.sub(r'[^\w\d.-]', '_', doi) + ".txt" # Add .txt extension but replacing / with _
         path_to_check = os.path.join(output_directory, filename_doi) # Use output_directory
         if not os.path.exists(path_to_check):
             dois_to_process.append(doi)
