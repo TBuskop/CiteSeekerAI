@@ -57,7 +57,7 @@ def extract_doi_from_filename(filename: str) -> Optional[str]:
         # Replace underscores back to slashes
         # This simple replacement assumes DOIs don't contain underscores themselves.
         # A more robust method might be needed if they do.
-        doi = doi_part
+        doi = doi_part.replace("_", "/")
         return doi
     except Exception as e:
         print(f"Error extracting DOI from filename '{filename}': {e}")
