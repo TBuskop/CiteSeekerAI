@@ -194,7 +194,7 @@ def main():
     # change run path
     os.chdir(os.path.dirname(os.path.abspath(__file__))) # Ensure the script runs in its own directory
     # --- Define Default Base Project Name ---
-    default_project = "paper_2_intro" # Changed from "test" for clarity
+    default_project = "robustness_uncertainty" # Changed from "test" for clarity
 
     # --- Define Default Paths using the project name ---
     # Use current working directory as base for defaults

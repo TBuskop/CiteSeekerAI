@@ -76,17 +76,21 @@ def main(config_params: Optional[Dict[str, Any]] = None):
     if config_params is None:
 
         query = """
-        what color are apples?
+        I am writing a discussion for an academic paper and need some papers to backup my discussion section. Especially integrating the reviewer comment: Somewhere in this section you should also address the review comments “what did we learn?” You should discuss the robustness of the patterns across the various scenarios in Figure 8, and the usefulness for this combined climate/socio-economic analysis for priority setting in policy decisions. It’s not the probability of things happening that is targeted here, but the probability of being helpful to design proper policy responses
+        Here is the section I want to improve
+        4.1 The consequences of uncertainties, the importance of exploration and reduction
+        Results highlight the importance of using multiple climate storylines to robustly assess future discharge extremes. Flood patterns vary significantly across storylines; while some indicate 10% regional reductions in the 100 year return period discharge, others indicate increases up to 20%. The storylines also reveal spatial heterogeneity: in some storylines and regions flood preconditions such as snow melt are dampened, whereas other preconditions (such as higher soil moisture volume) are amplified.
+        Projected socio-economic changes can further amplify these climate risks. As exposed asset values in the Latvian basin almost quadruple compared to the 2020 baseline, sectors are confronted with heightened flood-induced demand shocks related to reconstruction. Simultaneously, a trend of declining domestic manufacturing capacity doubles or triples most sectoral stresses relative to the 2020 baseline. In some scenarios, the demand shock exceeds absorptive capacity of sectors, amplifying and prolonging indirect impacts (Hallegatte et al., 2024). Furthermore, increased dependency on imports due to the offshoring of the manufacturing sectors may create new vulnerabilities to foreign supply disruptions (Ercin et al., 2021). Conversely, this may lead to enhanced regional resilience through import diversification (Willner et al., 2018).
         """
 
         print("INFO: No configuration provided, using default example (query mode).")
         config_params = {
             "mode": "index_embed_query",
-            "folder_path": "cleaned_text/test_docs",
+            "folder_path": "cleaned_text/robustness_uncertainty",
             "db_path": "chunk_database/chunks_db",
-            "collection_name": "test_collection",
+            "collection_name": "robustness_uncertainty",
             "query": query,
-            "top_k": 8,
+            "top_k": 100,
             "reranker": config.RERANKER_MODEL,
             "rerank_candidates": config.DEFAULT_RERANK_CANDIDATE_COUNT,
         }

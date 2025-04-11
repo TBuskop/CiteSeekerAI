@@ -1,7 +1,7 @@
 import os
 import sys
-import traceback  # Added for error logging
-from typing import List, Dict, Set, Tuple
+import traceback
+from typing import List, Dict, Set, Tuple, Optional, Any
 
 # --- Add necessary imports ---
 # Adjust path to import from the parent directory (rag)
@@ -10,8 +10,8 @@ parent_dir = os.path.dirname(script_dir)
 sys.path.append(parent_dir)
 
 # Updated imports from querying and retrieval
-from rag.querying import SENTENCE_TRANSFORMERS_AVAILABLE  # Keep this check
-from rag.retrieval import (  # Import specific retrieval functions
+from rag.querying import SENTENCE_TRANSFORMERS_AVAILABLE
+from rag.retrieval import (
     retrieve_chunks_vector,
     retrieve_chunks_bm25,
     combine_results_rrf,
@@ -24,21 +24,22 @@ from rag.config import (
     SUBQUERY_MODEL,
 )
 from rag.chroma_manager import get_chroma_collection
-
-# Import client initialization function and subquery generation
 from rag.llm_interface import initialize_clients, GOOGLE_GENAI_AVAILABLE, generate_subqueries
 
+# --- Constants ---
 DB_PATH = "./abstract_chroma_db"
 COLLECTION_NAME = 'abstracts'
+OUTPUT_FILENAME = "relevant_abstracts.txt"
 
-
+# --- Helper Function ---
 def extract_metadata(chunks: List[Dict]) -> List[Tuple[str, str, str]]:
     """Extracts Authors, Year, and DOI from chunk metadata, ensuring uniqueness."""
     extracted_info: Set[Tuple[str, str, str]] = set()
-    print(f"DEBUG: Extracting metadata from {len(chunks)} chunks.")  # Add debug log
+    print(f"DEBUG: Extracting metadata from {len(chunks)} chunks.")
     for i, chunk in enumerate(chunks):
-        if i < 3:
-            print(f"  DEBUG: Chunk {i} keys: {list(chunk.keys())}")
+        # Optional: Reduce debug noise if needed
+        # if i < 3:
+        #     print(f"  DEBUG: Chunk {i} keys: {list(chunk.keys())}")
 
         authors = chunk.get('authors', 'N/A')
         year = str(chunk.get('year', 'N/A'))
@@ -57,50 +58,65 @@ def extract_metadata(chunks: List[Dict]) -> List[Tuple[str, str, str]]:
         try:
             year_int = int(year_str)
         except (ValueError, TypeError):
-            year_int = -1
-        return (-year_int, authors_str.lower())
+            year_int = -1 # Treat non-integer years as very old
+        return (-year_int, authors_str.lower()) # Sort by year descending, then authors ascending
 
     return sorted(list(extracted_info), key=sort_key)
 
 
-def main():
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    initial_query = "Academic papers discussing how to assess the robustness of climate information and how to design effective policy and prioritise in uncertainty."
-    top_k = 10  # Final number of unique documents to aim for
-    rerank_candidates = DEFAULT_RERANK_CANDIDATE_COUNT  # Candidates for reranking *after* RRF
-    db_path = DB_PATH
-    collection_name = COLLECTION_NAME
-    use_rerank = True
-    execution_mode = "collect_abstracts"  # Base execution mode identifier
+# --- Refactored Functions ---
 
+def setup_environment_and_config() -> Dict[str, Any]:
+    """Sets up the script environment and returns configuration."""
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    config = {
+        "initial_query": "Academic papers discussing how to assess the robustness of climate information and how to design effective policy and prioritise in uncertainty.",
+        "top_k": 10,
+        "rerank_candidates": DEFAULT_RERANK_CANDIDATE_COUNT,
+        "db_path": DB_PATH,
+        "collection_name": COLLECTION_NAME,
+        "use_rerank": True,
+        "execution_mode": "collect_abstracts" # Base identifier
+    }
     print("Initializing API clients...")
     initialize_clients()
+    return config
 
-    # --- Subquery Generation ---
+def generate_search_queries(initial_query: str) -> Tuple[List[str], List[str]]:
+    """Generates BM25 and Vector Search queries, including subqueries if configured."""
     bm25_queries = [initial_query]
     vector_search_queries = [initial_query]
+
     if SUBQUERY_MODEL and GOOGLE_GENAI_AVAILABLE:
         print(f"\n--- Generating Subqueries using {SUBQUERY_MODEL} ---")
         try:
-            # generate_subqueries now returns a dict
             subquery_result = generate_subqueries(initial_query, model=SUBQUERY_MODEL)
-            bm25_queries = subquery_result.get('bm25_queries', [initial_query])
-            vector_search_queries = subquery_result.get('vector_search_queries', [initial_query])
-            # Check if we got more than just the initial query back
-            if len(bm25_queries) == 1 and bm25_queries[0] == initial_query and \
-               len(vector_search_queries) == 1 and vector_search_queries[0] == initial_query:
-                print("Using only the initial query (subquery generation failed or returned no distinct queries).")
+            generated_bm25 = subquery_result.get('bm25_queries', [])
+            generated_vector = subquery_result.get('vector_search_queries', [])
+
+            # Use generated queries only if they are non-empty and different from just the initial query
+            if generated_bm25 and (len(generated_bm25) > 1 or generated_bm25[0] != initial_query):
+                 bm25_queries = generated_bm25
+            if generated_vector and (len(generated_vector) > 1 or generated_vector[0] != initial_query):
+                 vector_search_queries = generated_vector
+
+            if bm25_queries == [initial_query] and vector_search_queries == [initial_query]:
+                 print("Using only the initial query (subquery generation failed or returned no distinct queries).")
             else:
-                pass
+                 print(f"Generated {len(bm25_queries)} BM25 queries and {len(vector_search_queries)} Vector queries.")
+
         except Exception as e:
             print(f"Warning: Failed to generate subqueries: {e}. Proceeding with initial query only.")
-            traceback.print_exc()  # Add traceback
+            traceback.print_exc()
             bm25_queries = [initial_query]
             vector_search_queries = [initial_query]
     else:
         print("\n--- Skipping subquery generation (no subquery model specified or client unavailable) ---")
-    # --- End Subquery Generation ---
 
+    return bm25_queries, vector_search_queries
+
+def configure_reranker(use_rerank: bool) -> Optional[str]:
+    """Determines the reranker model to use based on configuration and availability."""
     reranker_model_to_use = None
     if not use_rerank:
         print("Reranking is disabled.")
@@ -111,13 +127,16 @@ def main():
         print(f"Reranking enabled using model: {reranker_model_to_use}")
     else:
         print("No reranker model configured. Reranking will be skipped.")
+    return reranker_model_to_use
 
+def debug_inspect_collection(db_path: str, collection_name: str):
+    """Prints debugging information about the Chroma collection."""
     print(f"\n--- Debugging: Inspecting Collection '{collection_name}' ---")
     try:
         debug_collection = get_chroma_collection(
             db_path=db_path,
             collection_name=collection_name,
-            execution_mode="query"
+            execution_mode="query_debug" # Unique mode for debugging
         )
         collection_count = debug_collection.count()
         print(f"Collection count: {collection_count}")
@@ -128,40 +147,49 @@ def main():
                 for i, meta in enumerate(peek_result['metadatas']):
                     print(f"  Item {i+1} ID: {peek_result['ids'][i]}")
                     print(f"    Metadata: {meta}")
-                    print(f"    Has Embedding Flag: {meta.get('has_embedding', 'Not Set')}")
+                    # Optional: Check embedding flag if relevant
+                    # print(f"    Has Embedding Flag: {meta.get('has_embedding', 'Not Set')}")
             else:
                 print("  Could not peek into the collection or it's empty.")
         else:
             print("Collection appears to be empty.")
     except Exception as e:
         print(f"Error inspecting collection: {e}")
+        traceback.print_exc() # Include traceback for debug inspection errors
     print("--- End Debugging ---")
 
-    # --- Retrieve Chunks Separately for BM25 and Vector Queries ---
+def retrieve_initial_chunks(
+    vector_queries: List[str],
+    bm25_queries: List[str],
+    db_path: str,
+    collection_name: str,
+    fetch_k: int,
+    execution_mode: str
+) -> Tuple[List[Dict], List[Tuple[str, float]]]:
+    """Retrieves chunks using both vector search and BM25 for the given queries."""
     all_vector_results_raw: List[Dict] = []
     all_bm25_results_raw: List[Tuple[str, float]] = []
     processed_vector_chunk_ids = set()
     processed_bm25_chunk_ids = set()
 
-    fetch_k_per_query = rerank_candidates if reranker_model_to_use else top_k
-    fetch_k_per_query = max(fetch_k_per_query, top_k) * 2
-
-    print(f"\n--- Retrieving Chunks (fetch_k_per_query={fetch_k_per_query}) ---")
+    print(f"\n--- Retrieving Chunks (fetch_k_per_query={fetch_k}) ---")
 
     # Vector Retrieval Loop
-    print(f"--- Vector Search Queries ({len(vector_search_queries)}) ---")
-    for q_idx, query in enumerate(vector_search_queries):
-        print(f"  Query {q_idx+1}/{len(vector_search_queries)}: \"{query[:100]}...\"")
+    print(f"--- Vector Search Queries ({len(vector_queries)}) ---")
+    for q_idx, query in enumerate(vector_queries):
+        print(f"  Query {q_idx+1}/{len(vector_queries)}: \"{query[:100]}...\"")
         try:
             vector_results = retrieve_chunks_vector(
-                query, db_path, collection_name, fetch_k_per_query,
+                query, db_path, collection_name, fetch_k,
                 execution_mode=f"{execution_mode}_vector_subquery_{q_idx+1}"
             )
+            # Deduplicate incoming vector results immediately based on DOI or chunk_id
             for chunk_meta in vector_results:
-                unique_id = chunk_meta.get('doi') or chunk_meta.get('chunk_id')
-                if unique_id and unique_id != 'N/A' and unique_id not in processed_vector_chunk_ids:
-                    all_vector_results_raw.append(chunk_meta)
-                    processed_vector_chunk_ids.add(unique_id)
+                 # Prefer DOI for uniqueness if available
+                 unique_id = chunk_meta.get('doi') or chunk_meta.get('chunk_id')
+                 if unique_id and unique_id != 'N/A' and unique_id not in processed_vector_chunk_ids:
+                      all_vector_results_raw.append(chunk_meta)
+                      processed_vector_chunk_ids.add(unique_id)
         except Exception as e:
             print(f"Error during vector retrieval for query '{query[:50]}...': {e}")
             traceback.print_exc()
@@ -171,8 +199,10 @@ def main():
     for q_idx, query in enumerate(bm25_queries):
         print(f"  Query {q_idx+1}/{len(bm25_queries)}: \"{query[:100]}...\"")
         try:
-            bm25_results = retrieve_chunks_bm25(query, db_path, collection_name, fetch_k_per_query)
+            bm25_results = retrieve_chunks_bm25(query, db_path, collection_name, fetch_k)
+            # Deduplicate incoming BM25 results immediately based on chunk_id
             for chunk_id, score in bm25_results:
+                # BM25 returns chunk_id, use that for uniqueness check
                 if chunk_id and chunk_id not in processed_bm25_chunk_ids:
                     all_bm25_results_raw.append((chunk_id, score))
                     processed_bm25_chunk_ids.add(chunk_id)
@@ -180,114 +210,249 @@ def main():
             print(f"Error during BM25 retrieval for query '{query[:50]}...': {e}")
             traceback.print_exc()
 
-    print(f"\n--- Combining {len(all_vector_results_raw)} Vector & {len(all_bm25_results_raw)} BM25 results via RRF ---")
+    print(f"Retrieved {len(all_vector_results_raw)} unique vector results and {len(all_bm25_results_raw)} unique BM25 results.")
+    return all_vector_results_raw, all_bm25_results_raw
+
+def combine_and_rerank_results(
+    vector_results: List[Dict],
+    bm25_results: List[Tuple[str, float]],
+    initial_query: str,
+    db_path: str,
+    collection_name: str,
+    reranker_model: Optional[str],
+    rerank_candidates_count: int,
+    execution_mode: str
+) -> List[Dict]:
+    """Combines results using RRF and optionally reranks them."""
+    if not vector_results and not bm25_results:
+        print("\nNo results from either vector or BM25 retrieval to combine.")
+        return []
+
+    print(f"\n--- Combining {len(vector_results)} Vector & {len(bm25_results)} BM25 results via RRF ---")
     try:
         combined_chunks_rrf = combine_results_rrf(
-            all_vector_results_raw, all_bm25_results_raw, db_path, collection_name,
-            execution_mode=execution_mode
+            vector_results, bm25_results, db_path, collection_name,
+            execution_mode=f"{execution_mode}_rrf"
         )
     except Exception as e:
         print(f"Error during RRF combination: {e}")
         traceback.print_exc()
-        combined_chunks_rrf = []
+        combined_chunks_rrf = [] # Proceed with empty list if RRF fails
 
     if not combined_chunks_rrf:
-        print("\nNo relevant documents found after combining retrieval results.")
-        return
+        print("RRF combination resulted in an empty list.")
+        return []
 
-    if reranker_model_to_use:
-        print(f"\n--- Reranking Top {len(combined_chunks_rrf)} RRF Candidates using {reranker_model_to_use} ---")
+    # Apply reranking if configured and RRF produced results
+    if reranker_model:
+        print(f"\n--- Reranking Top {min(len(combined_chunks_rrf), rerank_candidates_count)} RRF Candidates using {reranker_model} ---")
         try:
-            candidates_to_rerank = combined_chunks_rrf[:rerank_candidates]
+            candidates_to_rerank = combined_chunks_rrf[:rerank_candidates_count]
+            # Rerank returns the list sorted by rerank_score
             final_ranked_chunks = rerank_chunks(
                 initial_query,
                 candidates_to_rerank,
-                reranker_model_to_use,
-                top_n=len(candidates_to_rerank)
+                reranker_model,
+                top_n=len(candidates_to_rerank) # Rerank all candidates provided
             )
+            # Ensure all chunks have a score for consistent sorting, even if reranking fails partially
+            # If reranking returned fewer items than candidates (unlikely but possible), append remaining with low score
             if len(final_ranked_chunks) < len(combined_chunks_rrf):
-                remaining_chunks = combined_chunks_rrf[len(final_ranked_chunks):]
-                for chunk in remaining_chunks:
-                    if 'rerank_score' not in chunk:
-                        chunk['rerank_score'] = -float('inf')
-                final_ranked_chunks.extend(remaining_chunks)
-                final_ranked_chunks.sort(key=lambda c: c.get('rerank_score', -float('inf')), reverse=True)
+                 print(f"Warning: Reranker returned {len(final_ranked_chunks)} items, expected up to {len(candidates_to_rerank)}.")
+                 processed_reranked_ids = {c.get('chunk_id') for c in final_ranked_chunks}
+                 remaining_chunks = [
+                     chunk for chunk in combined_chunks_rrf
+                     if chunk.get('chunk_id') not in processed_reranked_ids
+                 ]
+                 for chunk in remaining_chunks:
+                     chunk['rerank_score'] = -float('inf') # Assign low score
+                 final_ranked_chunks.extend(remaining_chunks)
+                 # Re-sort based on potentially mixed scores (reranked and fallback)
+                 final_ranked_chunks.sort(key=lambda c: c.get('rerank_score', -float('inf')), reverse=True)
+
         except Exception as e:
             print(f"Error during reranking: {e}")
             traceback.print_exc()
-            print("Warning: Reranking failed. Falling back to RRF results.")
+            print("Warning: Reranking failed. Falling back to RRF results sorted by RRF score.")
+            # Sort by RRF score as fallback
             final_ranked_chunks = sorted(combined_chunks_rrf, key=lambda c: c.get('rrf_score', 0.0), reverse=True)
     else:
-        final_ranked_chunks = sorted(combined_chunks_rrf, key=lambda c: c.get('rrf_score', 0.0), reverse=True)
+         # If no reranker, sort by RRF score
+         final_ranked_chunks = sorted(combined_chunks_rrf, key=lambda c: c.get('rrf_score', 0.0), reverse=True)
+
+    return final_ranked_chunks
+
+
+def deduplicate_and_finalize(ranked_chunks: List[Dict], top_k: int) -> List[Dict]:
+    """Deduplicates chunks by DOI and selects the top K."""
+    if not ranked_chunks:
+        return []
 
     final_unique_chunks_by_doi = []
     processed_dois = set()
-    print(f"\n--- Deduplicating final {len(final_ranked_chunks)} ranked chunks by DOI ---")
-    for chunk in final_ranked_chunks:
+    print(f"\n--- Deduplicating final {len(ranked_chunks)} ranked chunks by DOI ---")
+    for chunk in ranked_chunks:
         doi = chunk.get('doi')
+        # Only add if DOI is valid and not seen before
         if doi and doi != 'N/A' and doi not in processed_dois:
             final_unique_chunks_by_doi.append(chunk)
             processed_dois.add(doi)
+            # Optional: Stop early if we have enough unique docs
+            # if len(final_unique_chunks_by_doi) == top_k:
+            #    break
 
+    # Ensure we don't exceed top_k after deduplication
     final_unique_chunks = final_unique_chunks_by_doi[:top_k]
+    print(f"Selected Top {len(final_unique_chunks)} unique documents based on DOI.")
+    return final_unique_chunks
 
-    if not final_unique_chunks:
-        print("\nNo relevant documents with unique DOIs found after final processing.")
-        return
 
-    print(f"\n--- Selected Top {len(final_unique_chunks)} unique documents based on DOI ---")
+def display_results(final_chunks: List[Dict]) -> List[str]:
+    """Extracts metadata, prints it in a formatted table, and returns DOIs."""
+    if not final_chunks:
+        print("\nNo final documents to display.")
+        return []
 
-    print(f"\n--- Extracting Metadata from Final {len(final_unique_chunks)} Chunks ---")
-    extracted_metadata = extract_metadata(final_unique_chunks)
+    print(f"\n--- Extracting Metadata from Final {len(final_chunks)} Chunks ---")
+    extracted_metadata = extract_metadata(final_chunks) # Uses the helper function
 
     if not extracted_metadata:
         print("No metadata could be extracted from the final retrieved chunks.")
-        return
+        return []
 
     print("\n{:<60} {:<6} {:<40}".format("Authors", "Year", "DOI"))
     print("-" * 110)
 
+    list_of_dois = []
     for authors, year, doi in extracted_metadata:
+        # Truncate long author lists for display
         display_authors = authors if len(authors) <= 58 else authors[:55] + "..."
         print("{:<60} {:<6} {:<40}".format(display_authors, year, doi))
+        list_of_dois.append(doi)
 
+    return list_of_dois
+
+
+def save_abstracts_to_file(final_chunks: List[Dict], filename: str):
+    """Saves the title, metadata, and abstract of the final chunks to a file."""
+    if not final_chunks:
+        print("\nNo abstracts to save.")
+        return
+
+    print(f"\nSaving abstracts to {filename}...")
     try:
-        print("\nSaving abstracts to relevant_abstracts.txt...")
-
-        with open("relevant_abstracts.txt", "w", encoding="utf-8") as outfile:
-            for i, chunk in enumerate(final_unique_chunks):
+        with open(filename, "w", encoding="utf-8") as outfile:
+            for i, chunk in enumerate(final_chunks):
                 title = chunk.get('title', 'N/A')
                 authors = chunk.get('authors', 'N/A')
                 year = str(chunk.get('year', 'N/A'))
                 cited_by = chunk.get('cited_by', 'N/A')
                 source_title = chunk.get('source_title', 'N/A')
                 doi = chunk.get('doi', 'N/A')
+                doc_text = chunk.get('text', '') # The text field often contains Title\nAbstract
 
-                doc_text = chunk.get('text', '')
-
+                # Attempt to extract abstract cleanly
                 abstract = 'N/A'
                 if doc_text and '\n' in doc_text:
                     try:
+                        # Assume the first line is the title (already captured above)
+                        # and the rest is the abstract
                         abstract_parts = doc_text.split('\n', 1)
                         if len(abstract_parts) > 1:
                             abstract = abstract_parts[1].strip()
-                            if not abstract:
+                            if not abstract: # Handle cases where split results in empty second part
                                 abstract = 'N/A (Empty after title)'
-                        else:
-                            abstract = 'N/A (Only title found in text field)'
-                    except IndexError:
-                        abstract = 'N/A (Split failed)'
-                elif doc_text:
+                        else: # Handle cases where there's no newline
+                             abstract = doc_text.strip() # Use the whole text if no newline
+                    except Exception as split_err: # Catch potential errors during split
+                        print(f"  Warning: Could not split text for abstract extraction in chunk {i}: {split_err}")
+                        abstract = doc_text.strip() # Fallback to using the whole text
+                elif doc_text: # Text exists but no newline
                     abstract = doc_text.strip()
-                else:
-                    abstract = 'N/A (Text field empty or missing)'
+                # else: abstract remains 'N/A'
 
-                outfile.write(f"Title: {title}\nAuthors: {authors}\nYear: {year}\nCited by: {cited_by}\nSource Title: {source_title}\nDOI: https://www.doi.org/{doi}\nAbstract: {abstract}\n\n")
+                outfile.write(f"--- Document {i+1} ---\n")
+                outfile.write(f"Title: {title}\n")
+                outfile.write(f"Authors: {authors}\n")
+                outfile.write(f"Year: {year}\n")
+                outfile.write(f"Cited by: {cited_by}\n")
+                outfile.write(f"Source Title: {source_title}\n")
+                outfile.write(f"DOI: https://www.doi.org/{doi}\n")
+                outfile.write(f"Abstract: {abstract}\n\n")
 
-        print("\nRelevant abstracts saved to relevant_abstracts.txt.")
-    except Exception as e:
-        print(f"Error writing abstracts to file: {e}")
+        print(f"Relevant abstracts saved to {filename}.")
+    except IOError as e:
+        print(f"Error writing abstracts to file '{filename}': {e}")
         traceback.print_exc()
+    except Exception as e:
+         print(f"An unexpected error occurred during file writing: {e}")
+         traceback.print_exc()
+
+def find_relevant_dois_from_abstracts() -> List[str]:
+    """Main function to find relevant DOIs based on the initial query."""
+    config = setup_environment_and_config()
+
+    bm25_queries, vector_search_queries = generate_search_queries(config["initial_query"])
+
+    reranker_model_to_use = configure_reranker(config["use_rerank"])
+
+    debug_inspect_collection(config["db_path"], config["collection_name"])
+
+    # Determine fetch_k based on whether reranking will happen
+    # Fetch more candidates if reranking is enabled
+    fetch_k_per_query = config["rerank_candidates"] if reranker_model_to_use else config["top_k"]
+    # Fetch slightly more than needed to account for potential overlaps removed by RRF/dedup later
+    # Ensure we fetch at least top_k * 2 or rerank_candidates * 1.5, whichever is larger
+    fetch_k_per_query = max(fetch_k_per_query * 2, config["top_k"] * 2)
+
+
+    vector_results, bm25_results = retrieve_initial_chunks(
+        vector_search_queries,
+        bm25_queries,
+        config["db_path"],
+        config["collection_name"],
+        fetch_k=fetch_k_per_query,
+        execution_mode=config["execution_mode"]
+    )
+
+    if not vector_results and not bm25_results:
+        print("\nNo relevant documents found after initial retrieval.")
+        return # Exit early if no results
+
+    ranked_chunks = combine_and_rerank_results(
+        vector_results,
+        bm25_results,
+        config["initial_query"],
+        config["db_path"],
+        config["collection_name"],
+        reranker_model_to_use,
+        config["rerank_candidates"],
+        config["execution_mode"]
+    )
+
+    if not ranked_chunks:
+         print("\nNo relevant documents found after combining/ranking retrieval results.")
+         return # Exit early if combination/ranking yields nothing
+
+    final_unique_chunks = deduplicate_and_finalize(ranked_chunks, config["top_k"])
+
+    if not final_unique_chunks:
+        print("\nNo relevant documents with unique DOIs found after final processing.")
+        return # Exit early if deduplication yields nothing
+
+    # Proceed to display and save results
+    relevant_dois = display_results(final_unique_chunks) # We don't need the returned DOI list here
+    print("\n--- Final DOIs ---")
+    print(relevant_dois)
+    save_abstracts_to_file(final_unique_chunks, OUTPUT_FILENAME)
+    return relevant_dois
+
+# --- Main Orchestration Function ---
+
+def main():
+    """Main function to orchestrate the RAG pipeline."""
+    find_relevant_dois()
+    
 
 
 if __name__ == "__main__":
