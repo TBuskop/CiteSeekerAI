@@ -7,7 +7,7 @@ from typing import Tuple, Optional
 # load environment variables from .env file
 from dotenv import load_dotenv
 
-def generate_search_string(query: str, save_to_file: bool = True) -> Tuple[bool, Optional[str]]:
+def generate_scopus_search_string(query: str, save_to_file: bool = True) -> Tuple[bool, Optional[str]]:
     """
     Generate a search string from a research question using the Gemini API.
     

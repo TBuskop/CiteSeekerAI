@@ -658,10 +658,11 @@ def resolve_doi(doi: str) -> Optional[str]:
          return None
 
 
-def process_dois(dois: List[str]) -> Dict[str, Dict[str, str]]:
+def process_dois(dois: List[str], output_directory: str) -> Dict[str, Dict[str, str]]:
     """
     Processes a list of DOIs: resolves each DOI, fetches its content dynamically,
     and returns a dictionary mapping each DOI to its extracted text and source.
+    Saves successful extractions to the specified directory.
     Uses sequential processing for simplicity.
     """
     results = {}
@@ -670,6 +671,9 @@ def process_dois(dois: List[str]) -> Dict[str, Dict[str, str]]:
     if not dois:
         print("Warning: No DOIs provided for processing.")
         return results
+
+    # Ensure output directory exists
+    os.makedirs(output_directory, exist_ok=True)
 
     for doi in dois:
         if not doi or not isinstance(doi, str):
@@ -686,11 +690,18 @@ def process_dois(dois: List[str]) -> Dict[str, Dict[str, str]]:
             if article_data and isinstance(article_data.get("text"), str) and len(article_data["text"]) >= min_text_length:
                 print(f"Successfully extracted text for DOI {doi} (Source: {article_data.get('source', 'N/A')})")
                 results[doi] = article_data
-                filename_doi = re.sub(r'[^\w\d.]', '_', doi)
-                path_to_save = f'data/downloads/full_texts/{filename_doi}'
-                with open(path_to_save, "w", encoding="utf-8") as f:
-                        f.write(article_data["text"])
-                print(f"Saved text content for DOI {doi} to: {filename_doi}")
+                # Sanitize DOI for filename and join with output directory
+                filename_doi = re.sub(r'[^\w\d.-]', '_', doi) + ".txt" # Add .txt extension
+                path_to_save = os.path.join(output_directory, filename_doi) # Use output_directory
+                try:
+                    with open(path_to_save, "w", encoding="utf-8") as f:
+                            f.write(article_data["text"])
+                    print(f"Saved text content for DOI {doi} to: {path_to_save}") # Show full path
+                except IOError as e:
+                    print(f"Error saving file {path_to_save}: {e}")
+                    # Add failure info to results even if saving failed
+                    results[doi]["save_error"] = str(e)
+
 
             elif article_data:
                  print(f"Failed to extract sufficient text for DOI {doi}. Source: {article_data.get('source', 'failed_extraction')}, URL: {resolved_url}")
@@ -705,44 +716,51 @@ def process_dois(dois: List[str]) -> Dict[str, Dict[str, str]]:
 
     return results
 
-def download_dois(proposed_dois: List[str]) -> None:
+def download_dois(proposed_dois: List[str], output_directory: str) -> None:
     """
     Downloads articles for a list of DOIs, checking if they are already downloaded.
-    If not, it processes them to extract text and saves the results.
+    If not, it processes them to extract text and saves the results to the specified directory.
     """
-    
+    print(f"Checking for existing files in: {output_directory}")
     # remove dois that are already in the downloads folder
     dois_to_process = []
     for doi in proposed_dois:
-        filename_doi = re.sub(r'[^\w\d.]', '_', doi)
-        path_to_save = f'data/downloads/full_texts/{filename_doi}'
-        if not os.path.exists(path_to_save):
+        if not doi or not isinstance(doi, str):
+            print(f"Skipping invalid proposed DOI: {doi}")
+            continue
+        filename_doi = re.sub(r'[^\w\d.-]', '_', doi) + ".txt" # Add .txt extension
+        path_to_check = os.path.join(output_directory, filename_doi) # Use output_directory
+        if not os.path.exists(path_to_check):
             dois_to_process.append(doi)
         else:
-            print(f"Skipping DOI {doi} as it is already downloaded.")
+            print(f"Skipping DOI {doi} as file already exists: {path_to_check}")
 
-    print("Starting DOI processing...")
-    # print(f"Using DYNAMIC_URL_PATTERNS: {DYNAMIC_URL_PATTERNS}")
+    if not dois_to_process:
+        print("No new DOIs to process.")
+        return
+
+    print(f"Starting DOI processing for {len(dois_to_process)} DOIs...")
     print("-" * 30)
 
-    extracted_articles = process_dois(dois_to_process)
+    extracted_articles = process_dois(dois_to_process, output_directory) # Pass output_directory
 
-    # output_filename = "articles_extracted.json"
+    # output_filename = "articles_extracted.json" # Consider if this summary file is still needed/where to save it
     print("-" * 30)
     try:
         # with open(output_filename, "w", encoding="utf-8") as f:
         #     json.dump(extracted_articles, f, ensure_ascii=False, indent=4)
         print(f"\n--- Processing Complete ---")
-        success_count = sum(1 for doi, data in extracted_articles.items() if data.get("text") and len(data["text"]) >= 100)
-        print(f"Successfully extracted sufficient text for {success_count} out of {len(dois_to_process)} DOIs.")
+        success_count = sum(1 for doi, data in extracted_articles.items() if data.get("text") and len(data["text"]) >= 100 and "save_error" not in data)
+        total_processed = len(dois_to_process)
+        print(f"Successfully extracted and saved text for {success_count} out of {total_processed} processed DOIs.")
     except TypeError as e:
-         print(f"\n--- Processing Complete (with saving error) ---")
-         print(f"Error saving results to JSON: {e}. Check data structure.")
+         print(f"\n--- Processing Complete (with summary error) ---")
+         print(f"Error summarizing results: {e}. Check data structure.")
          print("Dumping raw results:")
          print(extracted_articles)
     except Exception as e:
-        print(f"\n--- Processing Complete (with saving error) ---")
-        print(f"Error saving results to JSON: {e}")
+        print(f"\n--- Processing Complete (with summary error) ---")
+        print(f"Error summarizing results: {e}")
 
     if extracted_articles:
         print("\n--- Source Summary ---")
@@ -754,28 +772,4 @@ def download_dois(proposed_dois: List[str]) -> None:
             count = source_counts[source]
             print(f"- {source}: {count}")
 
-####################################
-# Main Execution Block
-####################################
-if __name__ == "__main__":
-    # dois_to_process = ['10.3390/cli9120177', '10.1016/j.forpol.2020.102289', '10.1016/j.jenvman.2017.07.054', '10.1061/(ASCE)WR.1943-5452.0000660', '10.1007/978-3-319-04876-5_2', '10.1007/978-3-642-29770-0_10', '10.1002/wcc.202', '10.1002/wcc.187', '10.1108/17568691111153438', '10.1016/j.gloenvcha.2006.11.005']
-    
-    
-    proposed_dois = [
-        "10.1038/s41586-020-2649-2", # nature open access
-        "10.1038/s41586-025-08852-z", # nature not open access (needs PW)
-        "10.1016/S0022-1694(02)00060-4", # Elsevier not open access (needs PW)
-        "10.1029/2024EF005261", # Earth futurs / wiley (needs PW potentially due to cookies/JS)
-        "10.1029/2018EF001071", # another EF example
-        "10.1088/2752-5295/ad9f8f", # Environmental research (HTML)
-        "10.1007/s00267-025-02149-7", # Springer (HTML)
-        "10.5194/hess-26-4345-2022",  # Copernicus (should find XML)
-        "10.5194/essd-11-1-2019", # Another Copernicus example
-        "10.3389/fclim.2024.1499765", # frontiers
-        "10.1016/j.isci.2023.106030", # iscience
-        "10.1061/JWRMD5.WRENG-6143", # ASCE
-        "10.3390/cli9120177", # MDPI
-    ]
-    download_dois(proposed_dois)
 
-    

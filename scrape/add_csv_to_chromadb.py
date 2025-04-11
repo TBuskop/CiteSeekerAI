@@ -93,8 +93,8 @@ def _generate_id(doi: Optional[str], index: int, seen_ids: set) -> str:
 # --- Main Ingestion Function ---
 def ingest_csv_to_chroma(
     csv_file_path: str,
-    db_path: str = DEFAULT_DB_PATH,
-    collection_name: str = DEFAULT_COLLECTION_NAME,
+    db_path: str,
+    collection_name: str,
     force_reindex: bool = False
 ):
     """
@@ -111,6 +111,7 @@ def ingest_csv_to_chroma(
     print(f"CSV Source: {csv_file_path}")
     print(f"ChromaDB Path: {db_path}")
     print(f"Collection Name: {collection_name}")
+    print(f"Force Reindex: {force_reindex}")
 
     # == Phase 1: Indexing (Add data without embeddings) ==
     print("\n--- Phase 1: Indexing Data ---")
@@ -340,28 +341,3 @@ def ingest_csv_to_chroma(
             print("\nEmbedding Phase Summary: All found items requiring embeddings were processed successfully.")
 
     print("\n--- CSV Ingestion Process Finished ---")
-
-# --- Example Usage ---
-if __name__ == "__main__":
-    print("Running CSV to ChromaDB Ingestion Script")
-    # change run path to current directory
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    # --- Configuration ---
-    # Replace with the actual path to your CSV file
-    csv_path = "./data/downloads/csv/scopus_climate_OR_climate_change_OR_climate_variabil_20250409-092020.csv"
-    # Optional: Specify a different database path or collection name
-    database_path = DEFAULT_DB_PATH
-    collection = DEFAULT_COLLECTION_NAME
-    force_reindex=False
-    # --- End Configuration ---
-
-    if not os.path.exists(csv_path):
-         print(f"\nError: CSV file specified for example usage does not exist: '{csv_path}'")
-         print("Please update the 'csv_path' variable in the script's __main__ block.")
-    else:
-        ingest_csv_to_chroma(
-            csv_file_path=csv_path,
-            db_path=database_path,
-            collection_name=collection,
-            force_reindex=force_reindex # Optional: Set to True to force reindexing
-        )

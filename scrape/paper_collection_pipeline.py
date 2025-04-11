@@ -1,14 +1,127 @@
-from search_scopus import run_scopus_search
+import os
+from search_scopus import run_scopus_search # Assuming this function will be updated to accept config
 from add_csv_to_chromadb import ingest_csv_to_chroma
 from collect_relevant_abstracts import find_relevant_dois_from_abstracts
 from download_papers import download_dois
+from get_search_string import generate_scopus_search_string # Import the new function
 
-# This script is a pipeline that collects relevant papers based on a given query and downloads them.
+# --- Central Configuration ---
+# General
+BASE_DATA_DIR = "./data"
+DOWNLOADS_DIR = os.path.join(BASE_DATA_DIR, "downloads")
+FULL_TEXT_DIR = os.path.join(DOWNLOADS_DIR, "full_texts")
+CSV_DIR = os.path.join(DOWNLOADS_DIR, "csv")
+DB_PATH = "./abstract_chroma_db"
+COLLECTION_NAME = "abstracts"
 
-run_scopus_search()
+# Search String Generation Configuration
+INITIAL_RESEARCH_QUESTION = "what are plausibilistic climate storylines and how are they different from other climate storylines?"
+# Fallback query if generation fails
+DEFAULT_SCOPUS_QUERY = "climate OR 'climate change' OR 'climate variability' AND robustness AND uncertainty AND policy AND decision AND making"
+SAVE_GENERATED_SEARCH_STRING = True # Whether to save the generated string to a file
 
-ingest_csv_to_chroma()
+# Scopus Search Configuration
+SCOPUS_HEADLESS_MODE = False # Example: Add config for headless mode
+SCOPUS_YEAR_FROM = None # Example: Add config for year filter start
+SCOPUS_YEAR_TO = None   # Example: Add config for year filter end
+# Credentials and Institution are expected to be in .env by search_scopus.py
 
-relevant_doi_list = find_relevant_dois_from_abstracts()
+# ChromaDB Ingestion Configuration
+FORCE_REINDEX_CHROMA = False # Set to True to re-index existing documents
 
-download_dois(relevant_doi_list)
+# Abstract Collection Configuration
+TOP_K_ABSTRACTS = 10
+USE_RERANK_ABSTRACTS = True
+RELEVANT_ABSTRACTS_OUTPUT_FILENAME = "relevant_abstracts.txt"
+
+# --- Ensure Directories Exist ---
+os.makedirs(FULL_TEXT_DIR, exist_ok=True)
+os.makedirs(CSV_DIR, exist_ok=True)
+
+# --- Pipeline Execution ---
+
+print("--- Step 0: Generating Scopus Search String ---")
+success, generated_query = generate_scopus_search_string(
+    query=INITIAL_RESEARCH_QUESTION,
+    save_to_file=SAVE_GENERATED_SEARCH_STRING
+)
+
+if success and generated_query:
+    SCOPUS_QUERY = generated_query
+    print(f"Using generated Scopus query: {SCOPUS_QUERY}")
+else:
+    SCOPUS_QUERY = DEFAULT_SCOPUS_QUERY
+    print(f"Failed to generate search string. Using default Scopus query: {SCOPUS_QUERY}")
+
+# Define Scopus output path based on the final query
+clean_query = (SCOPUS_QUERY.replace(' ', '_')
+                             .replace("'", '')
+                             .replace('(', '')
+                             .replace(')', '')
+                             .replace(':', '')
+                             .replace('*', '')
+                             .replace('?', ''))[:50]
+
+SCOPUS_OUTPUT_CSV_FILENAME = f"scopus_{clean_query}.csv"
+SCOPUS_OUTPUT_CSV_PATH = os.path.join(CSV_DIR, SCOPUS_OUTPUT_CSV_FILENAME)
+
+
+print("\n--- Step 1: Running Scopus Search ---")
+# Run the Scopus search using the determined query and output path
+search_success, actual_csv_path = run_scopus_search(
+    query=SCOPUS_QUERY,
+    output_csv_path=SCOPUS_OUTPUT_CSV_PATH, # Pass the desired full path
+    headless=SCOPUS_HEADLESS_MODE,
+    year_from=SCOPUS_YEAR_FROM,
+    year_to=SCOPUS_YEAR_TO
+    # Credentials and institution are handled by run_scopus_search loading .env
+)
+
+# Check if the search was successful and update the path variable
+if search_success and actual_csv_path:
+    SCOPUS_OUTPUT_CSV_PATH = str(actual_csv_path) # Update path to the actual one used/created
+    print(f"Scopus search successful. Results saved to: {SCOPUS_OUTPUT_CSV_PATH}")
+else:
+    print(f"Error: Scopus search failed. Check logs in search_scopus script.")
+    # Decide how to proceed: exit or try to continue? Exiting is safer.
+    exit() # Exit if search failed
+
+
+print("\n--- Step 2: Ingesting CSV to ChromaDB ---")
+# This step now implicitly relies on search_success being True from Step 1
+ingest_csv_to_chroma(
+    csv_file_path=SCOPUS_OUTPUT_CSV_PATH,
+    db_path=DB_PATH,
+    collection_name=COLLECTION_NAME,
+    force_reindex=FORCE_REINDEX_CHROMA
+)
+
+
+print("\n--- Step 3: Finding Relevant DOIs from Abstracts ---")
+# This step also implicitly relies on search_success being True
+relevant_doi_list = find_relevant_dois_from_abstracts(
+    initial_query=INITIAL_RESEARCH_QUESTION,
+    db_path=DB_PATH,
+    collection_name=COLLECTION_NAME,
+    top_k=TOP_K_ABSTRACTS,
+    use_rerank=USE_RERANK_ABSTRACTS,
+    output_filename=RELEVANT_ABSTRACTS_OUTPUT_FILENAME
+)
+
+
+print("\n--- Step 4: Downloading Full Texts ---")
+if relevant_doi_list:
+    download_dois(
+        proposed_dois=relevant_doi_list,
+        output_directory=FULL_TEXT_DIR
+    )
+else:
+    print("No relevant DOIs found or previous steps skipped, skipping download step.")
+
+print("\n--- Step 5: Chunking all documents and adding to common database ---")
+# This step is not explicitly defined in the provided code but would follow the download step.
+# create a database with the chunk text and the DOI
+
+
+
+print("\n--- Pipeline Finished ---")

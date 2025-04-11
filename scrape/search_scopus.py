@@ -16,7 +16,7 @@ import logging
 import time
 from pathlib import Path
 import argparse
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 # load environment variables from .env file
 from dotenv import load_dotenv
@@ -90,6 +90,7 @@ def parse_arguments():
 def run_scopus_search(query: str = None, headless: bool = False, 
                      year_from: Optional[int] = None, year_to: Optional[int] = None, 
                      download_dir: str = "data/downloads/csv",
+                     output_csv_path: Optional[Union[str, Path]] = None,
                      username: Optional[str] = None, 
                      password: Optional[str] = None,
                      institution: Optional[str] = None) -> Tuple[bool, Optional[Path]]:
@@ -101,7 +102,8 @@ def run_scopus_search(query: str = None, headless: bool = False,
         headless: Whether to run browser in headless mode
         year_from: Start year for filtering results
         year_to: End year for filtering results
-        download_dir: Directory to save downloaded files
+        download_dir: Directory to save downloaded files (used if output_csv_path is None)
+        output_csv_path: Specific path (including filename) to save the CSV. Overrides download_dir and generated filename.
         username: Scopus username (overrides env variables)
         password: Scopus password (overrides env variables)
         institution: Institution name (overrides env variables)
@@ -148,10 +150,22 @@ def run_scopus_search(query: str = None, headless: bool = False,
         screenshots_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Screenshots will be saved to: {screenshots_dir}")
         
+        # Determine download directory and filename
+        if output_csv_path:
+            output_csv_path = Path(output_csv_path)
+            final_download_dir = output_csv_path.parent
+            final_filename_base = output_csv_path.stem
+            logger.info(f"Using specified output path: {output_csv_path}")
+        else:
+            final_download_dir = Path(download_dir)
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            safe_query_part = "".join(c if c.isalnum() else '_' for c in query)[:50]
+            final_filename_base = f"scopus_{safe_query_part}_{timestamp}"
+            output_csv_path = final_download_dir / f"{final_filename_base}.csv"
+            logger.info(f"Downloads will be saved to: {final_download_dir} with generated filename.")
+
         # Set up download directory
-        download_dir_path = Path(download_dir)
-        download_dir_path.mkdir(exist_ok=True, parents=True)
-        logger.info(f"Downloads will be saved to: {download_dir_path}")
+        final_download_dir.mkdir(exist_ok=True, parents=True)
         
         # Get default query if none provided
         if query is None:
@@ -169,10 +183,10 @@ def run_scopus_search(query: str = None, headless: bool = False,
                 query = "\"climate change\" AND \"coastal erosion\" AND adaptation AND \"Europe\"" # Fallback
         
         # Initialize the scraper and perform search
-        csv_path = None
+        actual_csv_path = None
         with ScopusScraper(
             headless=headless,
-            download_dir=download_dir_path,
+            download_dir=final_download_dir,
             institution=institution,
             screenshots_dir=screenshots_dir
         ) as scraper:
@@ -203,17 +217,30 @@ def run_scopus_search(query: str = None, headless: bool = False,
             
             # Export results to CSV
             logger.info("Exporting results to CSV...")
-            timestamp = time.strftime("%Y%m%d-%H%M%S")
-            safe_query_part = "".join(c if c.isalnum() else '_' for c in query)[:50]
-            filename = f"scopus_{safe_query_part}_{timestamp}"
-            
-            csv_path = scraper.export_to_csv(filename)
-            if not csv_path:
+            actual_csv_path = scraper.export_to_csv(final_filename_base)
+            if not actual_csv_path:
                 logger.error("Failed to export results to CSV.")
                 return False, None
-            
-            logger.info(f"Results exported to CSV at: {csv_path}")
-            return True, csv_path
+
+            if output_csv_path and actual_csv_path != output_csv_path:
+                try:
+                    if actual_csv_path.exists():
+                        if output_csv_path.exists():
+                            logger.warning(f"Target CSV path {output_csv_path} already exists. Overwriting.")
+                            output_csv_path.unlink()
+                        actual_csv_path.rename(output_csv_path)
+                        logger.info(f"Renamed downloaded file to specified path: {output_csv_path}")
+                        actual_csv_path = output_csv_path
+                    else:
+                        logger.error(f"Scraper reported saving to {actual_csv_path}, but file not found.")
+                        return False, None
+                except OSError as e:
+                    logger.error(f"Could not rename {actual_csv_path} to {output_csv_path}: {e}")
+                    logger.warning(f"Results saved to CSV at the generated path: {actual_csv_path}")
+                    return True, actual_csv_path
+
+            logger.info(f"Results exported to CSV at: {actual_csv_path}")
+            return True, actual_csv_path
             
     except Exception as e:
         logger.exception(f"An unexpected error occurred: {e}")

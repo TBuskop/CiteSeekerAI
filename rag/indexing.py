@@ -119,7 +119,8 @@ def filter_files_for_processing(potential_files: List[str], db_path: str, collec
 def index_document_phase1(document_path: str,
                           max_tokens: int = DEFAULT_MAX_TOKENS,
                           overlap: int = DEFAULT_OVERLAP,
-                          context_total_window: int = DEFAULT_TOTAL_CONTEXT_WINDOW
+                          context_total_window: int = DEFAULT_TOTAL_CONTEXT_WINDOW,
+                          add_context: bool = False
                          ) -> List[Dict]:
     """
     Processes a single document: reads, chunks, gets context.
@@ -159,23 +160,27 @@ def index_document_phase1(document_path: str,
     for idx, (raw_chunk, start_tok, end_tok) in enumerate(raw_chunks_with_indices):
         if not raw_chunk or not raw_chunk.strip(): continue
 
-        # Generate context for the chunk
-        chunk_context = generate_chunk_context(
-            full_document_text=document_text,
-            chunk_text=raw_chunk,
-            start_token_idx=start_tok,
-            end_token_idx=end_tok,
-            total_window_tokens=context_total_window,
-            context_model=CHUNK_CONTEXT_MODEL
-        )
+        if add_context == True:
+            # Generate context for the chunk
+            chunk_context = generate_chunk_context(
+                full_document_text=document_text,
+                chunk_text=raw_chunk,
+                start_token_idx=start_tok,
+                end_token_idx=end_tok,
+                total_window_tokens=context_total_window,
+                context_model=CHUNK_CONTEXT_MODEL
+            )
 
-        # Handle context generation failure (use placeholder)
-        if "Error generating context" in chunk_context or "Context could not be generated" in chunk_context:
-             # print(f"Warning: Using placeholder context for chunk {idx} in {os.path.basename(document_path)}.")
-             chunk_context = "Context generation failed or unavailable." # Consistent placeholder
+            # Handle context generation failure (use placeholder)
+            if "Error generating context" in chunk_context or "Context could not be generated" in chunk_context:
+                # print(f"Warning: Using placeholder context for chunk {idx} in {os.path.basename(document_path)}.")
+                chunk_context = "Context generation failed or unavailable." # Consistent placeholder
 
-        # Combine context and raw chunk for potential use in embedding/retrieval
-        contextualized_text = f"Context: {chunk_context}\n\nText:\n{raw_chunk}"
+            # Combine context and raw chunk for potential use in embedding/retrieval
+            contextualized_text = f"Context: {chunk_context}\n\nText:\n{raw_chunk}"
+        else:
+            # No context generation, just use the raw chunk
+            contextualized_text = raw_chunk
         tokens_count = count_tokens(raw_chunk) # Count tokens of the raw chunk
 
         chunk_id = f"{file_hash}_{idx}"
@@ -216,7 +221,8 @@ def process_files_sequentially(files_to_process: List[str]) -> Tuple[List[Dict],
                 document_path=file_path,
                 max_tokens=DEFAULT_MAX_TOKENS, # Use config defaults
                 overlap=DEFAULT_OVERLAP,
-                context_total_window=DEFAULT_TOTAL_CONTEXT_WINDOW
+                context_total_window=DEFAULT_TOTAL_CONTEXT_WINDOW,
+                add_context=False
             )
             if processed_data:
                 all_phase1_chunks.extend(processed_data)
