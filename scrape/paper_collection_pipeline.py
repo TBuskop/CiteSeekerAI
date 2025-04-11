@@ -4,6 +4,8 @@ from add_csv_to_chromadb import ingest_csv_to_chroma
 from collect_relevant_abstracts import find_relevant_dois_from_abstracts
 from download_papers import download_dois
 from get_search_string import generate_scopus_search_string # Import the new function
+# --- Import the chunking function ---
+from chunk_new_dois import process_folder_for_chunks
 
 # --- Central Configuration ---
 # General
@@ -11,11 +13,20 @@ BASE_DATA_DIR = "./data"
 DOWNLOADS_DIR = os.path.join(BASE_DATA_DIR, "downloads")
 FULL_TEXT_DIR = os.path.join(DOWNLOADS_DIR, "full_texts")
 CSV_DIR = os.path.join(DOWNLOADS_DIR, "csv")
-DB_PATH = "./abstract_chroma_db"
-COLLECTION_NAME = "abstracts"
+# Abstract DB Config
+ABSTRACT_DB_PATH = "./abstract_chroma_db"
+ABSTRACT_COLLECTION_NAME = "abstracts"
+# --- Chunking DB Config ---
+CHUNK_DB_PATH = os.path.join(BASE_DATA_DIR, "chroma_dbs", "full_text_chunks_db") # Centralized path
+CHUNK_COLLECTION_NAME = "paper_chunks_main"
+CHUNK_SIZE = 1000 # Default chunk size from chunk_new_dois
+CHUNK_OVERLAP = 150 # Default chunk overlap from chunk_new_dois
+# Embedding config (defaults from chunk_new_dois will be used if not overridden)
+# EMBED_BATCH_SIZE = 64
+# EMBED_DELAY = 1.0
 
 # Search String Generation Configuration
-INITIAL_RESEARCH_QUESTION = "what are plausibilistic climate storylines and how are they different from other climate storylines?"
+INITIAL_RESEARCH_QUESTION = "What are the effects of sea level rise on italy?"
 # Fallback query if generation fails
 DEFAULT_SCOPUS_QUERY = "climate OR 'climate change' OR 'climate variability' AND robustness AND uncertainty AND policy AND decision AND making"
 SAVE_GENERATED_SEARCH_STRING = True # Whether to save the generated string to a file
@@ -37,6 +48,8 @@ RELEVANT_ABSTRACTS_OUTPUT_FILENAME = "relevant_abstracts.txt"
 # --- Ensure Directories Exist ---
 os.makedirs(FULL_TEXT_DIR, exist_ok=True)
 os.makedirs(CSV_DIR, exist_ok=True)
+# Ensure the chunk DB directory exists
+os.makedirs(os.path.dirname(CHUNK_DB_PATH), exist_ok=True)
 
 # --- Pipeline Execution ---
 
@@ -91,8 +104,8 @@ print("\n--- Step 2: Ingesting CSV to ChromaDB ---")
 # This step now implicitly relies on search_success being True from Step 1
 ingest_csv_to_chroma(
     csv_file_path=SCOPUS_OUTPUT_CSV_PATH,
-    db_path=DB_PATH,
-    collection_name=COLLECTION_NAME,
+    db_path=ABSTRACT_DB_PATH, # Use abstract DB path
+    collection_name=ABSTRACT_COLLECTION_NAME, # Use abstract collection name
     force_reindex=FORCE_REINDEX_CHROMA
 )
 
@@ -101,8 +114,8 @@ print("\n--- Step 3: Finding Relevant DOIs from Abstracts ---")
 # This step also implicitly relies on search_success being True
 relevant_doi_list = find_relevant_dois_from_abstracts(
     initial_query=INITIAL_RESEARCH_QUESTION,
-    db_path=DB_PATH,
-    collection_name=COLLECTION_NAME,
+    db_path=ABSTRACT_DB_PATH,
+    collection_name=ABSTRACT_COLLECTION_NAME,
     top_k=TOP_K_ABSTRACTS,
     use_rerank=USE_RERANK_ABSTRACTS,
     output_filename=RELEVANT_ABSTRACTS_OUTPUT_FILENAME
@@ -118,10 +131,17 @@ if relevant_doi_list:
 else:
     print("No relevant DOIs found or previous steps skipped, skipping download step.")
 
-print("\n--- Step 5: Chunking all documents and adding to common database ---")
-# This step is not explicitly defined in the provided code but would follow the download step.
-# create a database with the chunk text and the DOI
-
-
+print("\n--- Step 5: Chunking downloaded documents and adding to common database ---")
+# Call the main function from chunk_new_dois.py
+process_folder_for_chunks(
+    folder_path=FULL_TEXT_DIR,         # Source folder for downloaded .txt files
+    db_path=CHUNK_DB_PATH,             # Target database path for chunks
+    collection_name=CHUNK_COLLECTION_NAME, # Target collection name for chunks
+    chunk_size=CHUNK_SIZE,             # Use configured chunk size
+    chunk_overlap=CHUNK_OVERLAP,       # Use configured chunk overlap
+    # Optional: Pass embedding batch size and delay if you want to override defaults
+    # embed_batch_size=EMBED_BATCH_SIZE,
+    # embed_delay=EMBED_DELAY
+)
 
 print("\n--- Pipeline Finished ---")
