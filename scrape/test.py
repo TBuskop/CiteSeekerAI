@@ -1,125 +1,146 @@
-# Script to generate a search string using Gemini API and then search Scopus with it
-import sys
+# peek in the scrape/abstract_chroma_db database and the scrape/data/chroma_dbs/full_text_chunks_db
+# to see how many unique dois are in the database
 import os
-from pathlib import Path
-from typing import Optional, Dict, Any
+import sqlite3 # Keep for potential direct inspection if needed, but client is preferred
+import chromadb
+from typing import Set, Optional, Tuple
+from tqdm import tqdm
 
-# load environment variables from .env file
-from dotenv import load_dotenv
-load_dotenv(override=True)  # Override existing environment variable
-
-# Import functions from other modules
-from get_search_string import generate_search_string
-from search_scopus import run_scopus_search
-
-# Configuration variables - modify these directly instead of using CLI arguments
-DEFAULT_QUERY = "what are plausibilistic climate storylines and how are they different from other climate storylines?"
-SKIP_GENERATION = False  # Set to True to skip search string generation
-HEADLESS_BROWSER = False  # Set to True to run browser in headless mode
-YEAR_FROM = None  # Start year for filtering (e.g., 2015)
-YEAR_TO = None  # End year for filtering (e.g., 2023)
-DOWNLOAD_DIR = "data/downloads/csv"  # Directory to save downloaded files
-
-def run_search_process(query: str = None, skip_generation: bool = False, headless: bool = False,
-                      year_from: Optional[int] = None, year_to: Optional[int] = None,
-                      download_dir: str = "data/downloads/csv") -> Dict[str, Any]:
+def count_unique_dois_chromadb_client(db_path: str, collection_name: str) -> Optional[Tuple[int, Set[str]]]:
     """
-    Run the complete search process: generate search string and search Scopus.
-    
+    Counts the number of unique DOIs and identifies metadata field names
+    in a ChromaDB collection using the client.
+
     Args:
-        query: Research question for generating the search string
-        skip_generation: Skip search string generation and use existing generated_search_string.txt
-        headless: Run browser in headless mode for Scopus search
-        year_from: Start year for filtering Scopus results
-        year_to: End year for filtering Scopus results
-        download_dir: Directory to save downloaded files
-    
+        db_path: Path to the ChromaDB database directory.
+        collection_name: Name of the collection within the database.
+
     Returns:
-        Dictionary with results:
-        {
-            'success': bool,  # Overall success
-            'search_string': Optional[str],  # Generated search string if available
-            'csv_path': Optional[Path],  # Path to the downloaded CSV if available
-            'error': Optional[str]  # Error message if any step failed
-        }
+        A tuple containing:
+          - The count of unique DOIs (int).
+          - A set of unique metadata field names found (Set[str]).
+        Returns None if a critical error occurs. Returns (0, set()) if collection is empty or not found.
     """
-    result = {
-        'success': False,
-        'search_string': None,
-        'csv_path': None,
-        'error': None
-    }
-    
-    # Use default query if none provided
-    if query is None:
-        query = "what are plausibilistic climate storylines and how are they different from other climate storylines?"
-    
-    # First, generate the search string if not skipped
-    if not skip_generation:
-        print(f"Generating search string from query: '{query}'")
-        success, search_string = generate_search_string(query)
-        
-        if not success:
-            result['error'] = "Failed to generate search string"
-            return result
-        
-        result['search_string'] = search_string
-    else:
-        print("Skipping search string generation. Using existing generated_search_string.txt")
-        # Try to read the existing file
+    print(f"\nInspecting DB: '{db_path}', Collection: '{collection_name}'")
+    if not os.path.isdir(db_path):
+        print(f"Error: Database directory not found: {db_path}")
+        return None
+
+    unique_dois: Set[str] = set()
+    metadata_fields: Set[str] = set() # To store unique metadata keys
+
+    try:
+        client = chromadb.PersistentClient(path=db_path)
+        print("Client created.")
+
         try:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            search_string_file = Path(current_dir) / "generated_search_string.txt"
-            if search_string_file.exists():
-                with open(search_string_file, 'r') as file:
-                    result['search_string'] = file.read().strip()
-            else:
-                result['error'] = "No existing generated_search_string.txt found"
-                return result
+            collection = client.get_collection(name=collection_name)
+            print(f"Collection '{collection_name}' retrieved.")
+        except ValueError as e:
+             if "Could not find collection" in str(e) or "doesn't exist" in str(e):
+                 print(f"Collection '{collection_name}' not found in database '{db_path}'.")
+                 return 0, set() # Return 0 count and empty set for fields
+             else:
+                 print(f"Error getting collection '{collection_name}': {e}")
+                 return None # Other error getting collection
         except Exception as e:
-            result['error'] = f"Error reading existing search string file: {str(e)}"
-            return result
-    
-    # Then run the Scopus search
-    print(f"Running Scopus search with the {'generated' if not skip_generation else 'existing'} search string")
-    success, csv_path = run_scopus_search(
-        query=result['search_string'],  # Use the search string we obtained
-        headless=headless,
-        year_from=year_from,
-        year_to=year_to,
-        download_dir=download_dir
-    )
-    
-    if not success:
-        result['error'] = "Failed to execute Scopus search"
-        return result
-    
-    result['csv_path'] = csv_path
-    result['success'] = True
-    return result
+             print(f"Unexpected error getting collection '{collection_name}': {e}")
+             return None
 
-def main():
-    """Main function to run both scripts in sequence."""
-    # Use the globally defined configuration variables
-    result = run_search_process(
-        query=DEFAULT_QUERY,
-        skip_generation=SKIP_GENERATION,
-        headless=HEADLESS_BROWSER,
-        year_from=YEAR_FROM,
-        year_to=YEAR_TO,
-        download_dir=DOWNLOAD_DIR
-    )
-    
-    # Return success or failure based on result
-    if result['success']:
-        print(f"Search process completed successfully.")
-        if result['csv_path']:
-            print(f"Results saved to: {result['csv_path']}")
-        return True
-    else:
-        print(f"Search process failed: {result['error']}")
-        return False
+        estimated_count = collection.count()
+        if estimated_count == 0:
+            print("Collection is empty.")
+            return 0, set() # Return 0 count and empty set for fields
 
-if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)
+        # --- Get Sample Metadata for Field Names ---
+        try:
+            sample = collection.peek(limit=1) # Fetch 1 item to inspect metadata structure
+            if sample and sample.get('metadatas') and sample['metadatas']:
+                first_metadata = sample['metadatas'][0]
+                if first_metadata: # Check if metadata dictionary is not None
+                    metadata_fields.update(first_metadata.keys())
+            print(f"Sample metadata fields found: {metadata_fields or 'None (or empty metadata in sample)'}")
+        except Exception as peek_err:
+            print(f"Warning: Could not peek collection to get sample metadata fields: {peek_err}")
+            print("Will attempt to discover fields during full metadata fetch.")
+        # --- End Sample Metadata ---
+
+        print(f"Fetching metadata for {estimated_count} items...")
+        # Fetch metadata in batches to handle potentially large collections
+        fetch_limit = 10000 # Adjust batch size as needed
+        offset = 0
+        fetched_count = 0
+        with tqdm(total=estimated_count, desc="Fetching metadata", unit="chunks") as pbar:
+            while True:
+                try:
+                    results = collection.get(limit=fetch_limit, offset=offset, include=['metadatas'])
+                    if not results or not results.get('ids'):
+                        break # No more results
+
+                    metadatas = results.get('metadatas', [])
+                    for meta in metadatas:
+                        if meta: # Check if metadata dictionary is not None
+                            # Update DOI set
+                            doi = meta.get('doi')
+                            if doi:
+                                # Replace all '/' with '_' in the DOI
+                                doi = doi.replace('/', '_')
+                                unique_dois.add(doi)
+                            # Update metadata fields set (discover fields missed by peek)
+                            metadata_fields.update(meta.keys())
+
+                    fetched_count += len(results['ids'])
+                    pbar.update(len(results['ids']))
+                    offset += len(results['ids'])
+
+                    if len(results['ids']) < fetch_limit:
+                        break # Reached the end
+                except Exception as get_err:
+                    print(f"\nError fetching batch starting at offset {offset}: {get_err}")
+                    # Decide whether to continue or stop on batch error
+                    break # Stop processing this collection on error
+
+        print(f"Finished fetching metadata.")
+        print(f"  Found {len(unique_dois)} unique DOIs.")
+        print(f"  Found {len(metadata_fields)} unique metadata fields.")
+        return len(unique_dois), metadata_fields
+
+    except Exception as e:
+        print(f"An error occurred while processing database '{db_path}': {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+# --- Define Database Paths and Collection Names ---
+# Assuming this script is run from the 'scrape' directory
+ABSTRACT_DB_PATH = "./scrape/abstract_chroma_db"
+FULL_TEXT_DB_PATH = "./scrape/data/chroma_dbs/full_text_chunks_db" # Updated path based on chunk_new_dois.py example
+
+ABSTRACT_COLLECTION_NAME = "abstracts" # From paper_collection_pipeline.py
+FULL_TEXT_COLLECTION_NAME = "paper_chunks_main" # From chunk_new_dois.py example usage
+
+# --- Run the Counts ---
+abstract_result = count_unique_dois_chromadb_client(ABSTRACT_DB_PATH, ABSTRACT_COLLECTION_NAME)
+full_text_result = count_unique_dois_chromadb_client(FULL_TEXT_DB_PATH, FULL_TEXT_COLLECTION_NAME)
+
+# --- Print Results ---
+print("\n--- Summary ---")
+if abstract_result is not None:
+    abstract_doi_count, abstract_fields = abstract_result
+    print(f"Abstracts DB ('{ABSTRACT_COLLECTION_NAME}'):")
+    print(f"  Unique DOIs: {abstract_doi_count}")
+    print(f"  Metadata Fields: {sorted(list(abstract_fields)) if abstract_fields else 'None Found'}")
+else:
+    print(f"Could not determine details for Abstracts DB ('{ABSTRACT_COLLECTION_NAME}').")
+
+if full_text_result is not None:
+    full_text_doi_count, full_text_fields = full_text_result
+    print(f"\nFull Text DB ('{FULL_TEXT_COLLECTION_NAME}'):")
+    print(f"  Unique DOIs: {full_text_doi_count}")
+    print(f"  Metadata Fields: {sorted(list(full_text_fields)) if full_text_fields else 'None Found'}")
+else:
+    print(f"\nCould not determine details for Full Text DB ('{FULL_TEXT_COLLECTION_NAME}').")
+
+# in the FULL_TEXT_DB_PATH replace all / with _ in the doi field
+
+
