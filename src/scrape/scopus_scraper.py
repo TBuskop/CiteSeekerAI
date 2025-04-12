@@ -436,6 +436,8 @@ class ScopusScraper:
 
             # Check initial search results count
             logger.info("Getting initial search results count")
+            # sleep for 2 seconds
+            time.sleep(2)
             results_count_text = self._get_results_count()
             if results_count_text:
                 logger.info(f"Initial search found: {results_count_text}")
