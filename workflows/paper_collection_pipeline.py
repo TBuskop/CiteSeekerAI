@@ -16,6 +16,9 @@ from src.scrape.download_papers import download_dois
 from src.scrape.get_search_string import generate_scopus_search_string
 from src.scrape.chunk_new_dois import process_folder_for_chunks
 from src.scrape.build_relevant_papers_db import build_relevant_db
+from src.my_utils import llm_interface
+from src.rag import workflows as rag_workflows
+import config
 
 # --- Central Configuration ---
 # General
@@ -40,7 +43,7 @@ RELEVANT_CHUNKS_DB_PATH = os.path.join(BASE_DATA_DIR, "databases", "relevant_chu
 RELEVANT_CHUNKS_COLLECTION_NAME = "relevant_paper_chunks" # New collection name
 
 # Search String Generation Configuration
-INITIAL_RESEARCH_QUESTION = "What are the effects of sea level rise on italy?"
+INITIAL_RESEARCH_QUESTION = "what are climate storylines and how can they be used to asses flood impacts in Europe?" #"What are the effects of sea level rise on italy?"
 # Fallback query if generation fails
 DEFAULT_SCOPUS_QUERY = "climate OR 'climate change' OR 'climate variability' AND robustness AND uncertainty AND policy AND decision AND making"
 SAVE_GENERATED_SEARCH_STRING = True # Whether to save the generated string to a file
@@ -55,10 +58,16 @@ SCOPUS_YEAR_TO = None   # Example: Add config for year filter end
 FORCE_REINDEX_CHROMA = False # Set to True to re-index existing documents
 
 # Abstract Collection Configuration
-TOP_K_ABSTRACTS = 10
+TOP_K_ABSTRACTS = 50
 USE_RERANK_ABSTRACTS = True
 # Output filename - relative to where the script is run (project root assumed)
 RELEVANT_ABSTRACTS_OUTPUT_FILENAME = os.path.join(BASE_DATA_DIR, "output", "relevant_abstracts.txt")
+
+# --- Query Configuration (for final step) ---
+QUERY_TOP_K = 100 # Example: Number of results for the final query
+QUERY_RERANKER = config.RERANKER_MODEL # Use RAG config default
+QUERY_RERANK_CANDIDATES = config.DEFAULT_RERANK_CANDIDATE_COUNT # Use RAG config default
+QUERY_OUTPUT_FILENAME = os.path.join(BASE_DATA_DIR, "output", "final_relevant_chunks_answer.txt") # Output file for the final answer
 
 # --- Ensure Directories Exist ---
 os.makedirs(FULL_TEXT_DIR, exist_ok=True)
@@ -178,5 +187,49 @@ if relevant_doi_list:
 else:
     print("No relevant DOIs identified in Step 3, skipping collection of relevant chunks.")
 
+
+print("\n--- Step 7: Initializing LLM Clients for Final Query ---")
+try:
+    llm_interface.initialize_clients()
+    if not llm_interface.gemini_client:
+         print("Warning: Gemini client initialization might have failed. Check API keys/config.")
+    else:
+        print("LLM clients initialized successfully.")
+except Exception as init_err:
+    print(f"Error initializing LLM clients: {init_err}")
+    # Decide if you want to exit or continue without the final query
+    # sys.exit(1) # Optional: Exit if client initialization fails
+
+print("\n--- Step 8: Querying Relevant Chunks Database ---")
+if relevant_doi_list and llm_interface.gemini_client: # Only run if DOIs were found and client is ready
+    print(f"Querying the '{RELEVANT_CHUNKS_COLLECTION_NAME}' collection with the initial research question...")
+    query_config = {
+        "mode": "query", # Or "query_direct" if preferred
+        "db_path": RELEVANT_CHUNKS_DB_PATH,
+        "collection_name": RELEVANT_CHUNKS_COLLECTION_NAME,
+        "query": INITIAL_RESEARCH_QUESTION,
+        "top_k": QUERY_TOP_K,
+        "reranker": QUERY_RERANKER,
+        "rerank_candidates": QUERY_RERANK_CANDIDATES,
+        "output_filename": QUERY_OUTPUT_FILENAME # Add output filename
+        # Add other necessary parameters for run_query_mode if needed
+        # e.g., subquery_model, answer_model from rag_config if using "query" mode
+    }
+    try:
+        # Ensure necessary models are available based on mode
+        if query_config["mode"] == "query":
+            query_config["subquery_model"] = config.SUBQUERY_MODEL
+            query_config["answer_model"] = config.CHAT_MODEL
+        elif query_config["mode"] == "query_direct":
+             query_config["answer_model"] = config.CHAT_MODEL
+
+        rag_workflows.run_query_mode(query_config)
+        print(f"Query finished. Check the output or '{QUERY_OUTPUT_FILENAME}'.")
+    except Exception as query_err:
+        print(f"An error occurred during the final query step: {query_err}")
+elif not relevant_doi_list:
+    print("Skipping final query step because no relevant DOIs were processed.")
+elif not llm_interface.gemini_client:
+     print("Skipping final query step because LLM client initialization failed.")
 
 print("\n--- Pipeline Finished ---")
