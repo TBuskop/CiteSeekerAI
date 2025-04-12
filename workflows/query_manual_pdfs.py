@@ -85,7 +85,7 @@ def main(config_params: Optional[Dict[str, Any]] = None):
             "collection_name": "robustness_uncertainty",
             "add_chunk_context": False, # Add this flag, set to False to disable context
             "query": query,
-            "top_k": 100,
+            "top_k": 5,
             "reranker": config.RERANKER_MODEL,
             "rerank_candidates": config.DEFAULT_RERANK_CANDIDATE_COUNT,
         }

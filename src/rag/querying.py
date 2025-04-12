@@ -196,8 +196,9 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
     # Load system prompt from file
     system_prompt = "You are a helpful AI assistant. Answer the user's question based on the provided context and cite the sources used." # Default prompt
     prompt_file = 'final_answer_system_prompt.txt'
+    PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
     # Ensure the path is relative to the script location or use an absolute path
-    prompt_file_path = os.path.join(os.path.dirname(__file__), prompt_file)
+    prompt_file_path = os.path.join(PROJECT_ROOT, '..','llm_prompts', prompt_file)
     if os.path.exists(prompt_file_path):
         try:
             with open(prompt_file_path, 'r', encoding='utf-8') as f:
@@ -266,6 +267,7 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
     # --- Updated Client Checks using module namespace ---
     print(f"DEBUG (querying.iterative_rag_query): Checking client...")
     # Access gemini_client via the imported module
+    llm_interface.initialize_clients() # Ensure clients are initialized
     print(f"DEBUG (querying.iterative_rag_query): llm_interface.gemini_client type = {type(llm_interface.gemini_client)}")
     print(f"DEBUG (querying.iterative_rag_query): llm_interface.gemini_client is None = {llm_interface.gemini_client is None}")
 

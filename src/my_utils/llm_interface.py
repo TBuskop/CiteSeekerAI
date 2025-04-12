@@ -356,7 +356,8 @@ def generate_subqueries(initial_query: str, model: str = SUBQUERY_MODEL) -> Dict
     with 'bm25_queries' and 'vector_search_queries'. Falls back to the initial query if processing fails.
     """
     default_result = {"bm25_queries": [initial_query], "vector_search_queries": [initial_query]}
-    prompt_path = os.path.join(os.path.dirname(__file__), "subquery_prompt.txt")
+    # retrieve based on project path
+    prompt_path = os.path.join(_PROJECT_ROOT, "llm_prompts", "subquery_prompt.txt")
     try:
         with open(prompt_path, "r", encoding="utf-8") as f:
             prompt_template = f.read()
