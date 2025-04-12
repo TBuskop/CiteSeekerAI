@@ -68,11 +68,13 @@ def generate_scopus_search_string(query: str, save_to_file: bool = True) -> Tupl
         
         if save_to_file:
             # Save the cleaned response to a file
-            output_file = os.path.join(script_dir, "generated_search_string.txt")
-            with open(output_file, "w") as f:
+            from pathlib import Path
+            PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+            save_path = os.path.join(PROJECT_ROOT, 'data', 'output', "generated_scopus_search_string.txt")
+            with open(save_path, "w") as f:
                 f.write(cleaned_response)
             
-            print(f"Generated search string saved to {output_file}")
+            print(f"Generated search string saved to {save_path}")
         
         return True, cleaned_response
     

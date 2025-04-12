@@ -46,7 +46,9 @@ def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Run a search on Scopus and download results")
     # read generated_search_string.txt and use it as the default query
-    default_query_file = Path("generated_search_string.txt")
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+    save_path = os.path.join(PROJECT_ROOT, 'data', 'output', "generated_scopus_search_string.txt")
+    default_query_file = save_path
     if default_query_file.exists():
         try:
             default_query = default_query_file.read_text().strip()
