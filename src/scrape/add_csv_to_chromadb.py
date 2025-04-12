@@ -7,6 +7,7 @@ import traceback
 import math
 from typing import Optional, Any, Dict, List
 
+import sys
 # --- Add project root to sys.path ---
 # Ensure the 'rag' package can be found when running from the 'scrape' directory
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -20,12 +21,12 @@ if _PROJECT_ROOT not in sys.path:
 try:
     from rag.chroma_manager import get_chroma_collection
     # Import the module itself or specific functions/variables as needed
-    from rag import llm_interface # Import the module
+    from my_utils import llm_interface # Import the module
     from rag.embedding import find_chunks_to_embed, generate_embeddings_in_batches
     # --- Import BM25 building function ---
     from rag.bm25_manager import build_and_save_bm25_index
     # --- End BM25 import ---
-    from rag.config import (
+    from config import (
         DEFAULT_EMBED_BATCH_SIZE,
         DEFAULT_EMBED_DELAY,
         EMBEDDING_MODEL,

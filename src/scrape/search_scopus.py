@@ -22,7 +22,15 @@ from typing import Optional, Tuple, Union
 from dotenv import load_dotenv
 
 # Import required modules
-from scopus_scraper import ScopusScraper
+
+# --- Add project root to sys.path ---
+# This allows absolute imports from 'src' assuming the script is in 'workflows'
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+from src.scrape.scopus_scraper import ScopusScraper
 
 # Configure logging
 logging.basicConfig(

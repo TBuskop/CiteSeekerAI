@@ -39,7 +39,7 @@ def generate_scopus_search_string(query: str, save_to_file: bool = True) -> Tupl
         full_query = f"{query} Write me a short literature review on this topic."
         
         # Open prompt file and replace placeholder with the query
-        with open(os.path.join(script_dir, "search_string_prompt.txt"), "r") as f:
+        with open(os.path.join(script_dir, "../llm_prompts/search_string_prompt.txt"), "r") as f:
             prompt = f.read()
         
         prompt = prompt.replace("[User Climate Research Question Here]", full_query)

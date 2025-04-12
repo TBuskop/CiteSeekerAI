@@ -20,19 +20,14 @@ if parent_dir not in sys.path:
 
 
 # --- Local Imports (after path adjustment) ---
-try:
-    # Use absolute imports assuming script is run from parent directory
-    import config # General configuration (assuming it's in the parent dir added to sys.path)
-    from rag import llm_interface # API client initialization and calls
-    # --- Import the new workflows module ---
-    from rag import workflows
-    # --- Add ChromaDB Client import for direct check ---
-    import chromadb
-except ImportError as e:
-     print(f"Error importing local modules: {e}")
-     print("Please ensure main.py is run correctly and the project structure is as expected.")
-     print(f"Current sys.path: {sys.path}")
-     sys.exit(1)
+# Use absolute imports assuming script is run from parent directory
+import config # General configuration (assuming it's in the parent dir added to sys.path)
+from src.my_utils import llm_interface # API client initialization and calls
+# --- Import the new workflows module ---
+from src.rag import workflows
+# --- Add ChromaDB Client import for direct check ---
+import chromadb
+
 
 
 # --- Basic Validation Helper ---
@@ -72,7 +67,6 @@ def main(config_params: Optional[Dict[str, Any]] = None):
                        If None, uses a default example configuration.
     """
     # change run path to the current directory
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
     if config_params is None:
 
         query = """
@@ -82,13 +76,14 @@ def main(config_params: Optional[Dict[str, Any]] = None):
         Results highlight the importance of using multiple climate storylines to robustly assess future discharge extremes. Flood patterns vary significantly across storylines; while some indicate 10% regional reductions in the 100 year return period discharge, others indicate increases up to 20%. The storylines also reveal spatial heterogeneity: in some storylines and regions flood preconditions such as snow melt are dampened, whereas other preconditions (such as higher soil moisture volume) are amplified.
         Projected socio-economic changes can further amplify these climate risks. As exposed asset values in the Latvian basin almost quadruple compared to the 2020 baseline, sectors are confronted with heightened flood-induced demand shocks related to reconstruction. Simultaneously, a trend of declining domestic manufacturing capacity doubles or triples most sectoral stresses relative to the 2020 baseline. In some scenarios, the demand shock exceeds absorptive capacity of sectors, amplifying and prolonging indirect impacts (Hallegatte et al., 2024). Furthermore, increased dependency on imports due to the offshoring of the manufacturing sectors may create new vulnerabilities to foreign supply disruptions (Ercin et al., 2021). Conversely, this may lead to enhanced regional resilience through import diversification (Willner et al., 2018).
         """
-
-        print("INFO: No configuration provided, using default example (query mode).")
+        absolute_pdf_folder_path = os.path.abspath("data/manual_pdf_upload/cleaned_text/robustness_uncertainty")
+        absoluted_db_path = os.path.abspath("data/manual_pdf_upload/chunk_database/chunks_db")
         config_params = {
             "mode": "index_embed_query",
-            "folder_path": "cleaned_text/robustness_uncertainty",
-            "db_path": "chunk_database/chunks_db",
+            "folder_path": absolute_pdf_folder_path,
+            "db_path": absoluted_db_path,
             "collection_name": "robustness_uncertainty",
+            "add_chunk_context": False, # Add this flag, set to False to disable context
             "query": query,
             "top_k": 100,
             "reranker": config.RERANKER_MODEL,
@@ -116,21 +111,26 @@ def main(config_params: Optional[Dict[str, Any]] = None):
         elif mode == "index_embed":
             # Call function from workflows module
             # set config_params['mode'] to 'index' for index mode
-            config_params['mode'] = "index"
-            workflows.run_index_mode(config_params)
-            config_params['mode'] = "embed"
-            workflows.run_embed_mode(config_params, initialized_client)
+            config_params_index = config_params.copy() # Avoid modifying original dict if reused
+            config_params_index['mode'] = "index"
+            workflows.run_index_mode(config_params_index)
+            config_params_embed = config_params.copy()
+            config_params_embed['mode'] = "embed"
+            workflows.run_embed_mode(config_params_embed, initialized_client)
         elif mode in ["query", "query_direct"]:
             # Call function from workflows module
             workflows.run_query_mode(config_params)
         elif mode == "index_embed_query":
             # Call function from workflows module
-            config_params['mode'] = "index"
-            workflows.run_index_mode(config_params)
-            config_params['mode'] = "embed"
-            workflows.run_embed_mode(config_params, initialized_client)
-            config_params['mode'] = "query"
-            workflows.run_query_mode(config_params)
+            config_params_index = config_params.copy()
+            config_params_index['mode'] = "index"
+            workflows.run_index_mode(config_params_index)
+            config_params_embed = config_params.copy()
+            config_params_embed['mode'] = "embed"
+            workflows.run_embed_mode(config_params_embed, initialized_client)
+            config_params_query = config_params.copy()
+            config_params_query['mode'] = "query" # Ensure correct mode for query
+            workflows.run_query_mode(config_params_query)
 
         else:
             print(f"Error: Unknown mode '{mode}' specified in configuration.")

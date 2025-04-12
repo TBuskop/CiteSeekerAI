@@ -5,11 +5,11 @@ from typing import List, Dict, Tuple
 from tqdm import tqdm
 
 # --- Local Imports ---
-from rag.utils import compute_file_hash, chunk_document_tokens, count_tokens
-from rag.llm_interface import generate_chunk_context
+from my_utils.utils import compute_file_hash, chunk_document_tokens, count_tokens
+from my_utils.llm_interface import generate_chunk_context
 from rag.chroma_manager import get_chroma_collection
 from rag.bm25_manager import build_and_save_bm25_index, tokenize_text_bm25 # Import tokenizer if needed here
-from .config import (
+from config import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_OVERLAP,
     DEFAULT_TOTAL_CONTEXT_WINDOW,
@@ -120,10 +120,10 @@ def index_document_phase1(document_path: str,
                           max_tokens: int = DEFAULT_MAX_TOKENS,
                           overlap: int = DEFAULT_OVERLAP,
                           context_total_window: int = DEFAULT_TOTAL_CONTEXT_WINDOW,
-                          add_context: bool = False
+                          add_context: bool = False # Flag to control context generation
                          ) -> List[Dict]:
     """
-    Processes a single document: reads, chunks, gets context.
+    Processes a single document: reads, chunks, gets context (if enabled).
     Returns list of dicts {id, metadata, document_text}. Metadata includes 'has_embedding': False.
     """
     processed_chunk_data = []
@@ -160,7 +160,10 @@ def index_document_phase1(document_path: str,
     for idx, (raw_chunk, start_tok, end_tok) in enumerate(raw_chunks_with_indices):
         if not raw_chunk or not raw_chunk.strip(): continue
 
-        if add_context == True:
+        chunk_context = None # Initialize chunk_context
+        contextualized_text = raw_chunk # Default to raw chunk
+
+        if add_context: # Check the flag
             # Generate context for the chunk
             chunk_context = generate_chunk_context(
                 full_document_text=document_text,
@@ -172,15 +175,15 @@ def index_document_phase1(document_path: str,
             )
 
             # Handle context generation failure (use placeholder)
-            if "Error generating context" in chunk_context or "Context could not be generated" in chunk_context:
+            if chunk_context is None or "Error generating context" in chunk_context or "Context could not be generated" in chunk_context:
                 # print(f"Warning: Using placeholder context for chunk {idx} in {os.path.basename(document_path)}.")
                 chunk_context = "Context generation failed or unavailable." # Consistent placeholder
 
             # Combine context and raw chunk for potential use in embedding/retrieval
-            contextualized_text = f"Context: {chunk_context}\n\nText:\n{raw_chunk}"
-        else:
-            # No context generation, just use the raw chunk
-            contextualized_text = raw_chunk
+            # Only update contextualized_text if context was successfully generated (or placeholder assigned)
+            if chunk_context:
+                 contextualized_text = f"Context: {chunk_context}\n\nText:\n{raw_chunk}"
+
         tokens_count = count_tokens(raw_chunk) # Count tokens of the raw chunk
 
         chunk_id = f"{file_hash}_{idx}"
@@ -192,8 +195,8 @@ def index_document_phase1(document_path: str,
             "start_token": start_tok,
             "end_token": end_tok,
             "text": raw_chunk, # Store the raw chunk text
-            "context": chunk_context, # Store the generated context
-            "contextualized_text": contextualized_text, # Store combined text
+            "context": chunk_context if chunk_context else "", # Store context or empty string
+            "contextualized_text": contextualized_text, # Store combined or raw text
             "tokens": tokens_count,
             "has_embedding": False # Crucial flag for Phase 2 (embedding)
         }
@@ -202,35 +205,34 @@ def index_document_phase1(document_path: str,
             "id": chunk_id,
             "metadata": metadata,
             "document": raw_chunk # The 'document' for ChromaDB should be the text to be indexed/searched
-                                  # Usually the raw chunk, maybe contextualized text if preferred. Let's use raw.
+                                  # Usually the raw chunk.
         })
 
     return processed_chunk_data
 
 # --- Sequential File Processing ---
-def process_files_sequentially(files_to_process: List[str]) -> Tuple[List[Dict], List[Tuple[str, str]]]:
+def process_files_sequentially(files_to_process: List[str], add_context: bool) -> Tuple[List[Dict], List[Tuple[str, str]]]:
     """Processes a list of files sequentially for Phase 1 (chunking)."""
     all_phase1_chunks = []
     failed_files_info = [] # List of (filename, error_message)
 
-    print("--- Starting Sequential Chunk Processing (Phase 1) ---")
+    print(f"--- Starting Sequential Chunk Processing (Phase 1) | Add Context: {add_context} ---")
     for file_path in tqdm(files_to_process, desc="Processing Files (Phase 1)", unit="file"):
         try:
-            # Call the single document processing function
+            # Call the single document processing function, passing add_context
             processed_data = index_document_phase1(
                 document_path=file_path,
                 max_tokens=DEFAULT_MAX_TOKENS, # Use config defaults
                 overlap=DEFAULT_OVERLAP,
                 context_total_window=DEFAULT_TOTAL_CONTEXT_WINDOW,
-                add_context=False
+                add_context=add_context # Pass the flag here
             )
             if processed_data:
                 all_phase1_chunks.extend(processed_data)
-            # else: print(f"No chunks generated or processed for {os.path.basename(file_path)}") # Debug
         except Exception as e:
             err_msg = f"CRITICAL Error processing {os.path.basename(file_path)} (Phase 1): {e}"
             print(f"\n{err_msg}")
-            # traceback.print_exc() # Optionally print full traceback
+            traceback.print_exc() # Optionally print full traceback
             failed_files_info.append((os.path.basename(file_path), str(e)))
 
     successful_files = len(files_to_process) - len(failed_files_info)
@@ -255,9 +257,6 @@ def update_chromadb_raw_chunks(collection, all_phase1_chunks: List[Dict]):
     print(f"Adding/Updating {len(all_phase1_chunks)} raw chunks in ChromaDB (metadata and documents)...")
     chroma_ids = [chunk['id'] for chunk in all_phase1_chunks]
     chroma_metadatas = [chunk['metadata'] for chunk in all_phase1_chunks]
-    # The 'document' stored in Chroma should be the text used for retrieval/embedding later.
-    # Typically the raw chunk text, but could be contextualized text if preferred.
-    # Let's stick to raw text ('text' field in metadata) for consistency with BM25.
     chroma_documents = [chunk['metadata'].get('text', '') for chunk in all_phase1_chunks]
 
     updated_count = 0
@@ -273,24 +272,16 @@ def update_chromadb_raw_chunks(collection, all_phase1_chunks: List[Dict]):
 
         if not batch_ids: continue
         try:
-            # Use upsert: adds new chunks and updates existing ones based on ID.
-            # Crucially, DO NOT provide the 'embeddings' parameter here.
-            # The collection's embedding function (ConfigurableEmbeddingFunction in 'index' mode)
-            # should handle returning zero vectors if Chroma calls it implicitly during upsert.
-            # print(f"DEBUG: Calling upsert for batch {i+1} (IDs: {batch_ids[:3]}...)") # Debug
             collection.upsert(
                 ids=batch_ids,
                 metadatas=batch_metadatas,
-                documents=batch_documents # Provide the text content
-                # NO 'embeddings=' parameter here!
+                documents=batch_documents
             )
-            # print(f"DEBUG: Upsert for batch {i+1} completed.") # Debug
             updated_count += len(batch_ids)
         except Exception as upsert_err:
             print(f"\n!!! Error upserting batch {i+1}/{num_batches} to ChromaDB: {upsert_err}")
             print(f"!!! Failed IDs in this batch: {batch_ids}")
-            traceback.print_exc() # Provide full traceback for upsert errors
-            # Decide on error handling: continue? stop? retry? For now, continue.
+            traceback.print_exc()
 
     print(f"Finished upserting raw chunks. {updated_count} chunks processed in upsert calls.")
     return updated_count
@@ -303,21 +294,19 @@ def rebuild_bm25_index_from_chroma(collection, db_path: str, collection_name: st
     all_chunk_ids = []
     all_chunk_texts = []
     try:
-        # Fetch all data (IDs and metadata containing text) from ChromaDB
-        # This can be slow for very large collections. Fetch in batches.
         estimated_count = collection.count()
         if estimated_count == 0:
              print("Collection is empty. Skipping BM25 rebuild.")
              return
         print(f"Fetching data for {estimated_count} chunks from ChromaDB for BM25 rebuild...")
-        fetch_limit = 5000 # Adjust batch size for fetching
+        fetch_limit = 5000
         offset = 0
         with tqdm(total=estimated_count, desc="Fetching ChromaDB data") as pbar:
             while True:
                 results = collection.get(
                     limit=fetch_limit,
                     offset=offset,
-                    include=['metadatas'] # Only need metadata containing 'text'
+                    include=['metadatas']
                 )
                 if not results or not results.get('ids'): break
 
@@ -326,18 +315,15 @@ def rebuild_bm25_index_from_chroma(collection, db_path: str, collection_name: st
 
                 if len(ids_batch) != len(metadatas_batch):
                      print(f"Warning: Mismatch between IDs ({len(ids_batch)}) and Metadatas ({len(metadatas_batch)}) in fetched batch. Skipping batch.")
-                     # Potentially log problematic IDs/offset
                 else:
                     for chunk_id, meta in zip(ids_batch, metadatas_batch):
-                        # Ensure metadata exists and contains the 'text' field
                         if meta and 'text' in meta and meta['text'] and meta['text'].strip():
                             all_chunk_ids.append(chunk_id)
                             all_chunk_texts.append(meta['text'])
-                        # else: print(f"Warning: Skipping chunk {chunk_id} due to missing/empty text in metadata.") # Too verbose
 
                 pbar.update(len(ids_batch))
                 offset += len(ids_batch)
-                if len(ids_batch) < fetch_limit: break # Reached the end
+                if len(ids_batch) < fetch_limit: break
 
         if not all_chunk_ids:
             print("No valid chunk text found in ChromaDB metadata. Skipping BM25 build.")
@@ -345,7 +331,6 @@ def rebuild_bm25_index_from_chroma(collection, db_path: str, collection_name: st
 
         print(f"Found {len(all_chunk_ids)} valid chunks with text in ChromaDB.")
 
-        # Build and save the index using the dedicated bm25_manager function
         build_and_save_bm25_index(all_chunk_ids, all_chunk_texts, db_path, collection_name)
 
     except Exception as bm25_err:

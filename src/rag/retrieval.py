@@ -5,8 +5,8 @@ from typing import List, Dict, Tuple, Optional, Any
 # --- Local Imports ---
 from rag.chroma_manager import get_chroma_collection
 from rag.bm25_manager import load_bm25_index, tokenize_text_bm25, RANK_BM25_AVAILABLE, BM25Okapi
-from rag.llm_interface import get_embedding
-from rag.config import EMBEDDING_MODEL, RERANKER_MODEL, DEFAULT_RERANK_CANDIDATE_COUNT
+from my_utils.llm_interface import get_embedding
+from config import EMBEDDING_MODEL, RERANKER_MODEL, DEFAULT_RERANK_CANDIDATE_COUNT
 
 # --- Sentence Transformers Import ---
 try:

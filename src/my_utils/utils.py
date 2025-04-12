@@ -1,6 +1,6 @@
 import hashlib
 import tiktoken
-from rag.config import EMBEDDING_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_OVERLAP, CHAT_MODEL
+from config import EMBEDDING_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_OVERLAP, CHAT_MODEL
 
 # --- File Hashing ---
 def compute_file_hash(file_path: str) -> str:

@@ -1,25 +1,34 @@
 import os
-from search_scopus import run_scopus_search # Assuming this function will be updated to accept config
-from add_csv_to_chromadb import ingest_csv_to_chroma
-from collect_relevant_abstracts import find_relevant_dois_from_abstracts
-from download_papers import download_dois
-from get_search_string import generate_scopus_search_string # Import the new function
-# --- Import the chunking function ---
-from chunk_new_dois import process_folder_for_chunks
-# --- Import the new function for building the relevant papers DB ---
-from build_relevant_papers_db import build_relevant_db # Added import
+import sys
+
+# --- Add project root to sys.path ---
+# This allows absolute imports from 'src' assuming the script is in 'workflows'
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+# --- Updated Imports (with src prefix) ---
+from src.scrape.search_scopus import run_scopus_search
+from src.scrape.add_csv_to_chromadb import ingest_csv_to_chroma
+from src.scrape.collect_relevant_abstracts import find_relevant_dois_from_abstracts
+from src.scrape.download_papers import download_dois
+from src.scrape.get_search_string import generate_scopus_search_string
+from src.scrape.chunk_new_dois import process_folder_for_chunks
+from src.scrape.build_relevant_papers_db import build_relevant_db
 
 # --- Central Configuration ---
 # General
-BASE_DATA_DIR = "./data"
+# Assuming the script is run from the project root (e.g., python workflows/paper_collection_pipeline.py)
+BASE_DATA_DIR = "../../data"
 DOWNLOADS_DIR = os.path.join(BASE_DATA_DIR, "downloads")
-FULL_TEXT_DIR = os.path.join(DOWNLOADS_DIR, "full_texts")
+FULL_TEXT_DIR = os.path.join(DOWNLOADS_DIR, "full_doi_texts")
 CSV_DIR = os.path.join(DOWNLOADS_DIR, "csv")
 # Abstract DB Config
-ABSTRACT_DB_PATH = os.path.join(BASE_DATA_DIR, "chroma_dbs", "abstract_chroma_db")
+ABSTRACT_DB_PATH = os.path.join(BASE_DATA_DIR, "databases", "abstract_chroma_db")
 ABSTRACT_COLLECTION_NAME = "abstracts"
 # --- Chunking DB Config ---
-CHUNK_DB_PATH = os.path.join(BASE_DATA_DIR, "chroma_dbs", "full_text_chunks_db") # Centralized path
+CHUNK_DB_PATH = os.path.join(BASE_DATA_DIR, "databases", "full_text_chunks_db") # Centralized path
 CHUNK_COLLECTION_NAME = "paper_chunks_main"
 CHUNK_SIZE = 1000 # Default chunk size from chunk_new_dois
 CHUNK_OVERLAP = 150 # Default chunk overlap from chunk_new_dois
@@ -27,7 +36,7 @@ CHUNK_OVERLAP = 150 # Default chunk overlap from chunk_new_dois
 # EMBED_BATCH_SIZE = 64
 # EMBED_DELAY = 1.0
 # --- Special Relevant Chunks DB Config ---
-RELEVANT_CHUNKS_DB_PATH = os.path.join(BASE_DATA_DIR, "chroma_dbs", "relevant_chunks_db") # New DB path
+RELEVANT_CHUNKS_DB_PATH = os.path.join(BASE_DATA_DIR, "databases", "relevant_chunks_db") # New DB path
 RELEVANT_CHUNKS_COLLECTION_NAME = "relevant_paper_chunks" # New collection name
 
 # Search String Generation Configuration
@@ -48,7 +57,8 @@ FORCE_REINDEX_CHROMA = False # Set to True to re-index existing documents
 # Abstract Collection Configuration
 TOP_K_ABSTRACTS = 10
 USE_RERANK_ABSTRACTS = True
-RELEVANT_ABSTRACTS_OUTPUT_FILENAME = "relevant_abstracts.txt"
+# Output filename - relative to where the script is run (project root assumed)
+RELEVANT_ABSTRACTS_OUTPUT_FILENAME = os.path.join(BASE_DATA_DIR, "output", "relevant_abstracts.txt")
 
 # --- Ensure Directories Exist ---
 os.makedirs(FULL_TEXT_DIR, exist_ok=True)

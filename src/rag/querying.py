@@ -12,9 +12,9 @@ except ImportError:
     GENAI_AVAILABLE = False
 
 # --- Local Imports ---
-from rag.utils import count_tokens, truncate_text
+from my_utils.utils import count_tokens, truncate_text
 # Import the llm_interface module itself
-from rag import llm_interface
+from my_utils import llm_interface
 from rag.retrieval import (
     retrieve_chunks_vector,
     retrieve_chunks_bm25,
@@ -22,7 +22,7 @@ from rag.retrieval import (
     rerank_chunks,
     SENTENCE_TRANSFORMERS_AVAILABLE # Check reranker availability
 )
-from rag.config import (
+from config import (
     SUBQUERY_MODEL,
     CHAT_MODEL,
     RERANKER_MODEL,

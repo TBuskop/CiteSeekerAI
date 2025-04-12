@@ -4,13 +4,20 @@ from typing import List, Dict, Optional
 
 import chromadb
 from chromadb import Documents, EmbeddingFunction, Embeddings
+# --- Add project root to sys.path ---
+# This allows absolute imports from 'src' assuming the script is in 'workflows'
+import sys
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 # --- Local Imports ---
-from rag.config import EMBEDDING_MODEL, OUTPUT_EMBEDDING_DIMENSION
+from config import EMBEDDING_MODEL, OUTPUT_EMBEDDING_DIMENSION
 # Import get_embedding carefully to avoid circular dependency if possible,
 # or pass embedding function instance/callable.
 # For ConfigurableEmbeddingFunction, we need get_embedding.
-from rag.llm_interface import get_embedding
+from my_utils.llm_interface import get_embedding
 
 
 # --- Custom Embedding Function for ChromaDB ---

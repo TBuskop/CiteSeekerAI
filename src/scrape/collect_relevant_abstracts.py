@@ -17,13 +17,13 @@ from rag.retrieval import (
     combine_results_rrf,
     rerank_chunks
 )
-from rag.config import (
+from config import (
     RERANKER_MODEL,
     DEFAULT_RERANK_CANDIDATE_COUNT,
     SUBQUERY_MODEL,
 )
 from rag.chroma_manager import get_chroma_collection
-from rag.llm_interface import initialize_clients, GOOGLE_GENAI_AVAILABLE, generate_subqueries
+from my_utils.llm_interface import initialize_clients, GOOGLE_GENAI_AVAILABLE, generate_subqueries
 
 # --- Helper Function ---
 def extract_metadata(chunks: List[Dict]) -> List[Tuple[str, str, str]]:

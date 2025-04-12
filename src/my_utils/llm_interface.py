@@ -5,8 +5,14 @@ import json
 import os
 from typing import List, Optional, Dict, Any
 
+import sys
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 # --- Config Imports ---
-from rag.config import (
+from config import (
     GEMINI_API_KEY,
     EMBEDDING_MODEL,
     CHUNK_CONTEXT_MODEL,
@@ -16,7 +22,7 @@ from rag.config import (
     OUTPUT_EMBEDDING_DIMENSION,
     DEFAULT_TOTAL_CONTEXT_WINDOW,
 )
-from rag.utils import count_tokens, truncate_text # Import necessary utils
+from src.my_utils.utils import count_tokens, truncate_text # Import necessary utils
 
 # --- API Client Imports and Setup ---
 try:

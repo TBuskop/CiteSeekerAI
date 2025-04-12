@@ -1,4 +1,4 @@
-from llm_interface import initialize_clients, generate_subqueries
+from my_utils.llm_interface import initialize_clients, generate_subqueries
 
 # change run path to file
 import os

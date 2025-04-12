@@ -6,15 +6,21 @@ import os
 import traceback
 from typing import Dict, Any, Optional
 
+import sys
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 # --- Local Imports ---
 # Assume this file is run within the context where 'rag' package is accessible
 import config # General configuration
-from . import llm_interface # API client initialization and calls
-from . import chroma_manager # ChromaDB setup and interaction
-from . import bm25_manager # BM25 setup and interaction
-from . import indexing # Index mode logic
-from . import embedding # Embed mode logic
-from . import querying # Query modes logic
+from src.my_utils import llm_interface # API client initialization and calls
+from src.rag import chroma_manager # ChromaDB setup and interaction
+from src.rag import bm25_manager # BM25 setup and interaction
+from src.rag import indexing # Index mode logic
+from src.rag import embedding # Embed mode logic
+from src.rag import querying # Query modes logic
 import chromadb # Direct ChromaDB client import for checks
 
 # --- Mode Execution Logic (Moved from main.py) ---
@@ -27,6 +33,7 @@ def run_index_mode(config_params: Dict[str, Any]):
     db_path = config_params.get('db_path', './rag_db')
     collection_name = config_params.get('collection_name', config.DEFAULT_CHROMA_COLLECTION_NAME)
     force_reindex = config_params.get('force_reindex', False)
+    add_context = config_params.get('add_chunk_context', False) # Get the new flag
 
     potential_files = indexing.find_files_to_index(folder_path, document_path)
     if not potential_files: return
@@ -49,7 +56,8 @@ def run_index_mode(config_params: Dict[str, Any]):
         print("\n--- Index Mode (Phase 1) Complete (BM25 Rebuild Only) ---")
         return
 
-    all_phase1_chunks, _ = indexing.process_files_sequentially(files_to_process)
+    # Pass add_context to process_files_sequentially
+    all_phase1_chunks, _ = indexing.process_files_sequentially(files_to_process, add_context=add_context)
 
     if not all_phase1_chunks and not force_reindex:
         print("No valid new chunks were generated. Nothing to add to DB or index.")

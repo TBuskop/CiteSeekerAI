@@ -21,8 +21,8 @@ try:
     # Import necessary components from the rag package
     from rag.chroma_manager import get_chroma_collection
     from rag.embedding import find_chunks_to_embed, generate_embeddings_in_batches
-    from rag import llm_interface # Import the module to call initialize_clients and access client
-    from rag.config import (
+    from my_utils import llm_interface # Import the module to call initialize_clients and access client
+    from config import (
         DEFAULT_EMBED_BATCH_SIZE,
         DEFAULT_EMBED_DELAY,
         EMBEDDING_MODEL, # Needed for embedding function config
