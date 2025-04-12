@@ -2,6 +2,8 @@ import chromadb
 import traceback
 from typing import List
 from chromadb.errors import NotFoundError
+# --- Add BM25 Import ---
+from src.rag.bm25_manager import build_and_save_bm25_index
 
 def build_relevant_db(
     relevant_doi_list: List[str],
@@ -154,6 +156,17 @@ def build_relevant_db(
                     embeddings=all_relevant_embeddings
                 )
                 print("Relevant chunks added/updated successfully.")
+
+                # --- Build and Save BM25 Index for the new collection ---
+                print(f"\nBuilding BM25 index for '{target_collection_name}'...")
+                build_and_save_bm25_index(
+                    chunk_ids=all_relevant_ids,
+                    chunk_texts=all_relevant_documents,
+                    db_path=target_db_path,
+                    collection_name=target_collection_name
+                )
+                # --- End BM25 Index Building ---
+
             except Exception as upsert_err:
                  print(f"Error upserting enriched chunks to target DB: {upsert_err}")
                  traceback.print_exc()

@@ -162,6 +162,19 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
     unique_references = []
     seen_files = set()
     for chunk in retrieved_chunks:
+        if chunk and 'cited_by' in chunk and chunk['doi'] not in seen_files:
+            # formated ref should contain authors, title, year, source_title, doi, cited_by
+            authors = chunk.get('authors', 'N/A')
+            title = chunk.get('title', 'N/A')
+            year = chunk.get('year', 'N/A')
+            source_title = chunk.get('source_title', 'N/A')
+            doi = chunk.get('doi', 'N/A')
+            cited_by = chunk.get('cited_by', 'N/A')
+
+            formatted_ref = f"{authors}, {title}, {year}, {source_title}, https://www.doi.org/{doi}, Cited by: {cited_by}"
+            unique_references.append(f"- {formatted_ref}")
+            seen_files.add(doi) # Track unique references
+
         if chunk and 'file_name' in chunk and chunk['file_name'] not in seen_files:
             unique_references.append(f"- {chunk['file_name']}")
             seen_files.add(chunk['file_name'])
@@ -233,8 +246,11 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
 
     print(f"Generating final answer using {model} (context tokens: ~{context_tokens}, prompt tokens: ~{prompt_total_tokens}, max answer tokens: {answer_max_tokens})...")
     # save prompt, query and context to file for debugging
+    # find the project root directory
+    PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    save_path = os.path.join(PROJECT_ROOT, 'data', 'output', 'final_prompt.txt')
     try:
-        with open('final_prompt.txt', 'w', encoding='utf-8') as f:
+        with open(save_path, 'w', encoding='utf-8') as f:
             f.write(prompt)
     except Exception as e:
         print(f"Warning: Could not write final_prompt.txt: {e}")
@@ -360,10 +376,16 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
     context_parts = []
     for chunk in final_chunks:
         content = chunk.get('contextualized_text', '').strip() or chunk.get('text', '')
-        context_parts.append(
-            f"Source Document: {chunk.get('file_name', 'N/A')} [Chunk #{chunk.get('chunk_number', '?')}]\n"
-            f"Content:\n{content}"
-        )
+        if chunk.get('cited_by') is not None:
+            context_parts.append(
+                f"{chunk.get('authors', 'N/A').split(';')[0]} et al. ({chunk.get('year', 'N/A')}) [Chunk #{chunk.get('chunk_number', '?')}]\n"
+                f"Content:\n{content}"
+            )
+        else:
+            context_parts.append(
+                f"Source Document: {chunk.get('file_name', 'N/A')} [Chunk #{chunk.get('chunk_number', '?')}]\n"
+                f"Content:\n{content}"
+            )
     combined_context = "\n\n---\n\n".join(context_parts)
     final_answer = generate_answer(initial_query, combined_context, final_chunks, model=answer_model)
     return final_answer
