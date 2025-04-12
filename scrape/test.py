@@ -121,15 +121,20 @@ def count_unique_dois_chromadb_client(db_path: str, collection_name: str) -> Opt
 
 # --- Define Database Paths and Collection Names ---
 # Assuming this script is run from the 'scrape' directory
-ABSTRACT_DB_PATH = "./scrape/abstract_chroma_db"
+ABSTRACT_DB_PATH = "./scrape/data/chroma_dbs/abstract_chroma_db"
 FULL_TEXT_DB_PATH = "./scrape/data/chroma_dbs/full_text_chunks_db" # Updated path based on chunk_new_dois.py example
+RELEVANR_DB_PATH = "./scrape/data/chroma_dbs/relevant_chunks_db" # From build_relevant_papers_db.py
+
 
 ABSTRACT_COLLECTION_NAME = "abstracts" # From paper_collection_pipeline.py
 FULL_TEXT_COLLECTION_NAME = "paper_chunks_main" # From chunk_new_dois.py example usage
+RELEVANT_CHUNKS_COLLECTION_NAME = "relevant_paper_chunks" # New collection name
+
 
 # --- Run the Counts ---
 abstract_result = count_unique_dois_chromadb_client(ABSTRACT_DB_PATH, ABSTRACT_COLLECTION_NAME)
 full_text_result = count_unique_dois_chromadb_client(FULL_TEXT_DB_PATH, FULL_TEXT_COLLECTION_NAME)
+relevant_result = count_unique_dois_chromadb_client(RELEVANR_DB_PATH, RELEVANT_CHUNKS_COLLECTION_NAME) # Uncomment if needed
 
 # --- Print Results ---
 print("\n--- Summary ---")
@@ -156,6 +161,19 @@ if full_text_result is not None:
         pprint.pprint(full_text_sample, indent=4, width=100)
     else:
         print("  (Could not retrieve a sample metadata entry)")
+
+if relevant_result is not None:
+    relevant_doi_count, relevant_fields, relevant_sample = relevant_result # Unpack sample
+    print(f"\nFull Text DB ('{FULL_TEXT_COLLECTION_NAME}'):")
+    print(f"  Unique DOIs: {relevant_doi_count}")
+    print(f"  Metadata Fields: {sorted(list(relevant_fields)) if relevant_fields else 'None Found'}")
+    if relevant_sample:
+        print("  Sample Metadata Entry:")
+        pprint.pprint(relevant_sample, indent=4, width=100)
+    else:
+        print("  (Could not retrieve a sample metadata entry)")
+
+
 else:
     print(f"\nCould not determine details for Full Text DB ('{FULL_TEXT_COLLECTION_NAME}').")
 
