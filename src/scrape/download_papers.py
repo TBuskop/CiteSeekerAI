@@ -36,6 +36,7 @@ DYNAMIC_URL_PATTERNS: List[str] = [
     r"https://(.*\.)?onlinelibrary\.wiley\.com/.*",    #onlinelibrary.wiley
     r"https://(.*\.)?ascelibrary\.org/.*", # ascelibrary.org
     r"https://(.*\.)?mdpi\.com/.*", # MDPI
+    r"https://(.*\.)?iwaponline\.com/.*", # iwaponline.com
 ]
 
 ###############################
@@ -156,6 +157,9 @@ def fetch_with_playwright(url: str) -> str:
                     text_selector = 'section#bodymatter'
                 elif "mdpi" in url:
                     text_selector = 'div.html-body'
+                elif "iwaponline" in url:
+                    text_selector = 'div.article-body'
+
 
                 print(f"Fetching URL via Playwright (headless browser): {url}")
                 page.goto(url, timeout=30000, wait_until='networkidle')
