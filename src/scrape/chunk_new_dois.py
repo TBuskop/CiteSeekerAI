@@ -10,7 +10,7 @@ from tqdm import tqdm
 # --- Add project root to sys.path if needed ---
 # This allows importing from the 'rag' package when running this script directly
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 # --- End Path Addition ---
@@ -19,9 +19,9 @@ try:
     import chromadb
     from langchain.text_splitter import RecursiveCharacterTextSplitter # Example splitter
     # Import necessary components from the rag package
-    from rag.chroma_manager import get_chroma_collection
-    from rag.embedding import find_chunks_to_embed, generate_embeddings_in_batches
-    from my_utils import llm_interface # Import the module to call initialize_clients and access client
+    from src.rag.chroma_manager import get_chroma_collection
+    from src.rag.embedding import find_chunks_to_embed, generate_embeddings_in_batches
+    from src.my_utils import llm_interface # Import the module to call initialize_clients and access client
     from config import (
         DEFAULT_EMBED_BATCH_SIZE,
         DEFAULT_EMBED_DELAY,
@@ -150,8 +150,8 @@ def process_and_index_files(
 
     # Initialize text splitter (using Langchain's RecursiveCharacterTextSplitter as an example)
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
+        chunk_size=chunk_size * 4, # user gives token chunk size, this function takes characters. This ensures we get the right number of tokens in each chuks (each token ~4 characters)
+        chunk_overlap=chunk_overlap*4,
         length_function=len,
         is_separator_regex=False,
     )

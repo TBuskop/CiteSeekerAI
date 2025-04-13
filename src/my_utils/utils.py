@@ -50,7 +50,7 @@ def chunk_document_tokens(document: str, max_tokens: int = DEFAULT_MAX_TOKENS, o
     except Exception:
         try:
             encoding = tiktoken.get_encoding("cl100k_base")
-            print("Warning: Using fallback 'cl100k_base' encoding for chunking.")
+            # print("Warning: Using fallback 'cl100k_base' encoding for chunking.")
         except Exception as e:
             raise ValueError(f"Could not get tiktoken encoding for chunking: {e}")
 
