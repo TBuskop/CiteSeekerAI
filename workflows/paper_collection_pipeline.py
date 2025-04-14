@@ -43,8 +43,18 @@ RELEVANT_CHUNKS_DB_PATH = os.path.join(BASE_DATA_DIR, "databases", "relevant_chu
 RELEVANT_CHUNKS_COLLECTION_NAME = "relevant_paper_chunks" # New collection name
 
 # Search String Generation Configuration
-INITIAL_RESEARCH_QUESTION = "what are climate storylines and how can they be used to asses flood impacts in Europe?" #"What are the effects of sea level rise on italy?"
+INITIAL_RESEARCH_QUESTION = "Which recent advancements in hydrodynamic and hydrological modeling improve the simulation of climate vulnerability for refugees and internally displaced persons in data-scarce regions?" #"What are the effects of sea level rise on italy?"
 # Fallback query if generation fails
+# MANUAL_SCOPUS_QUERY =  "(\"virtual water\" OR \"water footprint\") AND trade AND (agriculture OR \"food security\")" # Example: Add your manual query here
+MANUAL_SCOPUS_QUERY = """
+( flood* OR drought* OR "water scarcity" OR inundation OR hydro* )
+AND
+( model* OR simulat* OR assessment OR forecast* OR map* OR project* )
+AND
+( refugee* OR idp* OR "internally displaced" OR "displaced population*" )
+AND
+( "remote sensing" OR satellite* OR "earth observation" OR "machine learning" OR "data fusion" OR "data scarce" OR "data poor" OR ungauged )
+"""
 DEFAULT_SCOPUS_QUERY = "climate OR 'climate change' OR 'climate variability' AND robustness AND uncertainty AND policy AND decision AND making"
 SAVE_GENERATED_SEARCH_STRING = True # Whether to save the generated string to a file
 
@@ -58,13 +68,13 @@ SCOPUS_YEAR_TO = None   # Example: Add config for year filter end
 FORCE_REINDEX_CHROMA = False # Set to True to re-index existing documents
 
 # Abstract Collection Configuration
-TOP_K_ABSTRACTS = 50
+TOP_K_ABSTRACTS = 10
 USE_RERANK_ABSTRACTS = True
 # Output filename - relative to where the script is run (project root assumed)
 RELEVANT_ABSTRACTS_OUTPUT_FILENAME = os.path.join(BASE_DATA_DIR, "output", "relevant_abstracts.txt")
 
 # --- Query Configuration (for final step) ---
-QUERY_TOP_K = 100 # Example: Number of results for the final query
+QUERY_TOP_K = 10 # Example: Number of results for the final query
 QUERY_RERANKER = config.RERANKER_MODEL # Use RAG config default
 QUERY_RERANK_CANDIDATES = config.DEFAULT_RERANK_CANDIDATE_COUNT # Use RAG config default
 QUERY_OUTPUT_FILENAME = os.path.join(BASE_DATA_DIR, "output", "final_relevant_chunks_answer.txt") # Output file for the final answer
@@ -80,17 +90,20 @@ os.makedirs(os.path.dirname(RELEVANT_CHUNKS_DB_PATH), exist_ok=True) # Added for
 # --- Pipeline Execution ---
 
 print("--- Step 0: Generating Scopus Search String ---")
-success, generated_query = generate_scopus_search_string(
-    query=INITIAL_RESEARCH_QUESTION,
-    save_to_file=SAVE_GENERATED_SEARCH_STRING
-)
+if MANUAL_SCOPUS_QUERY:
+    SCOPUS_QUERY = MANUAL_SCOPUS_QUERY # Use manual query if provided
 
-if success and generated_query:
-    SCOPUS_QUERY = generated_query
-    print(f"Using generated Scopus query: {SCOPUS_QUERY}")
 else:
-    SCOPUS_QUERY = DEFAULT_SCOPUS_QUERY
-    print(f"Failed to generate search string. Using default Scopus query: {SCOPUS_QUERY}")
+    success, generated_query = generate_scopus_search_string(
+        query=INITIAL_RESEARCH_QUESTION,
+        save_to_file=SAVE_GENERATED_SEARCH_STRING
+    )
+    if success and generated_query:
+        SCOPUS_QUERY = generated_query
+        print(f"Using generated Scopus query: {SCOPUS_QUERY}")
+    else:
+        SCOPUS_QUERY = DEFAULT_SCOPUS_QUERY
+        print(f"Failed to generate search string. Using default Scopus query: {SCOPUS_QUERY}")
 
 # Define Scopus output path based on the final query
 clean_query = (SCOPUS_QUERY.replace(' ', '_')
@@ -99,7 +112,9 @@ clean_query = (SCOPUS_QUERY.replace(' ', '_')
                              .replace(')', '')
                              .replace(':', '')
                              .replace('*', '')
-                             .replace('?', ''))[:50]
+                             .replace('?', '')
+                             .replace("\"", '')
+                             .replace("\n", ''))[:50]
 
 SCOPUS_OUTPUT_CSV_FILENAME = f"scopus_{clean_query}.csv"
 SCOPUS_OUTPUT_CSV_PATH = os.path.join(CSV_DIR, SCOPUS_OUTPUT_CSV_FILENAME)
@@ -107,14 +122,30 @@ SCOPUS_OUTPUT_CSV_PATH = os.path.join(CSV_DIR, SCOPUS_OUTPUT_CSV_FILENAME)
 
 print("\n--- Step 1: Running Scopus Search ---")
 # Run the Scopus search using the determined query and output path
-search_success, actual_csv_path = run_scopus_search(
-    query=SCOPUS_QUERY,
-    output_csv_path=SCOPUS_OUTPUT_CSV_PATH, # Pass the desired full path
-    headless=SCOPUS_HEADLESS_MODE,
-    year_from=SCOPUS_YEAR_FROM,
-    year_to=SCOPUS_YEAR_TO
-    # Credentials and institution are handled by run_scopus_search loading .env
-)
+if MANUAL_SCOPUS_QUERY:
+   # check if file exists before running the search
+    if os.path.exists(SCOPUS_OUTPUT_CSV_PATH):
+        print(f"File {SCOPUS_OUTPUT_CSV_PATH} already exists. Skipping search.")
+        search_success = True
+        actual_csv_path = SCOPUS_OUTPUT_CSV_PATH # Use existing file path
+    else:
+        search_success, actual_csv_path = run_scopus_search(
+            query=SCOPUS_QUERY,
+            output_csv_path=SCOPUS_OUTPUT_CSV_PATH, # Pass the desired full path
+            headless=SCOPUS_HEADLESS_MODE,
+            year_from=SCOPUS_YEAR_FROM,
+            year_to=SCOPUS_YEAR_TO
+            # Credentials and institution are handled by run_scopus_search loading .env
+        )
+else:
+    search_success, actual_csv_path = run_scopus_search(
+        query=SCOPUS_QUERY,
+        output_csv_path=SCOPUS_OUTPUT_CSV_PATH, # Pass the desired full path
+        headless=SCOPUS_HEADLESS_MODE,
+        year_from=SCOPUS_YEAR_FROM,
+        year_to=SCOPUS_YEAR_TO
+        # Credentials and institution are handled by run_scopus_search loading .env
+    )
 
 # Check if the search was successful and update the path variable
 if search_success and actual_csv_path:
