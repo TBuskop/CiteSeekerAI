@@ -159,6 +159,8 @@ def fetch_with_playwright(url: str) -> str:
                     text_selector = 'div.html-body'
                 elif "iwaponline" in url:
                     text_selector = 'div.article-body'
+                elif "tandfonline" in url:
+                    text_selector = "article.article"
 
 
                 print(f"Fetching URL via Playwright (headless browser): {url}")
@@ -502,8 +504,16 @@ def _fetch_html_content(url: str, headers: Dict[str, str], is_copernicus_fallbac
             source_method += "_fetch_failed"
         except httpx.HTTPStatusError as e:
             print(f"httpx Status error {e.response.status_code} for {e.request.url}")
-            html_str = ""
-            source_method += "_fetch_failed"
+            if e.response.status_code == 403:
+                print(f"Received 403 from httpx for {current_url_to_fetch}. Retrying with Playwright...")
+                source_method = "html_playwright_403_retry"
+                if is_copernicus_fallback: source_method = "copernicus_html_playwright_403_retry"
+                html_str = fetch_with_playwright(current_url_to_fetch)
+                if not html_str:
+                    source_method += "_fetch_failed"
+            else:
+                html_str = ""
+                source_method += "_fetch_failed"
 
     return {"html_str": html_str, "source_method": source_method, "final_url": current_url_to_fetch}
 
