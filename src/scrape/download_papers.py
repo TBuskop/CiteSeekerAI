@@ -693,8 +693,8 @@ def process_dois(dois: List[str], output_directory: str) -> Dict[str, Dict[str, 
         if not doi or not isinstance(doi, str):
              print(f"Skipping invalid DOI entry: {doi}")
              continue
-
-        print(f"\n--- Processing DOI: {doi} ---")
+        i_loc_doi = dois.index(doi)
+        print(f"\n--- Processing DOI [{i_loc_doi+1}/{len(dois)}]: {doi} ---")
         resolved_url = resolve_doi(doi)
 
         if resolved_url:
