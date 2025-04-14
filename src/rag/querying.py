@@ -11,11 +11,17 @@ except ImportError:
     genai = None # Define genai as None if import fails
     GENAI_AVAILABLE = False
 
+import sys
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 # --- Local Imports ---
-from my_utils.utils import count_tokens, truncate_text
+from src.my_utils.utils import count_tokens, truncate_text
 # Import the llm_interface module itself
-from my_utils import llm_interface
-from rag.retrieval import (
+from src.my_utils import llm_interface
+from src.rag.retrieval import (
     retrieve_chunks_vector,
     retrieve_chunks_bm25,
     combine_results_rrf,
@@ -378,7 +384,7 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
         content = chunk.get('contextualized_text', '').strip() or chunk.get('text', '')
         if chunk.get('cited_by') is not None:
             context_parts.append(
-                f"{chunk.get('authors', 'N/A').split(';')[0]} et al. ({chunk.get('year', 'N/A')}) [Chunk #{chunk.get('chunk_number', '?')}]\n"
+                f"{chunk.get('authors', 'N/A').split(';')[0]} et al., {chunk.get('year', 'N/A')}, Chunk #{chunk.get('chunk_number', '?')}\n"
                 f"Content:\n{content}"
             )
         else:
