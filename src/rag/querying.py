@@ -1,6 +1,7 @@
 import os
 import re
 import traceback
+import json # <-- Add json import
 from typing import List, Dict, Tuple, Optional
 
 # --- Add google.genai import for type checking ---
@@ -280,6 +281,84 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
     final_answer_formatted = f"{final_answer_raw}\n\n**References Used:**\n{unique_reference_list_str}"
 
     return final_answer_formatted
+
+
+# --- Query Decomposition ---
+def query_decomposition(query: str, number_of_sub_queries=5,model: str = SUBQUERY_MODEL) -> List[str]:
+    """
+    Decomposes a complex query into a list of simpler sub-questions using an LLM.
+
+    Args:
+        query: The original complex query string.
+        model: The LLM model to use for decomposition.
+
+    Returns:
+        A list of simpler sub-question strings. Returns the original query in a list
+        if decomposition fails.
+    """
+    print(f"\n--- Decomposing Query using {model} ---")
+    print(f"Original Query: \"{query}\"")
+
+    # 1. Load the decomposition prompt
+    system_prompt = "You are an expert query decomposition assistant." # Default
+    prompt_file = 'query_decomposition.txt'
+    # Use _SCRIPT_DIR defined earlier if available, otherwise recalculate
+    try:
+        script_dir = _SCRIPT_DIR
+    except NameError:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+    prompt_file_path = os.path.join(script_dir, '..', 'llm_prompts', prompt_file)
+
+    if os.path.exists(prompt_file_path):
+        try:
+            with open(prompt_file_path, 'r', encoding='utf-8') as f:
+                system_prompt = f.read().strip()
+        except Exception as e:
+            print(f"Warning: Could not read query decomposition prompt file '{prompt_file_path}': {e}. Using default.")
+    else:
+        print(f"Warning: Query decomposition prompt file not found at '{prompt_file_path}'. Using default.")
+
+    # 2. Construct the full prompt for the LLM
+    full_prompt = f"{system_prompt}\n\nUser Query: \"{query}\"\n\nmax_subqueries: {number_of_sub_queries}\n\n" \
+
+    # 3. Call the LLM
+    try:
+        # Ensure clients are ready
+        llm_interface.initialize_clients()
+        # Use a low temperature for structured output, adjust max_tokens as needed
+        response = llm_interface.generate_llm_response(
+            prompt=full_prompt,
+            model=model,
+            temperature=1,
+            max_tokens=2000 # Adjust based on expected complexity
+        )
+
+        # 4. Parse the JSON response
+        # Clean potential markdown code block fences
+        response_cleaned = re.sub(r"```json\n?|\n?```", "", response).strip()
+
+        # Attempt to parse the JSON
+        parsed_response = json.loads(response_cleaned)
+
+        subqueries = parsed_response.get("subqueries", [])
+
+        if isinstance(subqueries, list) and all(isinstance(q, str) for q in subqueries) and subqueries:
+            print(f"--- Generated {len(subqueries)} Subqueries ---")
+            # for i, sq in enumerate(subqueries):
+            #     print(f"  {i+1}. {sq}")
+            return subqueries
+        else:
+            print("Warning: LLM response did not contain a valid 'subqueries' list. Falling back to original query.")
+            return [query]
+
+    except json.JSONDecodeError as e:
+        print(f"Error: Failed to parse JSON response from LLM for query decomposition: {e}")
+        print(f"LLM Raw Response:\n{response}")
+        return [query] # Fallback
+    except Exception as e:
+        print(f"Error during query decomposition LLM call: {e}")
+        traceback.print_exc()
+        return [query] # Fallback
 
 
 # --- Iterative RAG Query ---
