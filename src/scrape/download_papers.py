@@ -2,7 +2,7 @@
 import re
 import json
 import concurrent.futures
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import xml.etree.ElementTree as ET # <<< NEW: Import ElementTree
 
 
@@ -671,13 +671,55 @@ def resolve_doi(doi: str) -> Optional[str]:
          traceback.print_exc()
          return None
 
-
-def process_dois(dois: List[str], output_directory: str) -> Dict[str, Dict[str, str]]:
+# <<< NEW HELPER FUNCTION FOR PARALLEL PROCESSING >>>
+def _process_single_doi(doi: str, output_directory: str, min_text_length: int = 100) -> Tuple[str, Dict[str, str]]:
     """
-    Processes a list of DOIs: resolves each DOI, fetches its content dynamically,
+    Processes a single DOI: resolves, fetches content, saves if successful.
+    Returns a tuple (doi, result_dict).
+    """
+    print(f"--- Starting processing for DOI: {doi} ---")
+    resolved_url = resolve_doi(doi)
+    result_dict = {}
+
+    if resolved_url:
+        print(f"Resolved DOI {doi} to URL: {resolved_url}")
+        article_data = fetch_article_from_url(resolved_url)
+
+        if article_data and isinstance(article_data.get("text"), str) and len(article_data["text"]) >= min_text_length:
+            print(f"Successfully extracted text for DOI {doi} (Source: {article_data.get('source', 'N/A')})")
+            result_dict = article_data
+            # Sanitize DOI for filename and join with output directory
+            filename_doi = re.sub(r'[^\w\d.-]', '_', doi) + ".txt" # Add .txt extension
+            path_to_save = os.path.join(output_directory, filename_doi) # Use output_directory
+            try:
+                with open(path_to_save, "w", encoding="utf-8") as f:
+                        f.write(article_data["text"])
+                print(f"Saved text content for DOI {doi} to: {path_to_save}") # Show full path
+            except IOError as e:
+                print(f"Error saving file {path_to_save}: {e}")
+                # Add failure info to results even if saving failed
+                result_dict["save_error"] = str(e)
+
+        elif article_data:
+             print(f"Failed to extract sufficient text for DOI {doi}. Source: {article_data.get('source', 'failed_extraction')}, URL: {resolved_url}")
+             result_dict = {"text": "", "source": article_data.get('source', 'failed_extraction'), "resolved_url": resolved_url}
+        else:
+             print(f"Failed to process URL obtained for DOI {doi}. URL: {resolved_url}")
+             result_dict = {"text": "", "source": "fetch_failed", "resolved_url": resolved_url}
+
+    else:
+        print(f"DOI {doi} could not be resolved.")
+        result_dict = {"text": "", "source": "doi_resolve_failed"}
+
+    print(f"--- Finished processing for DOI: {doi} ---")
+    return doi, result_dict
+
+
+def process_dois(dois: List[str], output_directory: str, max_workers: int = 8) -> Dict[str, Dict[str, str]]:
+    """
+    Processes a list of DOIs in parallel: resolves each DOI, fetches its content dynamically,
     and returns a dictionary mapping each DOI to its extracted text and source.
     Saves successful extractions to the specified directory.
-    Uses sequential processing for simplicity.
     """
     results = {}
     min_text_length = 100
@@ -689,51 +731,38 @@ def process_dois(dois: List[str], output_directory: str) -> Dict[str, Dict[str, 
     # Ensure output directory exists
     os.makedirs(output_directory, exist_ok=True)
 
-    for doi in dois:
-        if not doi or not isinstance(doi, str):
-             print(f"Skipping invalid DOI entry: {doi}")
-             continue
-        i_loc_doi = dois.index(doi)
-        print(f"\n--- Processing DOI [{i_loc_doi+1}/{len(dois)}]: {doi} ---")
-        resolved_url = resolve_doi(doi)
+    print(f"Processing {len(dois)} DOIs using up to {max_workers} workers...")
+    processed_count = 0
+    total_count = len([doi for doi in dois if doi and isinstance(doi, str)])
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all DOI processing tasks
+        future_to_doi = {
+            executor.submit(_process_single_doi, doi, output_directory, min_text_length): doi
+            for doi in dois if doi and isinstance(doi, str) # Basic validation before submitting
+        }
 
-        if resolved_url:
-            print(f"Resolved DOI {doi} to URL: {resolved_url}")
-            article_data = fetch_article_from_url(resolved_url)
+        # Process completed futures
+        for future in concurrent.futures.as_completed(future_to_doi):
+            original_doi = future_to_doi[future]
+            try:
+                # Retrieve the result tuple (doi, result_dict)
+                processed_doi, result_data = future.result()
+                results[processed_doi] = result_data
+            except Exception as exc:
+                print(f"DOI {original_doi} generated an exception during processing: {exc}")
+                results[original_doi] = {"text": "", "source": "processing_exception", "error": str(exc)}
+            processed_count += 1
+            print(f"Processed {processed_count} / {total_count} DOIs...", flush=True)
+            # else: # Optional: Log successful completion from the main loop if needed
+            #     print(f"Successfully completed processing for DOI: {original_doi}")
 
-            if article_data and isinstance(article_data.get("text"), str) and len(article_data["text"]) >= min_text_length:
-                print(f"Successfully extracted text for DOI {doi} (Source: {article_data.get('source', 'N/A')})")
-                results[doi] = article_data
-                # Sanitize DOI for filename and join with output directory
-                filename_doi = re.sub(r'[^\w\d.-]', '_', doi) + ".txt" # Add .txt extension
-                path_to_save = os.path.join(output_directory, filename_doi) # Use output_directory
-                try:
-                    with open(path_to_save, "w", encoding="utf-8") as f:
-                            f.write(article_data["text"])
-                    print(f"Saved text content for DOI {doi} to: {path_to_save}") # Show full path
-                except IOError as e:
-                    print(f"Error saving file {path_to_save}: {e}")
-                    # Add failure info to results even if saving failed
-                    results[doi]["save_error"] = str(e)
-
-
-            elif article_data:
-                 print(f"Failed to extract sufficient text for DOI {doi}. Source: {article_data.get('source', 'failed_extraction')}, URL: {resolved_url}")
-                 results[doi] = {"text": "", "source": article_data.get('source', 'failed_extraction'), "resolved_url": resolved_url}
-            else:
-                 print(f"Failed to process URL obtained for DOI {doi}. URL: {resolved_url}")
-                 results[doi] = {"text": "", "source": "fetch_failed", "resolved_url": resolved_url}
-
-        else:
-            print(f"DOI {doi} could not be resolved.")
-            results[doi] = {"text": "", "source": "doi_resolve_failed"}
-
+    print(f"Finished parallel processing for {total_count} DOIs.")
     return results
 
 def download_dois(proposed_dois: List[str], output_directory: str) -> None:
     """
     Downloads articles for a list of DOIs, checking if they are already downloaded.
-    If not, it processes them to extract text and saves the results to the specified directory.
+    If not, it processes them in parallel to extract text and saves the results.
     """
     print(f"Checking for existing files in: {output_directory}")
     # remove dois that are already in the downloads folder
@@ -753,10 +782,12 @@ def download_dois(proposed_dois: List[str], output_directory: str) -> None:
         print("No new DOIs to process.")
         return
 
-    print(f"Starting DOI processing for {len(dois_to_process)} DOIs...")
+    print(f"Starting parallel DOI processing for {len(dois_to_process)} DOIs...") # Updated print
     print("-" * 30)
 
-    extracted_articles = process_dois(dois_to_process, output_directory) # Pass output_directory
+    # Call the parallelized process_dois function
+    # You can adjust max_workers here if needed, e.g., process_dois(dois_to_process, output_directory, max_workers=10)
+    extracted_articles = process_dois(dois_to_process, output_directory)
 
     # output_filename = "articles_extracted.json" # Consider if this summary file is still needed/where to save it
     print("-" * 30)
@@ -765,7 +796,7 @@ def download_dois(proposed_dois: List[str], output_directory: str) -> None:
         #     json.dump(extracted_articles, f, ensure_ascii=False, indent=4)
         print(f"\n--- Processing Complete ---")
         success_count = sum(1 for doi, data in extracted_articles.items() if data.get("text") and len(data["text"]) >= 100 and "save_error" not in data)
-        total_processed = len(dois_to_process)
+        total_processed = len(dois_to_process) # Use the count of DOIs intended for processing
         print(f"Successfully extracted and saved text for {success_count} out of {total_processed} processed DOIs.")
     except TypeError as e:
          print(f"\n--- Processing Complete (with summary error) ---")
@@ -782,7 +813,9 @@ def download_dois(proposed_dois: List[str], output_directory: str) -> None:
         for doi, data in extracted_articles.items():
             source = data.get("source", "unknown")
             source_counts[source] = source_counts.get(source, 0) + 1
-        for source in sorted(source_counts.keys()):
+        # Sort sources for consistent output, handling potential None or non-string keys gracefully
+        sorted_sources = sorted(source_counts.keys(), key=lambda x: str(x))
+        for source in sorted_sources:
             count = source_counts[source]
             print(f"- {source}: {count}")
 
