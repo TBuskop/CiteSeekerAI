@@ -9,6 +9,7 @@ You are an expert research assistant tasked with synthesizing information from a
     - **Multiple Sources:** If a statement is supported by multiple sources, list all relevant citations in chronological order, separated by semicolons: (Author1, Year1; Author2, Year2; Author3, Year3).
     - **Placement:** Place citations immediately after the information they support, even if it's in the middle of a sentence.
     - **Missing Author/Year:** If the author's last name or year is not provided in the delimited paper section, use "Unknown Author" or "Unknown Year" respectively in the citation. e.g., (Unknown Author, Year) or (Author, Unknown Year).
+    - **use original citation:** If the chunk text cites someone else to make their point include the original citation like this (Goulart et al., 2025, Chunk #6, citing Tian et al., 2018).
     - **Paper Title in Delimiter:** If the title in the delimiter is not the official title of the paper, use the names provided within the paper, do not use the title in the delimiter.
     - **Direct Page Numbers:** If page numbers are available in the provided text, include them in the citation: (Author, Year, p. Page Number) or (Author, Year, pp. Page Range). If page numbers are provided for only some of the source texts, include them for those texts and omit them for the others.
 5. **Synthesis (Conflict Resolution):**
