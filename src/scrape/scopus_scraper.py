@@ -792,7 +792,7 @@ class ScopusScraper:
                     ]
                     
                     submit_clicked = False
-                    with self.page.expect_download() as download_info:
+                    with self.page.expect_download(timeout=60000 * 3) as download_info:
                         for selector in submit_selectors:
                             if self.page.is_visible(selector):
                                 logger.info(f"Clicking submit export button: {selector}")
