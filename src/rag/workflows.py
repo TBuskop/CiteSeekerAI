@@ -237,6 +237,8 @@ def run_query_mode(config_params: Dict[str, Any]):
         except Exception as e:
             print(f"Warning: Could not save final answer to file: {e}")
 
+        return final_answer
+
     except Exception as query_err:
          print(f"\n!!! An error occurred during query execution: {query_err}")
          traceback.print_exc()
