@@ -410,3 +410,8 @@ def find_relevant_dois_from_abstracts(
     print(relevant_dois)
     save_abstracts_to_file(final_unique_chunks, config["output_filename"])
     return relevant_dois
+
+def query_decomposition():
+    """Placeholder for query decomposition logic."""
+    # This function is a placeholder for future implementation of query decomposition logic.
+    pass
