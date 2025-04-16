@@ -240,6 +240,12 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
         f"If the context does not contain the answer, state that clearly.)"
     )
 
+    prompt_to_print = (
+        f"## User's Question:\n{query}\n\n"
+        f"## Context from Retrieved Documents:\n---\n{combined_context}\n---\n\n"
+        f"## Sources Available (Referenced in Context):\n{unique_reference_list_str}\n\n"
+    )
+
     # Estimate prompt tokens to calculate max answer tokens
     prompt_template = prompt.replace(combined_context, "{context}").replace(query, "{query}")
     prompt_base_tokens = count_tokens(prompt_template, model=model)
@@ -257,7 +263,7 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
     save_path = os.path.join(PROJECT_ROOT, 'data', 'output', 'final_prompt.txt')
     try:
         with open(save_path, 'w', encoding='utf-8') as f:
-            f.write(prompt)
+            f.write(prompt_to_print)
     except Exception as e:
         print(f"Warning: Could not write final_prompt.txt: {e}")
 

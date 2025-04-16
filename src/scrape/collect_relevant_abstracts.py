@@ -34,11 +34,12 @@ def extract_metadata(chunks: List[Dict]) -> List[Tuple[str, str, str]]:
         authors = chunk.get('authors', 'N/A')
         year = str(chunk.get('year', 'N/A'))
         doi = chunk.get('doi', 'N/A')
+        title = chunk.get('title', 'N/A')
 
         unique_key_doi = doi if doi and doi != 'N/A' else None
 
         if unique_key_doi:
-            info_tuple = (authors, year, doi)
+            info_tuple = (authors, year, doi, title)
             if info_tuple not in extracted_info:
                 extracted_info.add(info_tuple)
 
@@ -267,19 +268,25 @@ def display_results(final_chunks: List[Dict]) -> List[str]:
         return []
 
     print(f"\n--- Extracting Metadata from Final {len(final_chunks)} Chunks ---")
+    # Assuming extract_metadata now returns (authors, year, doi, title) tuples
     extracted_metadata = extract_metadata(final_chunks)
 
     if not extracted_metadata:
         print("No metadata could be extracted from the final retrieved chunks.")
         return []
 
-    print("\n{:<60} {:<6} {:<40}".format("Authors", "Year", "DOI"))
-    print("-" * 110)
+    # Adjust header and separator width
+    header_format = "{:<50} {:<6} {:<35} {:<60}"
+    separator_width = 50 + 6 + 35 + 60 + (3 * 1) # Widths + spaces
+    print("\n" + header_format.format("Authors", "Year", "DOI", "Title"))
+    print("-" * separator_width)
 
     list_of_dois = []
-    for authors, year, doi in extracted_metadata:
-        display_authors = authors if len(authors) <= 58 else authors[:55] + "..."
-        print("{:<60} {:<6} {:<40}".format(display_authors, year, doi))
+    for authors, year, doi, title in extracted_metadata:
+        display_authors = authors if len(authors) <= 48 else authors[:45] + "..."
+        display_title = title if len(title) <= 58 else title[:55] + "..."
+        # Adjust print format to match header
+        print(header_format.format(display_authors, year, doi, display_title))
         list_of_dois.append(doi)
 
     return list_of_dois
