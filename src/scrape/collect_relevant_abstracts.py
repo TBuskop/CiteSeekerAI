@@ -312,10 +312,17 @@ def save_abstracts_to_file(query,final_chunks: List[Dict], filename: str):
                 doi = chunk.get('doi', 'N/A')
                 doc_text = chunk.get('text', '')
 
-                # Get the best available score (rerank > rrf)
-                score = chunk.get('rerank_score', chunk.get('rrf_score'))
-                score_str = f"{score:.3f}" if score is not None else "N/A"
-                score_type = "Rerank" if 'rerank_score' in chunk else "RRF"
+                # Get the best available score (CE Prob > Rerank Logit > RRF)
+                score = chunk.get('ce_prob', chunk.get('rerank_score', chunk.get('rrf_score')))
+                score_str = f"{score:.3f}" if score is not None and score != -float('inf') else "N/A" # Handle -inf score
+
+                # Determine score type based on which key was found and valid
+                if 'ce_prob' in chunk and score != -float('inf'):
+                    score_type = "CE Prob" # Use CE Prob as the label
+                elif 'rerank_score' in chunk and score != -float('inf'):
+                     score_type = "Rerank" # Fallback label if old key exists
+                else:
+                    score_type = "RRF" # Default to RRF if no valid rerank score
 
                 abstract = 'N/A'
                 if doc_text and '\n' in doc_text:
@@ -334,7 +341,7 @@ def save_abstracts_to_file(query,final_chunks: List[Dict], filename: str):
                 elif doc_text:
                     abstract = doc_text.strip() # Use full text if no newline
 
-                outfile.write(f"--- Document {i+1} ({score_type} Score: {score_str}) ---\n") # Added score here
+                outfile.write(f"--- Document {i+1} ({score_type} Score: {score_str}) ---\n") # Updated score type label
                 outfile.write(f"Title: {title}\n")
                 outfile.write(f"Authors: {authors}\n")
                 outfile.write(f"Year: {year}\n")

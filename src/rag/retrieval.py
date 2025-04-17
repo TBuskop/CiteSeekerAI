@@ -214,7 +214,8 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
                                   if meta and fetched_id not in chunk_metadata_cache: # Ensure metadata is not None and not already cached
                                       # Find the original BM25 score for this ID
                                       original_bm25_score = next((s for id, s in bm25_results if id == fetched_id), None)
-                                      meta['bm25_score'] = original_bm25_score
+                                      # Ensure bm25_score is a float, default to 0.0 if None
+                                      meta['bm25_score'] = float(original_bm25_score) if original_bm25_score is not None else 0.0
                                       # Add placeholder vector scores for consistency if needed later
                                       meta['vector_distance'] = None
                                       meta['vector_similarity'] = None
@@ -250,77 +251,81 @@ def rerank_chunks(query: str, chunks: List[Dict],
                   model_name: Optional[str] = RERANKER_MODEL,
                   top_n: int = DEFAULT_RERANK_CANDIDATE_COUNT) -> List[Dict]:
     """
-    Re-ranks chunks using a CrossEncoder model based on relevance to the query.
+    Re-ranks chunks using a CrossEncoder model based on relevance to the query,
+    converting raw logits to calibrated probabilities, with smart pruning:
+      - Early-discard passages with low vector and BM25 scores.
+      - Dynamic k: start with 10, expand until confident or max.
     """
-    # Check if reranking is possible and requested
+    # Fallback if reranker unavailable
     if not model_name or not SENTENCE_TRANSFORMERS_AVAILABLE or not CrossEncoder or not chunks:
-        if model_name and not SENTENCE_TRANSFORMERS_AVAILABLE:
-             print("Info: Re-ranking skipped (sentence-transformers not installed).")
-        elif not model_name:
-             # print("Info: No reranker model specified, skipping re-ranking.") # Less verbose
-             pass
-        # Return top_n based on original order (e.g., RRF score) if reranking is skipped
-        # Ensure chunks have 'rrf_score' or handle missing key gracefully
         return sorted(chunks, key=lambda c: c.get('rrf_score', 0.0), reverse=True)[:top_n]
 
-    print(f"--- Re-ranking top {len(chunks)} candidates using {model_name} ---")
+    # Compute average BM25 score for pruning
+    bm25_scores = [c.get('bm25_score', 0.0) for c in chunks if 'bm25_score' in c]
+    avg_bm25    = sum(bm25_scores) / len(bm25_scores) if bm25_scores else 0.0
 
-    try:
-        # Load model from cache or instantiate
-        if model_name not in reranker_model_cache:
-            print(f"Loading re-ranker model: {model_name}...")
-            # Consider adding model_args={'device': 'cuda'} if GPU is available and desired
-            reranker_model_cache[model_name] = CrossEncoder(model_name) #, max_length=512) # Optional: set max_length
-            print("Re-ranker model loaded.")
-        model = reranker_model_cache[model_name]
+    # Prepare model
+    if model_name not in reranker_model_cache:
+        reranker_model_cache[model_name] = CrossEncoder(model_name)
+    model = reranker_model_cache[model_name]
 
-        # Prepare query-chunk pairs for the model
-        query_chunk_pairs = []
-        valid_chunks_for_reranking = [] # Store chunks that have valid text for indexing
-        chunk_indices_map = {} # Map pair index back to original chunk list index
+    import torch
+    # Dynamic k parameters
+    k       = min(10, len(chunks))
+    max_k   = len(chunks)
+    ce_thr  = 0.5
+    result  = []
 
-        for i, chunk in enumerate(chunks):
-            # Prioritize contextualized text, fall back to raw text
-            text_to_rank = chunk.get('contextualized_text', chunk.get('text', ''))
-            if text_to_rank and isinstance(text_to_rank, str) and text_to_rank.strip():
-                query_chunk_pairs.append([query, text_to_rank.strip()])
-                valid_chunks_for_reranking.append(chunk)
-                chunk_indices_map[len(query_chunk_pairs) - 1] = i # Store original index
+    # Pre-rank by RRF score
+    base_sorted = sorted(chunks, key=lambda c: c.get('rrf_score', 0.0), reverse=True)
+
+    while True:
+        candidates = base_sorted[:k]
+        pairs, idx_map = [], []
+
+        # Early‐discard low‐quality candidates
+        for i, chunk in enumerate(candidates):
+            # Use .get with defaults, and ensure comparison handles potential None (though less likely now)
+            vec_sim = chunk.get('vector_similarity', 0.0)
+            bm25_sc = chunk.get('bm25_score', 0.0)
+            # Add explicit checks for None before comparison, defaulting to a value that won't trigger discard if None
+            vec_sim_check = vec_sim if vec_sim is not None else 1.0 # Treat None as high similarity (won't discard)
+            bm25_sc_check = bm25_sc if bm25_sc is not None else avg_bm25 # Treat None as average score (won't discard)
+
+            if vec_sim_check < 0.2 and bm25_sc_check < avg_bm25:
+                chunk['ce_logit'] = -float('inf')
+                chunk['ce_prob']  = 0.0
             else:
-                print(f"Warning: Skipping chunk {chunk.get('chunk_id', f'index_{i}')} for re-ranking due to missing/empty text.")
-                # Mark skipped chunks with a very low score so they end up last
-                chunk['rerank_score'] = -float('inf')
+                text = chunk.get('contextualized_text', chunk.get('text', '')).strip()
+                if text:
+                    pairs.append([query, text])
+                    idx_map.append(i)
+                else:
+                    chunk['ce_logit'] = -float('inf')
+                    chunk['ce_prob']  = 0.0
 
+        if not pairs:
+            result = candidates
+            break
 
-        if not valid_chunks_for_reranking:
-            print("Warning: No valid chunks found to re-rank.")
-            # Return original chunks sorted by RRF score (or original order if no score)
-            return sorted(chunks, key=lambda c: c.get('rrf_score', 0.0), reverse=True)[:top_n]
+        # Predict logits and convert to probabilities
+        logits_tensor = torch.tensor(model.predict(pairs, show_progress_bar=False))
+        probs_tensor  = torch.sigmoid(logits_tensor)
+        logits, probs = logits_tensor.tolist(), probs_tensor.tolist()
 
-        # Get scores from the cross-encoder
-        # print(f"Predicting scores for {len(query_chunk_pairs)} pairs...") # Debug
-        scores = model.predict(query_chunk_pairs, show_progress_bar=False) # Set show_progress_bar=True for large batches
+        # Attach CE scores back to chunks
+        for j, cand_idx in enumerate(idx_map):
+            candidates[cand_idx]['ce_logit'] = float(logits[j])
+            candidates[cand_idx]['ce_prob']  = float(probs[j])
 
-        # Add scores back to the corresponding chunks in the original list
-        for pair_idx, score in enumerate(scores):
-            original_chunk_idx = chunk_indices_map[pair_idx]
-            # Ensure the key exists before assigning, though it should have been added if skipped
-            if original_chunk_idx < len(chunks):
-                 chunks[original_chunk_idx]['rerank_score'] = float(score) # Ensure it's a float
-            # else: This case should not happen if map is correct
+        # Re-sort by CE probability
+        candidates.sort(key=lambda c: c.get('ce_prob', 0.0), reverse=True)
+        result = candidates
 
-        # Sort the original chunk list by the new rerank_score (higher is better)
-        # Chunks skipped earlier will have -inf score and end up last.
-        reranked_chunks = sorted(chunks, key=lambda c: c.get('rerank_score', -float('inf')), reverse=True)
+        # Stop if we've considered all or are confident about top_n
+        if k >= max_k or (len(result) >= top_n and result[top_n-1]['ce_prob'] > ce_thr):
+            break
 
-        # Correct the print statement to use top_n
-        print(f"Re-ranking complete. Returning top {top_n} based on cross-encoder scores.")
-        return reranked_chunks[:top_n]
+        k = min(max_k, k * 2)
 
-    except Exception as e:
-        print(f"!!! Error during re-ranking with {model_name}: {e}")
-        print(traceback.format_exc())
-        print("Warning: Falling back to original chunk order (before re-ranking).")
-        # Fallback: return top_n based on the order they came in (likely RRF sorted)
-        # Ensure fallback also respects top_n
-        return sorted(chunks, key=lambda c: c.get('rrf_score', 0.0), reverse=True)[:top_n]
+    return result[:top_n]
