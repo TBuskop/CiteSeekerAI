@@ -137,7 +137,9 @@ def get_embedding(text: str,
             else:
                 # Explicitly do NOT add task_type for text-embedding-004 when using client.models.embed_content
                 if task_type:
-                    print(f"Info: task_type '{task_type}' ignored for model {api_model_name} with client.models.embed_content.")
+                    # do nothing
+                    pass
+                    # print(f"Info: task_type '{task_type}' ignored for model {api_model_name} with client.models.embed_content.")
 
 
             # --- Output Dimension Handling (Gemini specific) ---
