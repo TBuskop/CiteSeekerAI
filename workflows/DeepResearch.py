@@ -47,7 +47,7 @@ RELEVANT_CHUNKS_DB_PATH = os.path.join(BASE_DATA_DIR, "databases", "relevant_chu
 RELEVANT_CHUNKS_COLLECTION_NAME = "relevant_paper_chunks" # New collection name
 
 # Search String Generation Configuration
-INITIAL_RESEARCH_QUESTION = "Would the fast track approach to calculate the crop water footprint still work in a changing climate?" #"What are the effects of sea level rise on italy?"
+INITIAL_RESEARCH_QUESTION = "What are climate storylines and how can they be combined with the concept of multi-risk?" #"What are the effects of sea level rise on italy?"
 # Fallback query if generation fails
 # MANUAL_SCOPUS_QUERY =  "(\"virtual water\" OR \"water footprint\") AND trade AND (agriculture OR \"food security\")" # Example: Add your manual query here
 MANUAL_SCOPUS_QUERY = """
@@ -66,13 +66,13 @@ SCOPUS_YEAR_TO = None   # Example: Add config for year filter end
 FORCE_REINDEX_CHROMA = False # Set to True to re-index existing documents
 
 # Abstract Collection Configuration
-TOP_K_ABSTRACTS = 5
+TOP_K_ABSTRACTS = 10
 USE_RERANK_ABSTRACTS = True
 # Output filename - relative to where the script is run (project root assumed)
 RELEVANT_ABSTRACTS_OUTPUT_FILENAME = os.path.join(BASE_DATA_DIR, "output", "relevant_abstracts.txt")
 
 # --- Query Configuration (for final step) ---
-QUERY_TOP_K = 5 # Example: Number of results for the final query
+QUERY_TOP_K = 20 # Example: Number of results for the final query
 QUERY_RERANKER = config.RERANKER_MODEL # Use RAG config default
 QUERY_RERANK_CANDIDATES = config.DEFAULT_RERANK_CANDIDATE_COUNT # Use RAG config default
 QUERY_OUTPUT_FILENAME = os.path.join(BASE_DATA_DIR, "output", "final_answer.txt") # Output file for the final answer
@@ -88,7 +88,7 @@ os.makedirs(os.path.dirname(RELEVANT_CHUNKS_DB_PATH), exist_ok=True) # Added for
 
 # --- Step 1: Decompose query ---
 print("\n--- Step 1: Decomposing Research Question ---")
-decomposed_queries = query_decomposition(query=INITIAL_RESEARCH_QUESTION, number_of_sub_queries=3, model=config.SUBQUERY_MODEL)
+decomposed_queries, overall_goal = query_decomposition(query=INITIAL_RESEARCH_QUESTION, number_of_sub_queries=3, model=config.SUBQUERY_MODEL)
 if decomposed_queries:
     print("Decomposed queries:")
     for i, query in enumerate(decomposed_queries):
@@ -97,7 +97,14 @@ if decomposed_queries:
 combined_answers_output_path = os.path.join(BASE_DATA_DIR, "output", "combined_answers.txt")
 combined_answers = []
 
+# create a file to store the combined answers
+with open(combined_answers_output_path, "w", encoding="utf-8") as f:
+    f.write("Original Research Question: " + INITIAL_RESEARCH_QUESTION + "\n")
+    f.write(f"Refined Goal: {overall_goal}\n")
+    f.write("Decomposed Queries:\n\n")
+
 for i, query in enumerate(decomposed_queries):
+    
     # loop over the decomposed queries and generate answers
     print("\n--- Step 3: Finding Relevant DOIs from Abstracts ---")
     # This step also implicitly relies on search_success being True

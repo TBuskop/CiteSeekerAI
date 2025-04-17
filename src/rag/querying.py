@@ -340,13 +340,13 @@ def query_decomposition(query: str, number_of_sub_queries=5,model: str = SUBQUER
         # Attempt to parse the JSON
         parsed_response = json.loads(response_cleaned)
 
-        subqueries = parsed_response.get("subqueries", [])
+        subqueries, overall_goal = parsed_response.get("subqueries", []), parsed_response.get("overall_goal", None)
 
         if isinstance(subqueries, list) and all(isinstance(q, str) for q in subqueries) and subqueries:
             print(f"--- Generated {len(subqueries)} Subqueries ---")
             # for i, sq in enumerate(subqueries):
             #     print(f"  {i+1}. {sq}")
-            return subqueries
+            return subqueries, overall_goal
         else:
             print("Warning: LLM response did not contain a valid 'subqueries' list. Falling back to original query.")
             return [query]
