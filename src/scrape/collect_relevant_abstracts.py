@@ -292,7 +292,7 @@ def display_results(final_chunks: List[Dict]) -> List[str]:
     return list_of_dois
 
 
-def save_abstracts_to_file(final_chunks: List[Dict], filename: str):
+def save_abstracts_to_file(query,final_chunks: List[Dict], filename: str):
     """Saves the title, metadata, and abstract of the final chunks to a file."""
     if not final_chunks:
         print("\nNo abstracts to save.")
@@ -301,6 +301,8 @@ def save_abstracts_to_file(final_chunks: List[Dict], filename: str):
     print(f"\nSaving abstracts to {filename}...")
     try:
         with open(filename, "w", encoding="utf-8") as outfile:
+            # Write the query at the top of the file
+            outfile.write(f"Query: {query}\n\n")
             for i, chunk in enumerate(final_chunks):
                 title = chunk.get('title', 'N/A')
                 authors = chunk.get('authors', 'N/A')
@@ -310,23 +312,29 @@ def save_abstracts_to_file(final_chunks: List[Dict], filename: str):
                 doi = chunk.get('doi', 'N/A')
                 doc_text = chunk.get('text', '')
 
+                # Get the best available score (rerank > rrf)
+                score = chunk.get('rerank_score', chunk.get('rrf_score'))
+                score_str = f"{score:.3f}" if score is not None else "N/A"
+                score_type = "Rerank" if 'rerank_score' in chunk else "RRF"
+
                 abstract = 'N/A'
                 if doc_text and '\n' in doc_text:
                     try:
+                        # Assuming the first line is title/metadata and the rest is abstract
                         abstract_parts = doc_text.split('\n', 1)
                         if len(abstract_parts) > 1:
                             abstract = abstract_parts[1].strip()
                             if not abstract:
                                 abstract = 'N/A (Empty after title)'
                         else:
-                             abstract = doc_text.strip()
+                             abstract = doc_text.strip() # If only one line, treat it as abstract? Or N/A?
                     except Exception as split_err:
-                        print(f"  Warning: Could not split text for abstract extraction in chunk {i}: {split_err}")
-                        abstract = doc_text.strip()
+                        print(f"Warning: Could not split text for abstract extraction in chunk {i}: {split_err}")
+                        abstract = doc_text.strip() # Fallback to full text
                 elif doc_text:
-                    abstract = doc_text.strip()
+                    abstract = doc_text.strip() # Use full text if no newline
 
-                outfile.write(f"--- Document {i+1} ---\n")
+                outfile.write(f"--- Document {i+1} ({score_type} Score: {score_str}) ---\n") # Added score here
                 outfile.write(f"Title: {title}\n")
                 outfile.write(f"Authors: {authors}\n")
                 outfile.write(f"Year: {year}\n")
@@ -415,5 +423,5 @@ def find_relevant_dois_from_abstracts(
     relevant_dois = display_results(final_unique_chunks)
     print("\n--- Final DOIs ---")
     print(relevant_dois)
-    save_abstracts_to_file(final_unique_chunks, config["output_filename"])
+    save_abstracts_to_file(initial_query, final_unique_chunks, config["output_filename"])
     return relevant_dois
