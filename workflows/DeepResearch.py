@@ -49,7 +49,7 @@ RELEVANT_CHUNKS_DB_PATH = os.path.join(BASE_DATA_DIR, "databases", "relevant_chu
 RELEVANT_CHUNKS_COLLECTION_NAME = "relevant_paper_chunks" # New collection name
 
 # Search String Generation Configuration
-INITIAL_RESEARCH_QUESTION = "What are climate storylines and how can they be combined with the concept of multi-risk?" #"What are the effects of sea level rise on italy?"
+INITIAL_RESEARCH_QUESTION = "What are  climate storylines and how can they be combined with the concept of multi-risk?" #"What are the effects of sea level rise on italy?"
 # Fallback query if generation fails
 # MANUAL_SCOPUS_QUERY =  "(\"virtual water\" OR \"water footprint\") AND trade AND (agriculture OR \"food security\")" # Example: Add your manual query here
 MANUAL_SCOPUS_QUERY = """
@@ -68,13 +68,13 @@ SCOPUS_YEAR_TO = None   # Example: Add config for year filter end
 FORCE_REINDEX_CHROMA = False # Set to True to re-index existing documents
 
 # Abstract Collection Configuration
-TOP_K_ABSTRACTS = 30
+TOP_K_ABSTRACTS = 20
 USE_RERANK_ABSTRACTS = True
 # Output filename - relative to where the script is run (project root assumed)
 RELEVANT_ABSTRACTS_OUTPUT_FILENAME = os.path.join(BASE_DATA_DIR, "output", "relevant_abstracts.txt")
 
 # --- Query Configuration (for final step) ---
-QUERY_TOP_K = 60 # Example: Number of results for the final query
+QUERY_TOP_K = 10 # Example: Number of results for the final query
 QUERY_RERANKER = config.RERANKER_MODEL # Use RAG config default
 QUERY_RERANK_CANDIDATES = config.DEFAULT_RERANK_CANDIDATE_COUNT # Use RAG config default
 COMBINED_ANSWERS_OUTPUT_FILENAME = os.path.join(BASE_DATA_DIR, "output", "combined_answers.txt") # Output file for combined final answers
@@ -92,7 +92,7 @@ os.makedirs(QUERY_SPECIFIC_OUTPUT_DIR, exist_ok=True) # Added for per-query outp
 
 # --- Step 1: Decompose query ---
 print("\n--- Step 1: Decomposing Research Question ---")
-decomposed_queries, overall_goal = query_decomposition(query=INITIAL_RESEARCH_QUESTION, number_of_sub_queries=3, model=config.SUBQUERY_MODEL)
+decomposed_queries, overall_goal = query_decomposition(query=INITIAL_RESEARCH_QUESTION, number_of_sub_queries=5, model=config.SUBQUERY_MODEL)
 if decomposed_queries:
     print("Decomposed queries:")
     for i, query in enumerate(decomposed_queries):
