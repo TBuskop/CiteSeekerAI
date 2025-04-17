@@ -11,7 +11,7 @@ from rag.chroma_manager import get_chroma_collection
 from rag.bm25_manager import build_and_save_bm25_index, tokenize_text_bm25 # Import tokenizer if needed here
 from config import (
     DEFAULT_MAX_TOKENS,
-    DEFAULT_OVERLAP,
+    DEFAULT_CHUNK_OVERLAP,
     DEFAULT_TOTAL_CONTEXT_WINDOW,
     CHUNK_CONTEXT_MODEL
 )
@@ -118,7 +118,7 @@ def filter_files_for_processing(potential_files: List[str], db_path: str, collec
 # --- Document Processing (Chunking & Context) ---
 def index_document_phase1(document_path: str,
                           max_tokens: int = DEFAULT_MAX_TOKENS,
-                          overlap: int = DEFAULT_OVERLAP,
+                          overlap: int = DEFAULT_CHUNK_OVERLAP,
                           context_total_window: int = DEFAULT_TOTAL_CONTEXT_WINDOW,
                           add_context: bool = False # Flag to control context generation
                          ) -> List[Dict]:
@@ -223,7 +223,7 @@ def process_files_sequentially(files_to_process: List[str], add_context: bool) -
             processed_data = index_document_phase1(
                 document_path=file_path,
                 max_tokens=DEFAULT_MAX_TOKENS, # Use config defaults
-                overlap=DEFAULT_OVERLAP,
+                overlap=DEFAULT_CHUNK_OVERLAP,
                 context_total_window=DEFAULT_TOTAL_CONTEXT_WINDOW,
                 add_context=add_context # Pass the flag here
             )

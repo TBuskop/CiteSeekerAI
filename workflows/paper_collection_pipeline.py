@@ -33,8 +33,8 @@ ABSTRACT_COLLECTION_NAME = "abstracts"
 # --- Chunking DB Config ---
 CHUNK_DB_PATH = os.path.join(BASE_DATA_DIR, "databases", "full_text_chunks_db") # Centralized path
 CHUNK_COLLECTION_NAME = "paper_chunks_main"
-CHUNK_SIZE = 1000 # Default chunk size from chunk_new_dois
-CHUNK_OVERLAP = 150 # Default chunk overlap from chunk_new_dois
+CHUNK_SIZE = config.DEFAULT_MAX_TOKENS # Default chunk size from chunk_new_dois
+CHUNK_OVERLAP = config.DEFAULT_CHUNK_OVERLAP 
 # Embedding config (defaults from chunk_new_dois will be used if not overridden)
 # EMBED_BATCH_SIZE = 64
 # EMBED_DELAY = 1.0
@@ -43,17 +43,11 @@ RELEVANT_CHUNKS_DB_PATH = os.path.join(BASE_DATA_DIR, "databases", "relevant_chu
 RELEVANT_CHUNKS_COLLECTION_NAME = "relevant_paper_chunks" # New collection name
 
 # Search String Generation Configuration
-INITIAL_RESEARCH_QUESTION = "Which recent advancements in hydrodynamic and hydrological modeling improve the simulation of climate vulnerability for refugees and internally displaced persons in data-scarce regions?" #"What are the effects of sea level rise on italy?"
+INITIAL_RESEARCH_QUESTION = "What are climate storylines and how can they be combined with the concept of multi-risk?" #"What are the effects of sea level rise on italy?"
 # Fallback query if generation fails
 # MANUAL_SCOPUS_QUERY =  "(\"virtual water\" OR \"water footprint\") AND trade AND (agriculture OR \"food security\")" # Example: Add your manual query here
 MANUAL_SCOPUS_QUERY = """
-( flood* OR drought* OR "water scarcity" OR inundation OR hydro* )
-AND
-( model* OR simulat* OR assessment OR forecast* OR map* OR project* )
-AND
-( refugee* OR idp* OR "internally displaced" OR "displaced population*" )
-AND
-( "remote sensing" OR satellite* OR "earth observation" OR "machine learning" OR "data fusion" OR "data scarce" OR "data poor" OR ungauged )
+( "multi-risk" OR "multi risk" )
 """
 DEFAULT_SCOPUS_QUERY = "climate OR 'climate change' OR 'climate variability' AND robustness AND uncertainty AND policy AND decision AND making"
 SAVE_GENERATED_SEARCH_STRING = True # Whether to save the generated string to a file
@@ -74,10 +68,10 @@ USE_RERANK_ABSTRACTS = True
 RELEVANT_ABSTRACTS_OUTPUT_FILENAME = os.path.join(BASE_DATA_DIR, "output", "relevant_abstracts.txt")
 
 # --- Query Configuration (for final step) ---
-QUERY_TOP_K = 10 # Example: Number of results for the final query
+QUERY_TOP_K = 20 # Example: Number of results for the final query
 QUERY_RERANKER = config.RERANKER_MODEL # Use RAG config default
 QUERY_RERANK_CANDIDATES = config.DEFAULT_RERANK_CANDIDATE_COUNT # Use RAG config default
-QUERY_OUTPUT_FILENAME = os.path.join(BASE_DATA_DIR, "output", "final_relevant_chunks_answer.txt") # Output file for the final answer
+QUERY_OUTPUT_FILENAME = os.path.join(BASE_DATA_DIR, "output", "final_answer.txt") # Output file for the final answer
 
 # --- Ensure Directories Exist ---
 os.makedirs(FULL_TEXT_DIR, exist_ok=True)
@@ -200,7 +194,6 @@ process_folder_for_chunks(
     # embed_batch_size=EMBED_BATCH_SIZE,
     # embed_delay=EMBED_DELAY
 )
-
 
 print("\n--- Step 6: Collecting Relevant Chunks into Special Database ---")
 if relevant_doi_list:

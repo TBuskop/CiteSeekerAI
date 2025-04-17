@@ -1,6 +1,6 @@
 import hashlib
 import tiktoken
-from config import EMBEDDING_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_OVERLAP, CHAT_MODEL
+from config import EMBEDDING_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_CHUNK_OVERLAP, CHAT_MODEL
 
 # --- File Hashing ---
 def compute_file_hash(file_path: str) -> str:
@@ -36,7 +36,7 @@ def count_tokens(text: str, model: str = EMBEDDING_MODEL) -> int:
         return len(text.split())
 
 # --- Text Chunking ---
-def chunk_document_tokens(document: str, max_tokens: int = DEFAULT_MAX_TOKENS, overlap: int = DEFAULT_OVERLAP) -> list[tuple[str, int, int]]:
+def chunk_document_tokens(document: str, max_tokens: int = DEFAULT_MAX_TOKENS, overlap: int = DEFAULT_CHUNK_OVERLAP) -> list[tuple[str, int, int]]:
     """Splits a document into chunks based on token count with overlap."""
     if max_tokens <= 0: raise ValueError("max_tokens must be positive.")
     if overlap < 0: raise ValueError("overlap cannot be negative.")
