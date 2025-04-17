@@ -32,7 +32,7 @@ OUTPUT_EMBEDDING_DIMENSION = 768
 DEFAULT_TOP_K = 50
 
 # --- Re-ranker Configuration ---
-RERANKER_MODEL = 'cross-encoder/ms-marco-MiniLM-L-6-v2'
+RERANKER_MODEL = 'cross-encoder/ms-marco-MiniLM-L-12-v2'
 DEFAULT_RERANK_CANDIDATE_COUNT = 50
 
 # Other defaults (if needed)
