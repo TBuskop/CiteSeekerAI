@@ -4,14 +4,16 @@ import json
 import concurrent.futures
 from typing import List, Dict, Optional, Tuple
 import xml.etree.ElementTree as ET # <<< NEW: Import ElementTree
-
+import time
+from pathlib import Path # <<< NEW: Import Path
 
 import httpx
 import trafilatura
 import fitz  # PyMuPDF for PDF extraction
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, Cookie
 from playwright_stealth import stealth_sync
+
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 # <<< NEW: Define patterns for URLs that likely require Playwright >>>
@@ -37,6 +39,8 @@ DYNAMIC_URL_PATTERNS: List[str] = [
     r"https://(.*\.)?ascelibrary\.org/.*", # ascelibrary.org
     r"https://(.*\.)?mdpi\.com/.*", # MDPI
     r"https://(.*\.)?iwaponline\.com/.*", # iwaponline.com
+    r"https://(.*\.)?iopscience\.iop\.org/.*", # iopscience
+    r"perfdrive" # iopscience.com validation page
 ]
 
 ###############################
@@ -125,73 +129,177 @@ def extract_text_from_xml(xml_string: str) -> str:
         import traceback
         print(f"Unexpected error during XML body text extraction: {e}\n{traceback.format_exc()}")
         return ""
+    
+def get_spoof_cookies(domain: str) -> list[Cookie]:
+    """
+    Returns a list of common spoofed cookies for the specified domain.
+    """
+    return [
+        Cookie(name="sessionid", value="abcdef1234567890", domain=domain, path="/"),
+        Cookie(name="csrftoken", value="XYZ987ABC654", domain=domain, path="/"),
+        Cookie(name="CookieConsent", value="yes", domain=domain, path="/"),
+        Cookie(name="_ga", value="GA1.2.1234567890.1616161616", domain=domain, path="/"),
+        Cookie(name="_gid", value="GA1.2.0987654321.1717171717", domain=domain, path="/"),
+    ]
+
+COOKIE_FILE = Path("iop.json") # <<< CHANGED: Use Path object
 
 def fetch_with_playwright(url: str) -> str:
     """
-    Uses Playwright in headless mode with stealth modifications to load the URL,
-    waits until the network is idle, and returns the fully rendered HTML.
+    Loads *url* in a stealth‑configured Playwright browser,
+    persisting IOP Science / perfdrive cookies in ``iop.json``.
+    Determines headless mode based on IOP cookie file status.
+    Returns the rendered HTML.
     """
-    html_str = "" # Initialize html_str
+    html_str = ""
+    browser = None
+    context = None
+
     try:
         with sync_playwright() as p:
+            # ───────────────────────────────────────────────────────────────
+            # 1. Determine IOP state needs and headless mode
+            # ───────────────────────────────────────────────────────────────
+            needs_iop_state = any(x in url for x in ("iopscience", "perfdrive"))
+            storage_kwarg = {}
+            headless = True # Default to headless
+
+            if needs_iop_state:
+                if COOKIE_FILE.exists():
+                    try:
+                        # Check if the file is valid JSON
+                        with open(COOKIE_FILE, 'r') as f:
+                            json.load(f)
+                        storage_kwarg["storage_state"] = str(COOKIE_FILE)
+                        print(f"IOP state file found and seems valid: {COOKIE_FILE}. Will load state and run headless.")
+                        headless = True # Run headless if state file is valid
+                    except (json.JSONDecodeError, OSError) as e:
+                        print(f"IOP state file {COOKIE_FILE} exists but is invalid ({e}). Proceeding without state, running non-headless.")
+                        headless = False # Run non-headless if state file is invalid
+                else:
+                    print(f"IOP state file not found: {COOKIE_FILE}. Proceeding without state, running non-headless.")
+                    headless = False # Run non-headless if state file is missing
+
+            # ───────────────────────────────────────────────────────────────
+            # 2. Launch Browser
+            # ───────────────────────────────────────────────────────────────
+            print(f"Launching Chromium (headless={headless})...")
             browser = p.chromium.launch(
-                headless=True,
-                args=["--disable-blink-features=AutomationControlled"]
+                headless=headless, # <<< CHANGED: Use determined headless value
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-infobars",
+                ],
             )
+
+            # ───────────────────────────────────────────────────────────────
+            # 3. Create Context (with or without storage_state)
+            # ───────────────────────────────────────────────────────────────
+            print("Creating browser context...")
             context = browser.new_context(
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/105.0.5195.102 Safari/537.36"
-                )
+                    "Chrome/105.0.5195.102 Safari/537.36" # Consider updating UA periodically
+                ),
+                locale="nl-NL",
+                timezone_id="Europe/Amsterdam",
+                viewport={"width": 1280, "height": 800},
+                geolocation={"latitude": 52.1326, "longitude": 5.2913},
+                permissions=["geolocation"],
+                **storage_kwarg, # Pass storage_state if set
             )
+            if storage_kwarg:
+                 print(f"Loaded stored IOP state from {COOKIE_FILE}")
+            print("Context created.")
+
+
+            # ───────────────────────────────────────────────────────────────
+            # 4. Add Spoof Cookies if State Wasn't Loaded
+            # ───────────────────────────────────────────────────────────────
+            if not storage_kwarg:
+                # Use the original URL for domain extraction before potential modification
+                domain_url = url.replace("#perfdrive", "") # Ensure we get the base domain
+                domain = domain_url.split("/")[2]
+                print(f"Adding spoof cookies for domain: {domain}")
+                context.add_cookies(get_spoof_cookies(domain))
+
+            # ───────────────────────────────────────────────────────────────
+            # 5. Create Page, Apply Stealth, Navigate, Extract
+            # ───────────────────────────────────────────────────────────────
             page = context.new_page()
-            stealth_sync(page)  # Apply stealth modifications
+            print("Applying stealth...")
+            stealth_sync(page)
+
+            # Pick the right body selector and adjust URL if needed
+            effective_url = url # Start with the original URL
+            if "iopscience" in url or "perfdrive" in url:
+                text_selector = 'div[itemprop="articleBody"]'
+                # Modify the URL *after* selector logic if needed
+                url = url.replace("#perfdrive", "")
+            elif "elsevier" in url or "sciencedirect" in url:
+                text_selector = "div.Body"
+            elif "wiley" in url:
+                text_selector = "section.article-section__full"
+            elif "ascelibrary" in url:
+                text_selector = "section#bodymatter"
+            elif "mdpi" in url:
+                text_selector = "div.html-body"
+            elif "iwaponline" in url:
+                text_selector = "div.article-body"
+            elif "tandfonline" in url:
+                text_selector = "article.article"
+
+            print(f"Fetching URL via Playwright (headless={headless}): {effective_url}")
+            # Increased timeout slightly, kept networkidle
+            page.goto(effective_url)
+            # Consider adjusting sleep if needed, especially for non-headless
+            if headless:
+                sleep_duration = 2
+            else:
+                sleep_duration = 5 # longer wait to allow for captcha
+            print(f"Waiting {sleep_duration}s after navigation...")
+            time.sleep(sleep_duration)
+
             try:
-                # check if url contains elsevier or sciencedirect
-                if "elsevier" in url or "sciencedirect" in url:
-                    text_selector = 'div.Body'
-                elif "wiley" in url:
-                    text_selector = 'section.article-section__full'
-                elif "ascelibrary" in url:
-                    text_selector = 'section#bodymatter'
-                elif "mdpi" in url:
-                    text_selector = 'div.html-body'
-                elif "iwaponline" in url:
-                    text_selector = 'div.article-body'
-                elif "tandfonline" in url:
-                    text_selector = "article.article"
+                print(f"Attempting to extract text using selector: '{text_selector}'")
+                html_str = (
+                    f"<html><body>{page.locator(text_selector).inner_text()}</body></html>"
+                )
+                print("Successfully extracted text content via selector.")
+            except Exception as e_extract:
+                print(f"Failed to extract text with selector '{text_selector}': {e_extract}. Falling back to full page content.")
+                html_str = page.content()
 
+            # ───────────────────────────────────────────────────────────────
+            # 6. Persist cookies back to disk if this was an IOP visit
+            # ───────────────────────────────────────────────────────────────
+            if needs_iop_state:
+                print(f"Saving updated state to {COOKIE_FILE}...")
+                context.storage_state(path=str(COOKIE_FILE)) # Use str() for path object
+                print(f"Successfully saved state to {COOKIE_FILE}")
 
-                print(f"Fetching URL via Playwright (headless browser): {url}")
-                page.goto(url, timeout=30000, wait_until='networkidle')
-                try:
-                    print(f"Found content in selector: {text_selector}")
-                    html_str = page.locator(text_selector).inner_text()
-                    # wrap in html tags to ensure valid HTML
-                    html_str = f"<html><body>{html_str}</body></html>"
-                    print(f"Fetched content from selector: {text_selector}")
-                except:
-                    html_str = page.content()
-            except Exception as e:
-                print(f"Error in Playwright fetch for {url}: {e}")
-                try:
-                    html_str = page.content()
-                except Exception as page_content_error:
-                    print(f"Could not get page content after Playwright error for {url}: {page_content_error}")
-                    html_str = "" # Ensure it's empty on failure
-            finally:
-                try:
-                    context.close()
-                except Exception as ctx_close_err:
-                    print(f"Error closing Playwright context for {url}: {ctx_close_err}")
-                try:
-                    browser.close()
-                except Exception as browser_close_err:
-                    print(f"Error closing Playwright browser for {url}: {browser_close_err}")
+            # ───────────────────────────────────────────────────────────────
+            # 7. Cleanup (within try block before exception handling)
+            # ───────────────────────────────────────────────────────────────
+            print("Closing context and browser...")
+            context.close()
+            context = None # Prevent use in finally if closed successfully
+            browser.close()
+            browser = None # Prevent use in finally if closed successfully
+
     except Exception as e:
-        print(f"General Playwright error for {url}: {e}")
-        html_str = "" # Ensure it's empty on failure
+        print(f"Playwright error for {url}: {e}")
+        import traceback
+        traceback.print_exc() # Print full traceback for debugging
+    finally:
+        # Ensure resources are closed even if errors occurred mid-process
+        if context:
+            print("Closing context due to error or incomplete exit...")
+            context.close()
+        if browser:
+            print("Closing browser due to error or incomplete exit...")
+            browser.close()
 
     return html_str
 
@@ -376,6 +484,8 @@ def _get_url_metadata(url: str, headers: Dict[str, str]) -> Optional[Dict[str, s
         head_resp = httpx.head(url, follow_redirects=True, timeout=20, headers=headers)
         # head_resp.raise_for_status()
         final_url = str(head_resp.url)
+        if "perfdrive" in final_url:
+            final_url = url + "#perfdrive" # Reset to original URL if it resolves to a validation page
         content_type = head_resp.headers.get("content-type", "").lower()
         print(f"URL resolved to: {final_url}, Content-Type: {content_type}")
         return {"final_url": final_url, "content_type": content_type}
@@ -637,25 +747,12 @@ def resolve_doi(doi: str) -> Optional[str]:
         # response.raise_for_status()
 
         final_url = str(response.url)
+        if "perfdrive" in final_url:
+            final_url = doi_url # Reset to original DOI URL if it resolves to a validation page
         print(f"DOI {doi} resolved to intermediate/final URL: {final_url} (Status: {response.status_code})")
 
-        if "doi.org/" in final_url and doi in final_url:
-            print(f"Warning: DOI {doi} resolution might have stalled at {final_url}. Checking response body...")
-            try:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                link = soup.find('a', href=re.compile(r'https?://(?!doi\.org)'))
-                if link and link.get('href'):
-                    potential_url = link['href']
-                    print(f"Attempting fallback resolution via link found in body: {potential_url}")
-                    if potential_url.startswith('http'):
-                         return potential_url
-                    else:
-                         print(f"Fallback link '{potential_url}' is not a valid absolute URL.")
-            except Exception as parse_err:
-                print(f"Could not parse doi.org page for fallback link: {parse_err}")
-            return None
-        else:
-            return final_url
+    
+        return final_url
 
     except httpx.HTTPStatusError as e:
          failed_url = e.request.url
@@ -715,7 +812,7 @@ def _process_single_doi(doi: str, output_directory: str, min_text_length: int = 
     return doi, result_dict
 
 
-def process_dois(dois: List[str], output_directory: str, max_workers: int = 8) -> Dict[str, Dict[str, str]]:
+def process_dois(dois: List[str], output_directory: str, max_workers: int = 1) -> Dict[str, Dict[str, str]]:
     """
     Processes a list of DOIs in parallel: resolves each DOI, fetches its content dynamically,
     and returns a dictionary mapping each DOI to its extracted text and source.
