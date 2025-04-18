@@ -40,7 +40,9 @@ DYNAMIC_URL_PATTERNS: List[str] = [
     r"https://(.*\.)?mdpi\.com/.*", # MDPI
     r"https://(.*\.)?iwaponline\.com/.*", # iwaponline.com
     r"https://(.*\.)?iopscience\.iop\.org/.*", # iopscience
-    r"perfdrive" # iopscience.com validation page
+    r"perfdrive", # iopscience.com validation page,
+    r"annualreviews\.org/.*", # annualreviews.org,
+    r"ametsoc\.org/.*", # ametsoc.org,
 ]
 
 ###############################
@@ -249,6 +251,10 @@ def fetch_with_playwright(url: str) -> str:
                 text_selector = "div.article-body"
             elif "tandfonline" in url:
                 text_selector = "article.article"
+            elif "annualreviews" in url:
+                text_selector = "div.itemFullTextHtml"
+            elif "ametsoc" in url:
+                text_selector = "div#articleBody"
 
             print(f"Fetching URL via Playwright (headless={headless}): {effective_url}")
             # Increased timeout slightly, kept networkidle
@@ -343,7 +349,38 @@ def extract_meta_redirect(html: str, base_url: str) -> Optional[str]:
 ####################################
 # PDF Extraction with PyMuPDF
 ####################################
+def remove_references_section(text):
+    """
+    Attempts to remove text starting from the line containing the
+    'References' or 'Bibliography' section header onwards.
+    Uses a case-insensitive, multiline search.
+    """
+    # Pattern explanation:
+    # ^       - Matches the beginning of a line (due to re.MULTILINE)
+    # \s*     - Matches zero or more whitespace characters (spaces, tabs)
+    # (References|Bibliography) - Matches either "References" or "Bibliography"
+    # \s*     - Matches zero or more whitespace characters after the keyword
+    # $       - Matches the end of the line (due to re.MULTILINE)
+    pattern = r'^\s*(References|Bibliography|Acknowledgement|Acknowledgements)\s*$'
 
+    # Perform a multiline, case-insensitive search
+    match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+
+    if match:
+        # Found the start of the references section header line
+        refs_start_index = match.start()
+        found_header = match.group().strip() # Get the actual header found (e.g., "References")
+        print(f"[*] Found '{found_header}' section header at index {refs_start_index}. Removing text from this line onwards.")
+
+        # Return the text *before* the start of the matched line
+        # Slicing up to match.start() ensures the header line itself is removed
+        return text[:refs_start_index].strip()
+    else:
+        # Optional: Add a print statement for debugging if needed
+        # print("[*] Did not find a standard 'References' or 'Bibliography' section header line.")
+        print("[*] No references section header found. No text removed.")
+        return text # Return original text if no pattern matched
+    
 def extract_pdf_text(pdf_bytes: bytes) -> str:
     """
     Extracts text from PDF bytes using PyMuPDF.
@@ -781,6 +818,11 @@ def _process_single_doi(doi: str, output_directory: str, min_text_length: int = 
     if resolved_url:
         print(f"Resolved DOI {doi} to URL: {resolved_url}")
         article_data = fetch_article_from_url(resolved_url)
+        # remove everything after references in the article text
+        if article_data and isinstance(article_data.get("text"), str):
+            # references could be written in different ways, so we use regex to find them. They end with references\n or \nn
+            article_data["text"] = remove_references_section(article_data["text"])
+
 
         if article_data and isinstance(article_data.get("text"), str) and len(article_data["text"]) >= min_text_length:
             print(f"Successfully extracted text for DOI {doi} (Source: {article_data.get('source', 'N/A')})")
@@ -812,7 +854,7 @@ def _process_single_doi(doi: str, output_directory: str, min_text_length: int = 
     return doi, result_dict
 
 
-def process_dois(dois: List[str], output_directory: str, max_workers: int = 1) -> Dict[str, Dict[str, str]]:
+def process_dois(dois: List[str], output_directory: str, max_workers: int = 8) -> Dict[str, Dict[str, str]]:
     """
     Processes a list of DOIs in parallel: resolves each DOI, fetches its content dynamically,
     and returns a dictionary mapping each DOI to its extracted text and source.
