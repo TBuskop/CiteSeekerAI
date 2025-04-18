@@ -16,8 +16,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # Model Configuration (now hardcoded, not from env)
 EMBEDDING_MODEL = "text-embedding-004"
 CHUNK_CONTEXT_MODEL = "gemini-1.5-flash-8b"
-SUBQUERY_MODEL = "gemini-2.0-flash-lite" # gemini-2.5-pro-preview-03-25 (this is a paid one but the action is small so still chip)
-CHAT_MODEL = "gemini-2.0-flash-lite"  # gemini-2.5-pro-exp-03-25 (using free but good one for large requests)
+SUBQUERY_MODEL = "gemini-2.5-pro-preview-03-25" # gemini-2.5-pro-exp-03-25 # gemini-2.5-pro-preview-03-25 (this is a paid one but the action is small so still chip)
+CHAT_MODEL = "gemini-2.5-pro-preview-03-25" #"gemini-2.0-flash-lite"  # gemini-2.5-pro-exp-03-25 (using free but good one for large requests)
 
 # Chunking Parameters
 DEFAULT_MAX_TOKENS = 1000

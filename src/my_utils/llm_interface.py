@@ -223,7 +223,7 @@ def generate_llm_response(prompt: str, max_tokens: int, temperature: float = 0.7
     api_model_name = target_model if target_model.startswith("models/") else f"models/{target_model}"
 
     # Define supported models (adjust if necessary based on CHAT_MODEL/SUBQUERY_MODEL etc.)
-    supported_gemini_models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro", "gemini-1.0-pro", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-8b", "gemini-2.5-pro-exp-03-25"]
+    supported_gemini_models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro", "gemini-1.0-pro", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-8b", "gemini-2.5-pro-exp-03-25", "gemini-2.5-pro-preview-03-25"]
     # Extract base model name for check
     base_model_name = api_model_name.split('/')[-1]
 
