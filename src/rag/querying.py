@@ -195,6 +195,7 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
         "gemini-pro": 30720, "gemini-1.0-pro": 30720,
         "gpt-4": 8000, "gpt-4o": 128000, "gpt-3.5-turbo": 16000,
         "gemini-2.5-pro-exp-03-25": 1000000,
+        "gemini-2.5-pro-preview-03-25": 1000000,
         # Add other models used
     }
     # Clean model name for lookup
