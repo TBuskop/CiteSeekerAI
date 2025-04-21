@@ -37,8 +37,8 @@ RERANKER_MODEL = 'cross-encoder/ms-marco-MiniLM-L-12-v2'
 DEFAULT_RERANK_CANDIDATE_COUNT = 50
 
 # Other defaults (if needed)
-DEFAULT_EMBED_BATCH_SIZE = 50
-DEFAULT_EMBED_DELAY = 25
+DEFAULT_EMBED_BATCH_SIZE = 100 # max 100
+DEFAULT_EMBED_DELAY = 0
 DEFAULT_CHROMA_COLLECTION_NAME = "rag_chunks_hybrid_default"
 
 # --- Validate Essential Config ---

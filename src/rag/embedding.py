@@ -11,16 +11,17 @@ from config import EMBEDDING_MODEL, OUTPUT_EMBEDDING_DIMENSION
 # --- Add default values from config for fallback ---
 from config import DEFAULT_EMBED_BATCH_SIZE, DEFAULT_EMBED_DELAY
 
-# --- Google API Exceptions ---
+# --- Google API Exceptions & Types ---
 try:
     from google.api_core import exceptions as google_exceptions
-    # Import genai directly if needed for batch calls within this module
-    from google import genai
-    from google.genai.types import EmbedContentConfig
+    from google import genai # Import genai directly
+    from google.genai.types import EmbedContentConfig # Import EmbedContentConfig
+    EMBEDDING_IMPORTS_OK = True # Flag indicating successful import here
 except ImportError:
-    google_exceptions = None # Define as None if google libs not installed
-    genai = None
-    EmbedContentConfig = None
+    google_exceptions = None
+    genai = None # Set to None on failure
+    EmbedContentConfig = None # Set to None on failure
+    EMBEDDING_IMPORTS_OK = False # Flag import failure
 
 
 # --- Find Chunks Needing Embedding ---
@@ -152,9 +153,14 @@ def generate_embeddings_in_batches(
         rate_limit_hit = False
 
         try:
-            # Use Gemini's batch embed_content if available and configured
-            # Check the passed client object directly
-            if "embedding" in EMBEDDING_MODEL and GOOGLE_GENAI_AVAILABLE and isinstance(client, genai.Client) and EmbedContentConfig:
+            # Check conditions for using Gemini batch embedding more robustly
+            # Use EMBEDDING_IMPORTS_OK to ensure genai and EmbedContentConfig were imported in *this* module
+            is_gemini_batch_possible = False # Default to false
+            # Check imports succeeded before attempting isinstance
+            if EMBEDDING_IMPORTS_OK and "embedding" in EMBEDDING_MODEL and isinstance(client, genai.Client):
+                 is_gemini_batch_possible = True
+
+            if is_gemini_batch_possible:
                  api_model_name = EMBEDDING_MODEL if EMBEDDING_MODEL.startswith("models/") else f"models/{EMBEDDING_MODEL}"
                  task_type_api = "RETRIEVAL_DOCUMENT" # Default for embedding stored chunks
                  embed_config_args = {'task_type': task_type_api}
@@ -189,25 +195,31 @@ def generate_embeddings_in_batches(
                      for chunk_id in batch_ids_prepared: all_failed_ids.add(chunk_id)
 
             else:
-                 # Fallback to iterating if not using Gemini batch or if needed for other models
-                 # Check the passed client object for the warning message
-                 if not isinstance(client, genai.Client):
-                     print("Warning: Gemini client not available/passed correctly. Using iterative embedding calls within batch.")
+                 # Fallback to iterating: Provide a more specific warning
+                 warning_reason = ""
+                 if "embedding" not in EMBEDDING_MODEL:
+                     warning_reason = "Not a Gemini embedding model configured."
+                 elif not EMBEDDING_IMPORTS_OK:
+                     warning_reason = "Required Google GenAI libraries (genai, types) failed to import in embedding module."
+                 # Check client type again, adding check for genai being None
+                 elif not genai or not isinstance(client, genai.Client):
+                      warning_reason = f"Passed client object is not a valid genai.Client instance (genai loaded: {genai is not None}, client type: {type(client)})."
                  else:
-                     print("Warning: Not a Gemini embedding model or config issue. Using iterative embedding calls within batch.")
+                      warning_reason = "Unknown reason." # Fallback
+
+                 print(f"Warning: Gemini batch embedding conditions not met ({warning_reason}). Using iterative embedding calls.")
 
                  for idx, text in enumerate(batch_texts_to_embed):
                      chunk_id = batch_ids_prepared[idx]
                      original_meta = batch_metadatas_prepared[idx]
                      # Call the single embedding function from llm_interface
-                     # Note: get_embedding still relies on the global client,
-                     # but this fallback path is less critical than the batch path.
-                     # Ideally, get_embedding would also accept the client.
+                     # Pass the client object to get_embedding
                      embedding_np = get_embedding(
                          text=text,
                          model=EMBEDDING_MODEL,
                          task_type="retrieval_document",
-                         embedding_dimension=OUTPUT_EMBEDDING_DIMENSION
+                         embedding_dimension=OUTPUT_EMBEDDING_DIMENSION,
+                         client=client # Pass the client received by this function
                      )
                      if embedding_np is not None and embedding_np.size > 0:
                          batch_embeddings_ok.append(embedding_np.tolist())

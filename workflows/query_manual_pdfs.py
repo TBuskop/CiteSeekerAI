@@ -22,7 +22,8 @@ if parent_dir not in sys.path:
 # --- Local Imports (after path adjustment) ---
 # Use absolute imports assuming script is run from parent directory
 import config # General configuration (assuming it's in the parent dir added to sys.path)
-from src.my_utils import llm_interface # API client initialization and calls
+# Import initialize_clients specifically
+from src.my_utils.llm_interface import initialize_clients
 # --- Import the new workflows module ---
 from src.rag import workflows
 # --- Add ChromaDB Client import for direct check ---
@@ -92,9 +93,8 @@ def main(config_params: Optional[Dict[str, Any]] = None):
 
     try:
         print(f"Initializing API clients...")
-        llm_interface.initialize_clients()
-        # Store the initialized client locally
-        initialized_client = llm_interface.gemini_client
+        # Call initialize_clients and capture the returned client
+        initialized_client = initialize_clients()
         if not initialized_client:
              print("Warning: Gemini client initialization might have failed. Check API keys/config.")
 

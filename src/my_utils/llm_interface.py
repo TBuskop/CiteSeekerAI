@@ -46,8 +46,10 @@ gemini_client: Optional[genai.Client] = None
 # --- REMOVE Global configuration flag ---
 # gemini_configured_successfully: bool = False
 
+_GEMINI_CLIENT_WARNING_PRINTED = False  # track if warning printed
+
 def initialize_clients():
-    """Initializes API clients based on config keys."""
+    """Initializes API clients based on config keys. Returns the Gemini client."""
     global gemini_client
     gemini_client = None # Reset client
     initialization_successful = False # Track success locally
@@ -80,13 +82,15 @@ def initialize_clients():
     else:
         print("DEBUG (llm_interface.initialize_clients): Client is NOT a valid genai.Client instance after initialization attempt.")
     # --- End Debugging ---
+    return gemini_client
 
 
 # --- Embedding Function ---
 def get_embedding(text: str,
                   model: str = EMBEDDING_MODEL,
                   embedding_dimension: Optional[int] = OUTPUT_EMBEDDING_DIMENSION,
-                  task_type: Optional[str] = "retrieval_document" # Default task type
+                  task_type: Optional[str] = "retrieval_document", # Default task type
+                  client: Optional[Any] = None # <<< Add optional client parameter
                  ) -> Optional[np.ndarray]:
     """
     Generates an embedding for the given text using the specified model.
@@ -96,6 +100,7 @@ def get_embedding(text: str,
         model: The embedding model name (e.g., "models/embedding-001", "models/text-embedding-004").
         embedding_dimension: Optional dimension for the output embedding (supported by some models).
         task_type: The intended task for the embedding (e.g., "retrieval_document", "retrieval_query").
+        client: Optional client instance to use for API calls.
 
     Returns:
         A numpy array representing the embedding, or None if an error occurs.
@@ -112,9 +117,29 @@ def get_embedding(text: str,
         is_gemini_model = any(m in model_lower for m in ["embedding-001", "text-embedding-004"])
 
         if is_gemini_model:
-            # --- Check the client instance ---
-            if not GOOGLE_GENAI_AVAILABLE or not isinstance(gemini_client, genai.Client):
-                raise RuntimeError("Google GenAI client not available or not initialized correctly.")
+            # --- Use the passed client if available, otherwise fallback to global ---
+            active_client = client if client is not None else gemini_client
+
+            # --- Check the active client instance ---
+            global _GEMINI_CLIENT_WARNING_PRINTED
+            # Ensure genai is available for isinstance check
+            genai_module = None
+            if GOOGLE_GENAI_AVAILABLE:
+                try:
+                    # Ensure genai is imported in this scope if needed for check
+                    if 'google.genai' in sys.modules:
+                         genai_module = sys.modules['google.genai']
+                    else:
+                         import google.genai as genai_module
+                except ImportError:
+                     pass # genai_module remains None
+
+            # Perform the check using the loaded module and active_client
+            if not GOOGLE_GENAI_AVAILABLE or not genai_module or not isinstance(active_client, genai_module.Client):
+                if not _GEMINI_CLIENT_WARNING_PRINTED:
+                    print(f"Warning: Google GenAI client not valid or available (Checked type: {type(active_client)}). Skipping embedding.")
+                    _GEMINI_CLIENT_WARNING_PRINTED = True
+                return None
 
             # Ensure model name has 'models/' prefix if not already present
             api_model_name = model if model.startswith("models/") else f"models/{model}"
@@ -152,9 +177,9 @@ def get_embedding(text: str,
                 kwargs['config'] = EmbedContentConfig(**embed_config_args)
 
 
-            # --- Make the Gemini API Call using client.models.embed_content ---
-            # print(f"DEBUG: Calling client.models.embed_content with args: {kwargs}") # Debug
-            response = gemini_client.models.embed_content(**kwargs) # Use the client instance method
+            # --- Make the Gemini API Call using the active_client --- <<< Use active_client
+            # print(f"DEBUG: Calling active_client.models.embed_content with args: {kwargs}") # Debug
+            response = active_client.models.embed_content(**kwargs)
 
             # --- Parse the Gemini Response ---
             # --- MODIFICATION START: Correctly handle EmbedContentResponse ---

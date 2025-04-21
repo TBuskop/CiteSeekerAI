@@ -23,6 +23,14 @@ from src.rag import embedding # Embed mode logic
 from src.rag import querying # Query modes logic
 import chromadb # Direct ChromaDB client import for checks
 
+# --- Add top-level genai import for consistent type checking ---
+try:
+    import google.genai as genai
+    GENAI_TYPES_AVAILABLE = True
+except ImportError:
+    genai = None # Define as None if import fails
+    GENAI_TYPES_AVAILABLE = False
+
 # --- Mode Execution Logic (Moved from main.py) ---
 
 def run_index_mode(config_params: Dict[str, Any]):
@@ -85,6 +93,15 @@ def run_index_mode(config_params: Dict[str, Any]):
 def run_embed_mode(config_params: Dict[str, Any], client: Optional[Any]):
     """Handles the logic for the 'embed' mode using a config dictionary."""
     print("--- Running Embed Mode (Phase 2) ---")
+    # Preliminary checks for Gemini SDK and client
+    try:
+        import google.genai
+    except ImportError:
+        print("Error: Google Generative AI SDK not installed. Please install 'google-generativeai' to use embeddings.")
+        return
+    if client is None:
+        print(f"Error: Gemini client not initialized. Ensure GEMINI_API_KEY is set and valid in config.")
+        return
     db_path = config_params.get('db_path', './rag_db')
     collection_name = config_params.get('collection_name', config.DEFAULT_CHROMA_COLLECTION_NAME)
 
@@ -94,13 +111,14 @@ def run_embed_mode(config_params: Dict[str, Any], client: Optional[Any]):
 
     if any(m in model_name_lower for m in ["embedding-001", "text-embedding-004"]):
         provider = "Gemini"
-        # Use the passed client for the check
-        if llm_interface.GOOGLE_GENAI_AVAILABLE and client:
+        # Use the top-level genai for consistent isinstance check
+        if GENAI_TYPES_AVAILABLE and llm_interface.GOOGLE_GENAI_AVAILABLE and isinstance(client, genai.Client):
             client_ok = True
+        elif not GENAI_TYPES_AVAILABLE:
+             print("Warning: google.genai library not found, cannot verify client type for Gemini model.")
 
     if not client_ok:
-        print(f"\nError: {provider} client needed for embedding model '{config.EMBEDDING_MODEL}' is not available or not initialized.")
-        print("Please ensure the required API key is set and the client was initialized successfully.")
+        print(f"\nError: {provider} client needed for embedding model '{config.EMBEDDING_MODEL}' is not available or not initialized correctly.")
         return
 
     try:
