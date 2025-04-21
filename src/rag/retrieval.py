@@ -6,7 +6,7 @@ from typing import List, Dict, Tuple, Optional, Any
 from rag.chroma_manager import get_chroma_collection
 from rag.bm25_manager import load_bm25_index, tokenize_text_bm25, RANK_BM25_AVAILABLE, BM25Okapi
 from my_utils.llm_interface import get_embedding
-from config import EMBEDDING_MODEL, RERANKER_MODEL, DEFAULT_RERANK_CANDIDATE_COUNT
+from config import EMBEDDING_MODEL, RERANKER_MODEL, DEFAULT_RERANK_CANDIDATE_COUNT, HYPE, HYPE_SUFFIX
 
 # --- Sentence Transformers Import ---
 try:
@@ -25,13 +25,14 @@ reranker_model_cache: Dict[str, Any] = {}
 def retrieve_chunks_vector(query: str, db_path: str, collection_name: str,
                            top_k: int, execution_mode: str = "query") -> List[dict]:
     """Retrieve top-K chunks from ChromaDB using vector similarity."""
+    
     if top_k <= 0: top_k = 1
     retrieved_chunks = []
-    print(f"DEBUG (retrieve_chunks_vector): Retrieving top {top_k} for query: '{query[:50]}...'") # Add log
+    print(f"DEBUG (retrieve_chunks_vector): Retrieving top {top_k} from '{collection_name}' for query: '{query[:50]}...'")
     try:
         # Get collection with appropriate embedding function behavior for query mode
         collection = get_chroma_collection(db_path, collection_name, execution_mode=execution_mode)
-        print(f"DEBUG (retrieve_chunks_vector): Collection '{collection_name}' obtained.") # Add log
+        print(f"DEBUG (retrieve_chunks_vector): Collection '{collection_name}' obtained.")
 
         # Embed the query using the llm_interface
         query_vec = get_embedding(query, model=EMBEDDING_MODEL, task_type="retrieval_query")
@@ -46,7 +47,7 @@ def retrieve_chunks_vector(query: str, db_path: str, collection_name: str,
              return []
 
         # Query ChromaDB
-        print(f"DEBUG (retrieve_chunks_vector): Querying ChromaDB collection '{collection_name}'...") # Add log
+        print(f"DEBUG (retrieve_chunks_vector): Querying ChromaDB collection '{collection_name}'...")
         # It implicitly searches only chunks that have embeddings.
         results = collection.query(
             query_embeddings=[query_vec.tolist()],
@@ -100,6 +101,11 @@ def retrieve_chunks_vector(query: str, db_path: str, collection_name: str,
 # --- BM25 Retrieval ---
 def retrieve_chunks_bm25(query: str, db_path: str, collection_name: str, top_k: int) -> List[Tuple[str, float]]:
     """Retrieve top-K chunk IDs and scores using BM25."""
+    # Append suffix if HYPE mode is enabled
+    effective_collection_name = f"{collection_name}{HYPE_SUFFIX}" if HYPE else collection_name
+    if HYPE:
+        print(f"Info: retrieve_chunks_bm25 using Hype collection '{collection_name}'")
+
     if not RANK_BM25_AVAILABLE: return []
     if top_k <= 0: top_k = 1
 
@@ -145,6 +151,9 @@ def retrieve_chunks_bm25(query: str, db_path: str, collection_name: str, top_k: 
 def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str, float]],
                         db_path: str, collection_name: str, execution_mode: str = "query", k_rrf: int = 60) -> List[Dict]:
     """Combines vector and BM25 results using Reciprocal Rank Fusion (RRF)."""
+    # Determine effective collection name based on HYPE flag
+    effective_collection_name = f"{collection_name}{HYPE_SUFFIX}" if HYPE else collection_name
+
     combined_scores: Dict[str, float] = {}
     chunk_metadata_cache: Dict[str, Dict] = {} # Cache metadata keyed by chunk_id
 
@@ -242,6 +251,31 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
 
     # Sort the final list by RRF score descending
     final_results_list.sort(key=lambda c: c.get('rrf_score', 0.0), reverse=True)
+
+    # Enrich metadata when working on the HyPE embeddings collection
+    # Check if the *effective* name used ends with the HYPE suffix
+    if effective_collection_name.endswith(HYPE_SUFFIX):
+        collection_name_metadata = effective_collection_name.replace(HYPE_SUFFIX, "") # Remove suffix for metadata
+        try:
+            source_col = get_chroma_collection(db_path, collection_name_metadata, execution_mode=execution_mode)
+            doi_list = [m.get('original_chunk_id') for m in final_results_list if m.get('original_chunk_id')]
+            doi_list += [m.get('doi') for m in final_results_list if m.get('doi')]
+            doi_list = np.unique(doi_list).tolist() # Remove duplicates
+
+            if doi_list:
+                fetched = source_col.get(ids=doi_list, include=['metadatas'])
+                id_to_meta = dict(zip(fetched.get('ids', []), fetched.get('metadatas', [])))
+                for m in final_results_list:
+                    doi = m.get('doi')
+                    if doi == None:
+                        doi = m.get('original_chunk_id')
+                    src = id_to_meta.get(doi)
+                    if src:
+                        for field in ['authors', 'year', 'title', 'source_title', 'cited_by']:
+                            if field in src:
+                                m[field] = src[field]
+        except Exception as e:
+            print(f"Warning: Could not enrich metadata for HyPE entries: {e}")
 
     return final_results_list
 

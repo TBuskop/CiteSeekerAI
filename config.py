@@ -16,9 +16,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # Model Configuration (now hardcoded, not from env)
 EMBEDDING_MODEL = "text-embedding-004"
 CHUNK_CONTEXT_MODEL = "gemini-1.5-flash-8b"
-SUBQUERY_MODEL = "gemini-2.5-pro-exp-03-25" # gemini-2.5-pro-exp-03-25 # gemini-2.5-pro-preview-03-25 (this is a paid one but the action is small so still chip)
+SUBQUERY_MODEL = "gemini-2.0-flash-lite" # gemini-2.5-pro-exp-03-25 # gemini-2.5-pro-preview-03-25 (this is a paid one but the action is small so still chip)
 SUBQUERY_MODEL_SIMPLE = "gemini-2.0-flash-lite" # gemini-2.5-pro-exp-03-25 # gemini-2.5-pro-preview-03-25 (this is a paid one but the action is small so still chip)
-CHAT_MODEL = "gemini-2.5-pro-exp-03-25" #"gemini-2.0-flash-lite"  # gemini-2.5-pro-exp-03-25 (using free but good one for large requests)
+CHAT_MODEL = "gemini-2.0-flash-lite" #"gemini-2.0-flash-lite"  # gemini-2.5-pro-exp-03-25 (using free but good one for large requests)
 
 # Chunking Parameters
 DEFAULT_MAX_TOKENS = 1000
@@ -31,6 +31,7 @@ OUTPUT_EMBEDDING_DIMENSION = 768
 
 # Query configuration
 DEFAULT_TOP_K = 50
+HYPE = True
 
 # --- Re-ranker Configuration ---
 RERANKER_MODEL = 'cross-encoder/ms-marco-MiniLM-L-12-v2'
@@ -40,6 +41,10 @@ DEFAULT_RERANK_CANDIDATE_COUNT = 50
 DEFAULT_EMBED_BATCH_SIZE = 100 # max 100
 DEFAULT_EMBED_DELAY = 0
 DEFAULT_CHROMA_COLLECTION_NAME = "rag_chunks_hybrid_default"
+# Suffix to append for HyPE collections
+HYPE_SUFFIX = "_hype"
+# Source abstracts collection for enriching Hype metadata
+HYPE_SOURCE_COLLECTION_NAME = os.getenv("HYPE_SOURCE_COLLECTION_NAME", "abstracts")
 
 # --- Validate Essential Config ---
 if not GEMINI_API_KEY:

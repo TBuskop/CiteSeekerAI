@@ -34,6 +34,8 @@ CSV_DIR = os.path.join(DOWNLOADS_DIR, "csv")
 # Abstract DB Config
 ABSTRACT_DB_PATH = os.path.join(BASE_DATA_DIR, "databases", "abstract_chroma_db")
 ABSTRACT_COLLECTION_NAME = "abstracts"
+# Dynamically choose hype or base collection
+ACTIVE_ABSTRACT_COLLECTION = f"{ABSTRACT_COLLECTION_NAME}{'_hype' if config.HYPE else ''}"
 # --- Chunking DB Config ---
 CHUNK_DB_PATH = os.path.join(BASE_DATA_DIR, "databases", "full_text_chunks_db") # Centralized path
 CHUNK_COLLECTION_NAME = "paper_chunks_main"
@@ -121,13 +123,16 @@ def process_subquery(query, query_index):
     print(f"[Query {query_index+1}] Finding relevant DOIs...")
     # Use a unique output filename for each query's relevant abstracts list
     relevant_abstracts_output_filename_i = os.path.join(QUERY_SPECIFIC_OUTPUT_DIR, f"relevant_abstracts_{query_index+1}.txt")
+    # Determine collection name, appending '_hype' if HYPE mode is on
+    active_collection = f"{ABSTRACT_COLLECTION_NAME}{'_hype' if config.HYPE else ''}"
     relevant_doi_list = find_relevant_dois_from_abstracts(
         initial_query=query,
         db_path=ABSTRACT_DB_PATH,
-        collection_name=ABSTRACT_COLLECTION_NAME,
+        collection_name=active_collection,
         top_k=TOP_K_ABSTRACTS,
         use_rerank=USE_RERANK_ABSTRACTS,
-        output_filename=relevant_abstracts_output_filename_i # Use unique filename
+        output_filename=relevant_abstracts_output_filename_i, # Use unique filename
+        use_hype=config.HYPE, # Pass HYPE flag to the function
     )
     print(f"[Query {query_index+1}] Found {len(relevant_doi_list)} relevant DOIs.")
 
@@ -155,8 +160,9 @@ def process_subquery(query, query_index):
         print(f"[Query {query_index+1}] Chunking complete.")
 
         print(f"[Query {query_index+1}] Collecting relevant chunks...")
+        # Use same active_collection when building relevant DB
         build_relevant_db(
-            relevant_doi_list=relevant_doi_list, # Use DOIs specific to this query
+            relevant_doi_list=relevant_doi_list,
             source_chunk_db_path=CHUNK_DB_PATH,
             source_chunk_collection_name=CHUNK_COLLECTION_NAME,
             abstract_db_path=ABSTRACT_DB_PATH,
@@ -185,7 +191,8 @@ def process_subquery(query, query_index):
             "output_filename": query_output_filename_i, # Use unique filename
             # Add other necessary parameters for run_query_mode if needed
             "subquery_model": config.SUBQUERY_MODEL,
-            "answer_model": config.CHAT_MODEL
+            "answer_model": config.CHAT_MODEL,
+            "use_hype": False, # Pass HYPE flag to the function
         }
         try:
             # Assuming run_query_mode writes to the unique file AND returns the answer string.

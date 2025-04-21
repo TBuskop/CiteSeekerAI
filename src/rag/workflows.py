@@ -15,6 +15,9 @@ if _PROJECT_ROOT not in sys.path:
 # --- Local Imports ---
 # Assume this file is run within the context where 'rag' package is accessible
 import config # General configuration
+from config import (
+    HYPE, HYPE_SUFFIX, HYPE_SOURCE_COLLECTION_NAME # Add HYPE_SUFFIX
+)
 from src.my_utils import llm_interface # API client initialization and calls
 from src.rag import chroma_manager # ChromaDB setup and interaction
 from src.rag import bm25_manager # BM25 setup and interaction
@@ -41,6 +44,8 @@ def run_index_mode(config_params: Dict[str, Any]):
     db_path = config_params.get('db_path', './rag_db')
     collection_name = config_params.get('collection_name', config.DEFAULT_CHROMA_COLLECTION_NAME)
     force_reindex = config_params.get('force_reindex', False)
+    # Determine effective collection name (no HYPE suffix for indexing raw chunks)
+    effective_collection_name = collection_name
     add_context = config_params.get('add_chunk_context', False) # Get the new flag
 
     potential_files = indexing.find_files_to_index(folder_path, document_path)
@@ -48,6 +53,7 @@ def run_index_mode(config_params: Dict[str, Any]):
 
     files_to_process, skipped_count = indexing.filter_files_for_processing(
         potential_files, db_path, collection_name, force_reindex
+        # Note: filter_files_for_processing likely uses the base name to check existence
     )
 
     if not files_to_process and not force_reindex:
@@ -56,8 +62,9 @@ def run_index_mode(config_params: Dict[str, Any]):
     elif not files_to_process and force_reindex:
         print("No new files found, but force_reindex is enabled. Will proceed to rebuild BM25 index from existing ChromaDB data.")
         try:
-            collection = chroma_manager.get_chroma_collection(db_path, collection_name, execution_mode="index")
-            indexing.rebuild_bm25_index_from_chroma(collection, db_path, collection_name)
+            # Use base name for getting collection to rebuild BM25
+            collection = chroma_manager.get_chroma_collection(db_path, effective_collection_name, execution_mode="index")
+            indexing.rebuild_bm25_index_from_chroma(collection, db_path, effective_collection_name)
         except Exception as db_err:
              print(f"!!! Error accessing ChromaDB or rebuilding BM25 index: {db_err}")
              traceback.print_exc()
@@ -74,12 +81,14 @@ def run_index_mode(config_params: Dict[str, Any]):
         print("No valid new chunks generated, but force_reindex is enabled. Rebuilding BM25 from existing data.")
 
     try:
-        collection = chroma_manager.get_chroma_collection(db_path, collection_name, execution_mode="index")
+        # Use base name for getting collection to update raw chunks
+        collection = chroma_manager.get_chroma_collection(db_path, effective_collection_name, execution_mode="index")
         if all_phase1_chunks:
              indexing.update_chromadb_raw_chunks(collection, all_phase1_chunks)
         else:
              print("Skipping ChromaDB upsert as no new chunks were generated.")
-        indexing.rebuild_bm25_index_from_chroma(collection, db_path, collection_name)
+        # Rebuild BM25 for the base collection
+        indexing.rebuild_bm25_index_from_chroma(collection, db_path, effective_collection_name)
     except Exception as db_bm25_err:
         print(f"!!! Error during ChromaDB update or BM25 build phase: {db_bm25_err}")
         traceback.print_exc()
@@ -93,6 +102,14 @@ def run_index_mode(config_params: Dict[str, Any]):
 def run_embed_mode(config_params: Dict[str, Any], client: Optional[Any]):
     """Handles the logic for the 'embed' mode using a config dictionary."""
     print("--- Running Embed Mode (Phase 2) ---")
+    # Determine which collection to embed (base or hype)
+    collection_name = config_params.get('collection_name', config.DEFAULT_CHROMA_COLLECTION_NAME)
+    use_hype = config_params.get('use_hype', config.HYPE)
+    effective_collection_name = f"{collection_name}{HYPE_SUFFIX}" if use_hype else collection_name
+    if use_hype:
+        print(f"Info: Running Embed Mode on Hype collection '{effective_collection_name}'")
+    else:
+        print(f"Info: Running Embed Mode on base collection '{effective_collection_name}'")
     # Preliminary checks for Gemini SDK and client
     try:
         import google.genai
@@ -103,7 +120,6 @@ def run_embed_mode(config_params: Dict[str, Any], client: Optional[Any]):
         print(f"Error: Gemini client not initialized. Ensure GEMINI_API_KEY is set and valid in config.")
         return
     db_path = config_params.get('db_path', './rag_db')
-    collection_name = config_params.get('collection_name', config.DEFAULT_CHROMA_COLLECTION_NAME)
 
     provider = "Unknown"
     client_ok = False
@@ -122,7 +138,8 @@ def run_embed_mode(config_params: Dict[str, Any], client: Optional[Any]):
         return
 
     try:
-        collection = chroma_manager.get_chroma_collection(db_path, collection_name, execution_mode="embed")
+        # Get the correct collection (base or hype) for embedding
+        collection = chroma_manager.get_chroma_collection(db_path, effective_collection_name, execution_mode="embed")
         # Pass the client to the logic function
         embedding.run_embed_mode_logic(config_params, collection, client)
     except Exception as e:
@@ -138,6 +155,13 @@ def run_query_mode(config_params: Dict[str, Any]):
     print(f"--- Running Query Mode ({mode}) ---")
     db_path = config_params.get('db_path', './rag_db')
     collection_name = config_params.get('collection_name', config.DEFAULT_CHROMA_COLLECTION_NAME)
+    use_hype = config_params.get('use_hype', config.HYPE)
+    # Determine effective collection name for querying
+    effective_collection_name = f"{collection_name}{HYPE_SUFFIX}" if use_hype else collection_name
+    if use_hype:
+        print(f"Info: Using Hype embeddings collection: {effective_collection_name}")
+    else:
+        print(f"Info: Using base collection: {effective_collection_name}")
     query = config_params['query']
     top_k = config_params.get('top_k', config.DEFAULT_TOP_K)
     reranker_model = config_params.get('reranker', config.RERANKER_MODEL)
@@ -147,14 +171,14 @@ def run_query_mode(config_params: Dict[str, Any]):
 
     # --- Add Collection Verification Step ---
     print(f"\n--- Verifying Collection State ---")
-    print(f"Checking collection '{collection_name}' at path '{db_path}'...")
+    print(f"Checking collection '{effective_collection_name}' at path '{db_path}'...")
     try:
         # Create a temporary client just for checking
         check_client = chromadb.PersistentClient(path=db_path)
         try:
-            check_collection = check_client.get_collection(name=collection_name)
+            check_collection = check_client.get_collection(name=effective_collection_name)
             collection_count = check_collection.count()
-            print(f"Collection '{collection_name}' found. Total items: {collection_count}")
+            print(f"Collection '{effective_collection_name}' found. Total items: {collection_count}")
 
             if collection_count > 0:
                 # Peek at a few items to check for embeddings
@@ -174,16 +198,13 @@ def run_query_mode(config_params: Dict[str, Any]):
                         print(f"WARNING: No items with has_embedding=True found in the sample. Embeddings might be missing.")
                 else:
                     print("Could not peek at items.")
-                # Optional: Query specifically for items with embeddings
-                # embedded_count = check_collection.count(where={"has_embedding": True})
-                # print(f"Count of items explicitly marked with has_embedding=True: {embedded_count}")
 
             else:
-                print(f"WARNING: Collection '{collection_name}' is empty. No results will be found.")
+                print(f"WARNING: Collection '{effective_collection_name}' is empty. No results will be found.")
 
         except Exception as get_coll_err:
              # Handle case where collection doesn't exist (might be ValueError or similar)
-             print(f"Error accessing collection '{collection_name}': {get_coll_err}")
+             print(f"Error accessing collection '{effective_collection_name}': {get_coll_err}")
              print("Please ensure the collection exists and was populated correctly (run index and embed modes).")
              return # Stop processing if collection can't be accessed
 
@@ -204,7 +225,8 @@ def run_query_mode(config_params: Dict[str, Any]):
     if not subquery_ok and mode == "query": print(f"Error: Client for subquery model '{config.SUBQUERY_MODEL}' not available."); return
     if not answer_ok: print(f"Error: Client for answer model '{config.CHAT_MODEL}' not available."); return
 
-    bm25_instance, _ = bm25_manager.load_bm25_index(db_path, collection_name)
+    # Load BM25 for the correct collection (base or hype)
+    bm25_instance, _ = bm25_manager.load_bm25_index(db_path, effective_collection_name)
     if not bm25_instance and bm25_manager.RANK_BM25_AVAILABLE:
         print("Warning: BM25 index not found or failed to load. Lexical search part of hybrid query will be skipped.")
     elif not bm25_manager.RANK_BM25_AVAILABLE:
@@ -220,19 +242,20 @@ def run_query_mode(config_params: Dict[str, Any]):
                 final_answer = querying.iterative_rag_query(
                     initial_query=query,
                     db_path=db_path,
-                    collection_name=collection_name,
+                    collection_name=collection_name, # Pass base name, function handles suffix
                     top_k=top_k,
                     subquery_model=config.SUBQUERY_MODEL_SIMPLE,
                     answer_model=config.CHAT_MODEL,
                     reranker_model=reranker_model,
                     rerank_candidate_count=rerank_candidates,
-                    execution_mode=mode
+                    execution_mode=mode,
+                    use_hype = use_hype
                 )
         elif mode == "query_direct":
                 final_answer = querying.query_index(
                     query=query,
                     db_path=db_path,
-                    collection_name=collection_name,
+                    collection_name=collection_name, # Pass base name, function handles suffix
                     top_k=top_k,
                     answer_model=config.CHAT_MODEL,
                     reranker_model=reranker_model,

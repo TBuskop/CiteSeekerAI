@@ -36,7 +36,8 @@ from config import (
     RERANKER_MODEL,
     DEFAULT_RERANK_CANDIDATE_COUNT,
     DEFAULT_TOP_K,
-    EMBEDDING_MODEL # Needed for client checks
+    EMBEDDING_MODEL, # Needed for client checks
+    HYPE, HYPE_SUFFIX, HYPE_SOURCE_COLLECTION_NAME # Add HYPE_SUFFIX
 )
 
 from src.scrape.download_papers import remove_references_section
@@ -51,6 +52,10 @@ def retrieve_and_rerank_chunks(
     rerank_candidate_count: int = DEFAULT_RERANK_CANDIDATE_COUNT,
     execution_mode: str = "retrieval_only" # Default mode for this function
 ) -> List[Dict]:
+    # Switch to Hype or Abstract collection based on config
+    effective_collection_name = f"{collection_name}{HYPE_SUFFIX}" if HYPE else collection_name
+    if HYPE:
+        print(f"Info: retrieve_and_rerank_chunks using Hype collection '{effective_collection_name}'")
     """
     Performs hybrid retrieval (vector + BM25), RRF combination, and optional reranking.
 
@@ -76,7 +81,7 @@ def retrieve_and_rerank_chunks(
 
     # 1. Retrieve Chunks (Hybrid)
     try:
-        vector_results = retrieve_chunks_vector(query, db_path, collection_name, fetch_k, execution_mode=execution_mode)
+        vector_results = retrieve_chunks_vector(query, db_path, effective_collection_name, fetch_k, execution_mode=execution_mode)
         bm25_results = retrieve_chunks_bm25(query, db_path, collection_name, fetch_k)
     except Exception as e:
         print(f"Error during initial retrieval: {e}")
@@ -112,6 +117,7 @@ def retrieve_and_rerank_chunks(
     try:
         combined_chunks_rrf = combine_results_rrf(
             deduped_vector_results, deduped_bm25_results, db_path, collection_name, execution_mode=execution_mode
+            # Note: combine_results_rrf internally handles appending HYPE_SUFFIX based on config.HYPE
         )
         # Limit to fetch_k *before* reranking
         combined_chunks_rrf = combined_chunks_rrf[:fetch_k]
@@ -372,8 +378,17 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
                         answer_model: str = CHAT_MODEL,
                         reranker_model: Optional[str] = RERANKER_MODEL,
                         rerank_candidate_count: int = DEFAULT_RERANK_CANDIDATE_COUNT,
-                        execution_mode: str = "query") -> str:
+                        execution_mode: str = "query",
+                        use_hype: bool = False) -> str:
     """Performs iterative RAG with subquery generation, separate hybrid retrieval, RRF, and optional reranking."""
+
+    # Determine effective collection name
+    
+    if use_hype:
+        effective_collection_name = f"{collection_name}{HYPE_SUFFIX}" if HYPE else collection_name
+        print(f"Info: iterative_rag_query using Hype collection '{effective_collection_name}'")
+    else:
+        effective_collection_name = collection_name
 
     # --- Updated Client Checks using module namespace ---
     print(f"DEBUG (querying.iterative_rag_query): Checking client...")
@@ -412,7 +427,7 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
     for idx, query in enumerate(vector_search_queries):
         print(f"Vector Query {idx+1}/{len(vector_search_queries)}: \"{query[:100]}...\"")
         try:
-            results = retrieve_chunks_vector(query, db_path, collection_name, fetch_k_per_query,
+            results = retrieve_chunks_vector(query, db_path, effective_collection_name, fetch_k_per_query,
                                              execution_mode=f"{execution_mode}_vector_{idx+1}")
             for chunk in results:
                 cid = chunk.get("chunk_id")
@@ -440,7 +455,8 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
     
     print(f"\n--- Combining {len(all_vector_results)} Vector & {len(all_bm25_results)} BM25 results via RRF ---")
     try:
-        combined_chunks = combine_results_rrf(all_vector_results, all_bm25_results, db_path, collection_name,
+        # Pass the *base* collection name; combine_results_rrf handles the suffix internally
+        combined_chunks = combine_results_rrf(all_vector_results, all_bm25_results, db_path, collection_name, 
                                               execution_mode=execution_mode)
     except Exception as e:
         print(f"Error during RRF combination: {e}")
@@ -494,6 +510,11 @@ def query_index(query: str, db_path: str, collection_name: str,
                 rerank_candidate_count: int = DEFAULT_RERANK_CANDIDATE_COUNT,
                 execution_mode: str = "query_direct") -> str:
     """Performs direct hybrid query (no subqueries), RRF, optional reranking, and answer generation."""
+    # Determine effective collection name
+    effective_collection_name = f"{collection_name}{HYPE_SUFFIX}" if HYPE else collection_name
+    if HYPE:
+        print(f"Info: query_index using Hype collection '{effective_collection_name}'")
+
     print(f"--- Running Direct Hybrid Query ---")
     print(f"Query: {query}")
 
@@ -521,7 +542,7 @@ def query_index(query: str, db_path: str, collection_name: str,
     final_chunks_list = retrieve_and_rerank_chunks(
         query=query,
         db_path=db_path,
-        collection_name=collection_name,
+        collection_name=collection_name, # Pass base name, function handles suffix
         top_k=top_k,
         reranker_model=reranker_model,
         rerank_candidate_count=rerank_candidate_count,

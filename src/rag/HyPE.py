@@ -147,7 +147,7 @@ def run_hype_index(db_path: str, source_collection_name: str, hype_collection_na
             text = docs_list[0]
             for idx_q, question in enumerate(qs):
                 ids_.append(f"{aid}_hq{idx_q}")
-                mds.append({'original_chunk_id': aid, 'question': question, 'has_embedding': False})
+                mds.append({'doi': aid, 'question': question, 'has_embedding': False})
                 docs.append(text)
         if ids_:
             # detect duplicate question IDs

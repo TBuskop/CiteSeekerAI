@@ -22,6 +22,7 @@ from config import (
     DEFAULT_RERANK_CANDIDATE_COUNT,
     SUBQUERY_MODEL,
     SUBQUERY_MODEL_SIMPLE,
+    HYPE_SUFFIX,
 )
 from rag.chroma_manager import get_chroma_collection
 from my_utils.llm_interface import initialize_clients, GOOGLE_GENAI_AVAILABLE, generate_subqueries
@@ -35,6 +36,8 @@ def extract_metadata(chunks: List[Dict]) -> List[Tuple[str, str, str]]:
         authors = chunk.get('authors', 'N/A')
         year = str(chunk.get('year', 'N/A'))
         doi = chunk.get('doi', 'N/A')
+        if doi == "N/A":
+            doi = chunk.get('original_chunk_id', 'N/A')
         title = chunk.get('title', 'N/A')
 
         unique_key_doi = doi if doi and doi != 'N/A' else None
@@ -137,7 +140,8 @@ def retrieve_initial_chunks(
     db_path: str,
     collection_name: str,
     fetch_k: int,
-    execution_mode: str
+    execution_mode: str,
+    use_hype: bool = False,
 ) -> Tuple[List[Dict], List[Tuple[str, float]]]:
     """Retrieves chunks using both vector search and BM25 for the given queries."""
     all_vector_results_raw: List[Dict] = []
@@ -168,7 +172,13 @@ def retrieve_initial_chunks(
     for q_idx, query in enumerate(bm25_queries):
         print(f"  Query {q_idx+1}/{len(bm25_queries)}: \"{query[:100]}...\"")
         try:
-            bm25_results = retrieve_chunks_bm25(query, db_path, collection_name, fetch_k)
+            if collection_name.endswith(HYPE_SUFFIX):
+                # remove from collection_name to avoid confusion
+                collection_name_bm25 = collection_name.replace(HYPE_SUFFIX, '')
+            else:
+                collection_name_bm25 = collection_name
+                
+            bm25_results = retrieve_chunks_bm25(query, db_path, collection_name_bm25, fetch_k)
             for chunk_id, score in bm25_results:
                 if chunk_id and chunk_id not in processed_bm25_chunk_ids:
                     all_bm25_results_raw.append((chunk_id, score))
@@ -253,6 +263,8 @@ def deduplicate_and_finalize(ranked_chunks: List[Dict], top_k: int) -> List[Dict
     print(f"\n--- Deduplicating final {len(ranked_chunks)} ranked chunks by DOI ---")
     for chunk in ranked_chunks:
         doi = chunk.get('doi')
+        if doi == None:
+            doi = chunk.get('original_chunk_id')
         if doi and doi != 'N/A' and doi not in processed_dois:
             final_unique_chunks_by_doi.append(chunk)
             processed_dois.add(doi)
@@ -366,7 +378,8 @@ def find_relevant_dois_from_abstracts(
     top_k: int,
     use_rerank: bool,
     output_filename: str,
-    rerank_candidates: int = DEFAULT_RERANK_CANDIDATE_COUNT
+    rerank_candidates: int = DEFAULT_RERANK_CANDIDATE_COUNT,
+    use_hype: bool = False
 ) -> List[str]:
     """Main function to find relevant DOIs based on the initial query."""
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -400,7 +413,8 @@ def find_relevant_dois_from_abstracts(
         config["db_path"],
         config["collection_name"],
         fetch_k=fetch_k_per_query,
-        execution_mode=config["execution_mode"]
+        execution_mode=config["execution_mode"],
+        use_hype=use_hype
     )
 
     if not vector_results and not bm25_results:
