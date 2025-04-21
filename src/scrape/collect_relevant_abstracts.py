@@ -21,6 +21,7 @@ from config import (
     RERANKER_MODEL,
     DEFAULT_RERANK_CANDIDATE_COUNT,
     SUBQUERY_MODEL,
+    SUBQUERY_MODEL_SIMPLE,
 )
 from rag.chroma_manager import get_chroma_collection
 from my_utils.llm_interface import initialize_clients, GOOGLE_GENAI_AVAILABLE, generate_subqueries
@@ -62,10 +63,10 @@ def generate_search_queries(initial_query: str) -> Tuple[List[str], List[str]]:
     bm25_queries = [initial_query]
     vector_search_queries = [initial_query]
 
-    if SUBQUERY_MODEL and GOOGLE_GENAI_AVAILABLE:
-        print(f"\n--- Generating Subqueries using {SUBQUERY_MODEL} ---")
+    if SUBQUERY_MODEL_SIMPLE and GOOGLE_GENAI_AVAILABLE:
+        print(f"\n--- Generating Subqueries using {SUBQUERY_MODEL_SIMPLE} ---")
         try:
-            subquery_result = generate_subqueries(initial_query, model=SUBQUERY_MODEL)
+            subquery_result = generate_subqueries(initial_query, model=SUBQUERY_MODEL_SIMPLE)
             generated_bm25 = subquery_result.get('bm25_queries', [])
             generated_vector = subquery_result.get('vector_search_queries', [])
 

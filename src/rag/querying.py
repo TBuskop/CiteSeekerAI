@@ -31,12 +31,15 @@ from src.rag.retrieval import (
 )
 from config import (
     SUBQUERY_MODEL,
+    SUBQUERY_MODEL_SIMPLE,
     CHAT_MODEL,
     RERANKER_MODEL,
     DEFAULT_RERANK_CANDIDATE_COUNT,
     DEFAULT_TOP_K,
     EMBEDDING_MODEL # Needed for client checks
 )
+
+from src.scrape.download_papers import remove_references_section
 
 # --- Retrieval and Reranking Logic ---
 def retrieve_and_rerank_chunks(
@@ -544,3 +547,40 @@ def query_index(query: str, db_path: str, collection_name: str,
     print("\n--- Generating Final Answer (Direct Hybrid Query) ---")
     answer = generate_answer(query, combined_context, final_chunks_list, model=answer_model)
     return answer
+
+def follow_up_query_refinement(intended_next_query: str, overall_goal: str, previous_queries: str, previous_answers: str) -> str:
+    """
+    Generates a follow-up query based on the previous answer.
+    This is a placeholder function and should be implemented as needed.
+    """
+    # open the system prompt file
+    system_prompt_path = os.path.join(_PROJECT_ROOT, 'llm_prompts', 'follow_up_query_refinement.txt')
+    with open(system_prompt_path, 'r', encoding='utf-8') as f:
+        system_prompt = f.read().strip() 
+
+    # Construct the full prompt for the LLM. Place each query and answer togheter
+    full_prompt = (
+        f"{system_prompt}\n\n"
+        f"Overall Goal: \"{overall_goal}\"\n\n"
+    )
+    # Add the previous queries and answers to the prompt
+    for i, query in enumerate(previous_queries):
+        full_prompt += f"Query {i+1}: \"{query}\"\n"
+        if i < len(previous_answers):
+            previous_answer = previous_answers[i]
+            # remove the reference list from the answer
+            previous_answer = remove_references_section(previous_answer)
+            full_prompt += f"Answer {i+1}: \"{previous_answer}\"\n"
+
+    full_prompt += f"Intended Next Query: \"{intended_next_query}\"\n\n"
+    
+    response = llm_interface.generate_llm_response(
+            prompt=full_prompt,
+            model=SUBQUERY_MODEL,
+            temperature=1,
+            max_tokens=100000 # Adjust based on expected complexity
+        )
+    
+    new_subquery = response.strip()
+
+    return new_subquery

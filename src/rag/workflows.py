@@ -204,7 +204,7 @@ def run_query_mode(config_params: Dict[str, Any]):
                     db_path=db_path,
                     collection_name=collection_name,
                     top_k=top_k,
-                    subquery_model=config.SUBQUERY_MODEL,
+                    subquery_model=config.SUBQUERY_MODEL_SIMPLE,
                     answer_model=config.CHAT_MODEL,
                     reranker_model=reranker_model,
                     rerank_candidate_count=rerank_candidates,

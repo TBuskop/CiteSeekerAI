@@ -361,7 +361,7 @@ def remove_references_section(text):
     # (References|Bibliography) - Matches either "References" or "Bibliography"
     # \s*     - Matches zero or more whitespace characters after the keyword
     # $       - Matches the end of the line (due to re.MULTILINE)
-    pattern = r'^\s*(References|Bibliography|Acknowledgement|Acknowledgements)\s*$'
+    pattern = r'^\s*(References|Bibliography|Acknowledgement|Acknowledgements|\*\*References Used:\*\*)\s*$'
 
     # Perform a multiline, case-insensitive search
     match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
