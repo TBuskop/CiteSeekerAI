@@ -92,7 +92,7 @@ os.makedirs(QUERY_SPECIFIC_OUTPUT_DIR, exist_ok=True) # Added for per-query outp
 
 # --- Step 1: Decompose query ---
 print("\n--- Step 1: Decomposing Research Question ---")
-decomposed_queries, overall_goal = query_decomposition(query=INITIAL_RESEARCH_QUESTION, number_of_sub_queries=6, model=config.SUBQUERY_MODEL)
+decomposed_queries, overall_goal = query_decomposition(query=INITIAL_RESEARCH_QUESTION, number_of_sub_queries=1, model=config.SUBQUERY_MODEL)
 if decomposed_queries:
     print("Decomposed queries:")
     for i, query in enumerate(decomposed_queries):

@@ -15,7 +15,7 @@ from rag.retrieval import (
     retrieve_chunks_vector,
     retrieve_chunks_bm25,
     combine_results_rrf,
-    rerank_chunks
+    rerank_chunks,
 )
 from config import (
     RERANKER_MODEL,
@@ -28,9 +28,9 @@ from rag.chroma_manager import get_chroma_collection
 from my_utils.llm_interface import initialize_clients, GOOGLE_GENAI_AVAILABLE, generate_subqueries
 
 # --- Helper Function ---
-def extract_metadata(chunks: List[Dict]) -> List[Tuple[str, str, str]]:
-    """Extracts Authors, Year, and DOI from chunk metadata, ensuring uniqueness."""
-    extracted_info: Set[Tuple[str, str, str]] = set()
+def extract_metadata(chunks: List[Dict]) -> List[Tuple[str, str, str, str, float, str]]:
+    """Extracts Authors, Year, DOI, Title, Score, and Score Type from chunk metadata, ensuring uniqueness."""
+    extracted_info: Dict[str, Tuple[str, str, str, str, float, str]] = {}
     print(f"DEBUG: Extracting metadata from {len(chunks)} chunks.")
     for i, chunk in enumerate(chunks):
         authors = chunk.get('authors', 'N/A')
@@ -40,23 +40,44 @@ def extract_metadata(chunks: List[Dict]) -> List[Tuple[str, str, str]]:
             doi = chunk.get('original_chunk_id', 'N/A')
         title = chunk.get('title', 'N/A')
 
+        # Get the best available score and its type
+        score = chunk.get('ce_prob', chunk.get('rerank_score', chunk.get('rrf_score')))
+        score_val = score if score is not None and score != -float('inf') else -float('inf') # Use -inf for sorting if no score
+
+        # Determine score type based on which key was found and valid
+        if 'ce_prob' in chunk and score_val != -float('inf'):
+            score_type = "CE Prob"
+        elif 'rerank_score' in chunk and score_val != -float('inf'):
+            score_type = "Rerank"
+        elif 'rrf_score' in chunk and score_val != -float('inf'):
+            score_type = "RRF"
+        else:
+            score_type = "N/A"
+
         unique_key_doi = doi if doi and doi != 'N/A' else None
 
         if unique_key_doi:
-            info_tuple = (authors, year, doi, title)
-            if info_tuple not in extracted_info:
-                extracted_info.add(info_tuple)
+            # Store the best score found for this DOI
+            current_best_score = extracted_info.get(unique_key_doi, ('', '', '', '', -float('inf'), ''))[4]
+            if score_val > current_best_score:
+                extracted_info[unique_key_doi] = (authors, year, doi, title, score_val, score_type)
 
+    # Convert dict values to list
+    info_list = list(extracted_info.values())
+
+    # Sort by score descending, then year descending, then authors ascending
     def sort_key(item):
+        score_val = item[4]
         authors_str = item[0]
         year_str = item[1]
         try:
             year_int = int(year_str)
         except (ValueError, TypeError):
             year_int = -1 # Treat non-integer years as very old
-        return (-year_int, authors_str.lower()) # Sort by year descending, then authors ascending
+        # Primary sort: score descending. Secondary: year descending. Tertiary: authors ascending.
+        return (-score_val, -year_int, authors_str.lower())
 
-    return sorted(list(extracted_info), key=sort_key)
+    return sorted(info_list, key=sort_key)
 
 
 # --- Refactored Functions ---
@@ -229,6 +250,7 @@ def combine_and_rerank_results(
                 candidates_to_rerank,
                 reranker_model,
                 top_n=rerank_candidates_count,
+                abstracts=True
             )
             if len(final_ranked_chunks) < len(candidates_to_rerank):
                  print(f"Warning: Reranker returned {len(final_ranked_chunks)} items, expected up to {len(candidates_to_rerank)}.")
@@ -275,31 +297,32 @@ def deduplicate_and_finalize(ranked_chunks: List[Dict], top_k: int) -> List[Dict
 
 
 def display_results(final_chunks: List[Dict]) -> List[str]:
-    """Extracts metadata, prints it in a formatted table, and returns DOIs."""
+    """Extracts metadata, prints it in a formatted table sorted by score, and returns DOIs."""
     if not final_chunks:
         print("\nNo final documents to display.")
         return []
 
     print(f"\n--- Extracting Metadata from Final {len(final_chunks)} Chunks ---")
-    # Assuming extract_metadata now returns (authors, year, doi, title) tuples
+    # Assuming extract_metadata now returns (authors, year, doi, title, score, score_type) tuples
     extracted_metadata = extract_metadata(final_chunks)
 
     if not extracted_metadata:
         print("No metadata could be extracted from the final retrieved chunks.")
         return []
 
-    # Adjust header and separator width
-    header_format = "{:<50} {:<6} {:<35} {:<60}"
-    separator_width = 50 + 6 + 35 + 60 + (3 * 1) # Widths + spaces
-    print("\n" + header_format.format("Authors", "Year", "DOI", "Title"))
+    # Adjust header and separator width to include Score
+    header_format = "{:<50} {:<6} {:<35} {:<60} {:<10} {:<8}"
+    separator_width = 50 + 6 + 35 + 60 + 10 + 8 + (5 * 1) # Widths + spaces
+    print("\n" + header_format.format("Authors", "Year", "DOI", "Title", "Score", "Type"))
     print("-" * separator_width)
 
     list_of_dois = []
-    for authors, year, doi, title in extracted_metadata:
+    for authors, year, doi, title, score, score_type in extracted_metadata:
         display_authors = authors if len(authors) <= 48 else authors[:45] + "..."
         display_title = title if len(title) <= 58 else title[:55] + "..."
+        score_str = f"{score:.3f}" if score != -float('inf') else "N/A"
         # Adjust print format to match header
-        print(header_format.format(display_authors, year, doi, display_title))
+        print(header_format.format(display_authors, year, doi, display_title, score_str, score_type))
         list_of_dois.append(doi)
 
     return list_of_dois

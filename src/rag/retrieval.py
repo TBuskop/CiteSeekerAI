@@ -140,6 +140,7 @@ def retrieve_chunks_bm25(query: str, db_path: str, collection_name: str, top_k: 
         # Get top K results with scores > 0 (BM25 scores can be negative, often irrelevant)
         # We might want to keep scores >= 0 depending on interpretation. Let's stick to > 0.
         results = [(chunk_id, score) for chunk_id, score in sorted_results if score > 0][:top_k]
+        print(f"DEBUG (retrieve_chunks_bm25): Found {len(results)} BM25 results with score > 0.") # Add log
         return results
 
     except Exception as e:
@@ -149,10 +150,12 @@ def retrieve_chunks_bm25(query: str, db_path: str, collection_name: str, top_k: 
 
 # --- RRF Combination ---
 def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str, float]],
-                        db_path: str, collection_name: str, execution_mode: str = "query", k_rrf: int = 60) -> List[Dict]:
+                        db_path: str, collection_name: str, execution_mode: str = "query", k_rrf: int = 50, weight_vector_bm25=[0.7, 0.3]) -> List[Dict]:
     """Combines vector and BM25 results using Reciprocal Rank Fusion (RRF)."""
     # Determine effective collection name based on HYPE flag
     effective_collection_name = f"{collection_name}{HYPE_SUFFIX}" if HYPE else collection_name
+
+    print(f"DEBUG (combine_results_rrf): Combining {len(vector_results)} vector results and {len(bm25_results)} BM25 results.") # Add log
 
     combined_scores: Dict[str, float] = {}
     chunk_metadata_cache: Dict[str, Dict] = {} # Cache metadata keyed by chunk_id
@@ -165,7 +168,7 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
         if not chunk_id: continue # Skip if ID missing
 
         # Calculate RRF score contribution
-        score = 1.0 / (k_rrf + rank)
+        score = 1.0 / (k_rrf + rank)*weight_vector_bm25[0]
         combined_scores[chunk_id] = combined_scores.get(chunk_id, 0.0) + score
 
         # Store metadata if not already cached
@@ -180,11 +183,14 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
     # --- Process BM25 Results ---
     # BM25 results are (chunk_id, score). We only need rank for RRF.
     bm25_ids_to_fetch_metadata = []
+    bm25_processed_count = 0 # Debug counter
+    bm25_added_to_cache_count = 0 # Debug counter
     for rank, (chunk_id, bm25_score) in enumerate(bm25_results):
         if not chunk_id: continue # Skip empty IDs
+        bm25_processed_count += 1 # Increment counter
 
         # Calculate RRF score contribution
-        score = 1.0 / (k_rrf + rank)
+        score = 1.0 / (k_rrf + rank) * weight_vector_bm25[1]
         combined_scores[chunk_id] = combined_scores.get(chunk_id, 0.0) + score
 
         # Add BM25 score and retrieval method to cached metadata if it exists,
@@ -192,16 +198,25 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
         if chunk_id in chunk_metadata_cache:
             chunk_metadata_cache[chunk_id]['bm25_score'] = bm25_score
             chunk_metadata_cache[chunk_id]['retrieved_by'] = list(set(chunk_metadata_cache[chunk_id].get('retrieved_by', []) + ['bm25']))
+            bm25_added_to_cache_count += 1 # Increment counter
         else:
             # Need to fetch metadata for this BM25-only result
             if chunk_id not in bm25_ids_to_fetch_metadata:
                 bm25_ids_to_fetch_metadata.append(chunk_id)
 
+    print(f"DEBUG (combine_rrf): Processed {bm25_processed_count} raw BM25 results. Added score directly to {bm25_added_to_cache_count} existing cache entries.") # Add summary log
+    print(f"DEBUG (combine_rrf): Marked {len(bm25_ids_to_fetch_metadata)} BM25-specific chunk IDs for metadata fetching.") # Add log
+
     # --- Fetch Metadata for BM25-only Results ---
     if bm25_ids_to_fetch_metadata:
-        # print(f"Fetching metadata for {len(bm25_ids_to_fetch_metadata)} BM25-specific chunks...") # Debug
+        bm25_metadata_fetched_count = 0 # Debug counter
+        bm25_score_added_during_fetch = 0 # Debug counter
         try:
-            collection = get_chroma_collection(db_path, collection_name, execution_mode=execution_mode)
+            # Ensure we fetch metadata from the BASE collection where BM25 IDs exist
+            base_collection_name = collection_name.replace(HYPE_SUFFIX, "") if HYPE else collection_name
+            print(f"DEBUG (combine_rrf fetch): Fetching metadata from BASE collection: '{base_collection_name}'") # Add log
+            collection = get_chroma_collection(db_path, base_collection_name, execution_mode=execution_mode) # Use base_collection_name
+
             # Fetch in batches for potentially large number of IDs
             batch_size_fetch = 200 # Adjust as needed
             num_batches_fetch = (len(bm25_ids_to_fetch_metadata) + batch_size_fetch - 1) // batch_size_fetch
@@ -211,11 +226,15 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
                  if not batch_ids: continue
                  try:
                      # Include 'documents' when fetching for BM25 results
+                     print(f"DEBUG (combine_rrf fetch): Calling collection.get() for {len(batch_ids)} IDs (e.g., {batch_ids[:5]})" ) # Add log
                      fetched_data = collection.get(ids=batch_ids, include=['metadatas', 'documents'])
+                     print(f"DEBUG (combine_rrf fetch): collection.get() returned {len(fetched_data.get('ids', []))} IDs") # Add log
+
                      if fetched_data and fetched_data.get('ids'):
                           fetched_metadatas = fetched_data.get('metadatas', [])
                           fetched_documents = fetched_data.get('documents', []) # Get documents
                           for j, fetched_id in enumerate(fetched_data['ids']):
+                              bm25_metadata_fetched_count += 1 # Increment counter
                               # Check if ID is relevant and metadata exists
                               if fetched_id in combined_scores and j < len(fetched_metadatas):
                                   meta = fetched_metadatas[j]
@@ -225,6 +244,10 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
                                       original_bm25_score = next((s for id, s in bm25_results if id == fetched_id), None)
                                       # Ensure bm25_score is a float, default to 0.0 if None
                                       meta['bm25_score'] = float(original_bm25_score) if original_bm25_score is not None else 0.0
+                                      if original_bm25_score is not None:
+                                          bm25_score_added_during_fetch += 1 # Increment counter
+                                      # else: print(f"DEBUG (combine_rrf fetch): Could not find original BM25 score for fetched ID {fetched_id}") # Optional detailed log
+
                                       # Add placeholder vector scores for consistency if needed later
                                       meta['vector_distance'] = None
                                       meta['vector_similarity'] = None
@@ -232,13 +255,14 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
                                       meta['chunk_id'] = fetched_id # Ensure chunk_id is present
                                       meta['text'] = doc_text # Add the document text under the 'text' key
                                       chunk_metadata_cache[fetched_id] = meta
-                                  # else: print(f"Warning: Null or already cached metadata fetched for BM25 chunk ID {fetched_id}") # Debug
+                                  # else: print(f"DEBUG (combine_rrf fetch): Condition not met for fetched ID {fetched_id} (in combined_scores: {fetched_id in combined_scores}, meta ok: {meta is not None}, not in cache: {fetched_id not in chunk_metadata_cache})", flush=True) # Detailed condition log
                  except Exception as batch_fetch_err:
                       print(f"!!! Error fetching metadata batch for BM25 results (IDs: {batch_ids[:5]}...): {batch_fetch_err}")
 
         except Exception as fetch_err:
             print(f"!!! Error accessing collection for fetching BM25 metadata: {fetch_err}")
             traceback.print_exc()
+        print(f"DEBUG (combine_rrf): Fetched metadata for {bm25_metadata_fetched_count} BM25-specific IDs. Added BM25 score to {bm25_score_added_during_fetch} new cache entries.") # Add summary log
 
     # --- Combine and Sort ---
     # Add RRF score to each metadata entry in the cache
@@ -247,10 +271,10 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
         if chunk_id in combined_scores:
             meta['rrf_score'] = combined_scores[chunk_id]
             final_results_list.append(meta)
-        # else: This shouldn't happen if logic is correct
 
     # Sort the final list by RRF score descending
     final_results_list.sort(key=lambda c: c.get('rrf_score', 0.0), reverse=True)
+    
 
     # Enrich metadata when working on the HyPE embeddings collection
     # Check if the *effective* name used ends with the HYPE suffix
@@ -277,13 +301,27 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
         except Exception as e:
             print(f"Warning: Could not enrich metadata for HyPE entries: {e}")
 
+    # Add debug print before returning
+    count_with_bm25_score = sum(1 for chunk in final_results_list if 'bm25_score' in chunk and chunk['bm25_score'] is not None and chunk['bm25_score'] > 0) # Be more specific
+    print(f"DEBUG (combine_results_rrf): Returning {len(final_results_list)} combined chunks. {count_with_bm25_score} have a positive 'bm25_score'.") # Updated log
+
+    # print top 10 final result_list names and year for debug top score first
+    print(f"DEBUG (combine_results_rrf): Top 10 final results: {[{'name': m.get('title'), 'year': m.get('year')} for m in final_results_list[:10]]}") # Optional detailed log
+    # show top ten based on bm25 score
+    # handle potential None values in bm25_score during sorting for debug print
+    print(f"DEBUG (combine_results_rrf): Top 10 final results by BM25 score: {[{'name': m.get('title'), 'bm25_score': m.get('bm25_score')} for m in sorted(final_results_list, key=lambda c: c.get('bm25_score', 0.0), reverse=True)[:10]]}") # Optional detailed log
+    # show top ten based on vector similarity from vector_results
+    # Handle potential None values in vector_similarity during sorting for debug print
+    print(f"DEBUG (combine_results_rrf): Top 10 final results by vector similarity: {[{'name': m.get('title'), 'vector_similarity': m.get('vector_similarity')} for m in sorted(final_results_list, key=lambda c: c.get('vector_similarity') if c.get('vector_similarity') is not None else -1.0, reverse=True)[:10]]}") # Optional detailed log
+
     return final_results_list
 
 
 # --- Re-ranking ---
 def rerank_chunks(query: str, chunks: List[Dict],
                   model_name: Optional[str] = RERANKER_MODEL,
-                  top_n: int = DEFAULT_RERANK_CANDIDATE_COUNT) -> List[Dict]:
+                  top_n: int = DEFAULT_RERANK_CANDIDATE_COUNT,
+                  abstracts: bool = False) -> List[Dict]:
     """
     Re-ranks chunks using a CrossEncoder model based on relevance to the query,
     converting raw logits to calibrated probabilities, with smart pruning:
@@ -292,14 +330,19 @@ def rerank_chunks(query: str, chunks: List[Dict],
     """
     # Fallback if reranker unavailable
     if not model_name or not SENTENCE_TRANSFORMERS_AVAILABLE or not CrossEncoder or not chunks:
+        print(f"DEBUG (rerank_chunks): Skipping reranking (unavailable/no chunks). Returning top {top_n} by RRF.")
         return sorted(chunks, key=lambda c: c.get('rrf_score', 0.0), reverse=True)[:top_n]
 
     # Compute average BM25 score for pruning
     bm25_scores = [c.get('bm25_score', 0.0) for c in chunks if 'bm25_score' in c]
     avg_bm25    = sum(bm25_scores) / len(bm25_scores) if bm25_scores else 0.0
 
+    # Add debug print
+    print(f"DEBUG (rerank_chunks): Input chunks: {len(chunks)}. Found {len(bm25_scores)} BM25 scores. Avg BM25: {avg_bm25:.4f}")
+
     # Prepare model
     if model_name not in reranker_model_cache:
+        print(f"DEBUG (rerank_chunks): Loading CrossEncoder model: {model_name}")
         reranker_model_cache[model_name] = CrossEncoder(model_name)
     model = reranker_model_cache[model_name]
 
@@ -308,26 +351,36 @@ def rerank_chunks(query: str, chunks: List[Dict],
     # Pre-rank by RRF score
     base_sorted = sorted(chunks, key=lambda c: c.get('rrf_score', 0.0), reverse=True)
 
-    # --- Filter: Keep only the best RRF-scoring chunk per DOI ---
+    # --- Filter: Keep only the best RRF-scoring chunk per DOI  if HyPE ---
     base_sorted_filtered = []
-    seen_dois = set()
-    for chunk in base_sorted:
-        # Prioritize 'doi', fallback to 'original_chunk_id' if available
-        doi = chunk.get('doi') or chunk.get('original_chunk_id')
-        if doi: # Only process if a DOI identifier is found
-            if doi not in seen_dois:
+    if abstracts:
+        seen_dois = set()
+        for chunk in base_sorted:
+            # Prioritize 'doi', fallback to 'original_chunk_id' if available
+            doi = chunk.get('doi') or chunk.get('original_chunk_id')
+            if doi: # Only process if a DOI identifier is found
+                if doi not in seen_dois:
+                    base_sorted_filtered.append(chunk)
+                    seen_dois.add(doi)
+            else:
+                # If no DOI, keep the chunk (might be from a source without DOI)
                 base_sorted_filtered.append(chunk)
-                seen_dois.add(doi)
-        else:
-            # If no DOI, keep the chunk (might be from a source without DOI)
-            base_sorted_filtered.append(chunk)
+        print(f"DEBUG (rerank_chunks): Filtered to {len(base_sorted_filtered)} chunks (best RRF per DOI).")
+
+    else:
+        # If not HyPE, keep all chunks (or apply other filtering logic if needed)
+        base_sorted_filtered = base_sorted
+
+
     base_sorted_filtered = base_sorted_filtered[:top_n] # Limit to top_n after filtering
+    print(f"DEBUG (rerank_chunks): Limited to top {len(base_sorted_filtered)} for reranking.")
     # --- End Filter ---
 
     # --- Rerank all filtered chunks ---
     pairs, idx_map = [], []
 
     # Prepare pairs for CrossEncoder, applying early discard
+    discard_count = 0
     for i, chunk in enumerate(base_sorted_filtered):
         # Use .get with defaults, and ensure comparison handles potential None
         vec_sim = chunk.get('vector_similarity', 0.0)
@@ -336,12 +389,18 @@ def rerank_chunks(query: str, chunks: List[Dict],
         vec_sim_check = vec_sim if vec_sim is not None else 1.0 # Treat None as high similarity
         bm25_sc_check = bm25_sc if bm25_sc is not None else avg_bm25 # Treat None as average score
 
-        if vec_sim_check < 0.2 and bm25_sc_check < avg_bm25:
+        # Early discard condition
+        # Note: avg_bm25 can be 0 if no bm25 scores were found initially.
+        # The condition vec_sim_check < 0.2 might still trigger.
+        if vec_sim_check < 0.2 and bm25_sc_check < avg_bm25*0.5:
             # Assign low scores directly if discarded
             chunk['ce_logit'] = -float('inf')
             chunk['ce_prob']  = 0.0
+            discard_count += 1
+            print(f"DEBUG (rerank_chunks): Early discard for chunk {i} (vec_sim: {vec_sim_check:.4f}, bm25: {bm25_sc_check:.4f}).")
         else:
             text = chunk.get('contextualized_text', chunk.get('text', '')).strip()
+            
             if text:
                 pairs.append([query, text])
                 idx_map.append(i) # Store the original index in base_sorted_filtered
@@ -349,13 +408,19 @@ def rerank_chunks(query: str, chunks: List[Dict],
                 # Assign low scores if text is empty
                 chunk['ce_logit'] = -float('inf')
                 chunk['ce_prob']  = 0.0
+                discard_count += 1 # Count as discarded if no text
+                print(f"DEBUG (rerank_chunks): Empty text for chunk {i}. Discarded.") # Optional debug log
+
+    print(f"DEBUG (rerank_chunks): Prepared {len(pairs)} pairs for CrossEncoder. Discarded {discard_count} chunks early.")
 
     # Predict scores if there are valid pairs
     if pairs:
         # Predict logits and convert to probabilities
+        print(f"DEBUG (rerank_chunks): Running CrossEncoder prediction...")
         logits_tensor = torch.tensor(model.predict(pairs, show_progress_bar=False))
         probs_tensor  = torch.sigmoid(logits_tensor)
         logits, probs = logits_tensor.tolist(), probs_tensor.tolist()
+        print(f"DEBUG (rerank_chunks): CrossEncoder prediction complete.")
 
         # Attach CE scores back to the corresponding chunks in base_sorted_filtered
         for j, original_idx in enumerate(idx_map):
@@ -366,4 +431,5 @@ def rerank_chunks(query: str, chunks: List[Dict],
     # Chunks discarded or without text will have low scores and end up at the bottom
     result = sorted(base_sorted_filtered, key=lambda c: c.get('ce_prob', 0.0), reverse=True)
 
-    return result[:top_n]
+    print(f"DEBUG (rerank_chunks): Reranking complete. Returning top {min(top_n, len(result))} chunks.")
+    return result

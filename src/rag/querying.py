@@ -27,7 +27,7 @@ from src.rag.retrieval import (
     retrieve_chunks_bm25,
     combine_results_rrf,
     rerank_chunks,
-    SENTENCE_TRANSFORMERS_AVAILABLE # Check reranker availability
+    SENTENCE_TRANSFORMERS_AVAILABLE, # Check reranker availability
 )
 from config import (
     SUBQUERY_MODEL,
@@ -50,7 +50,8 @@ def retrieve_and_rerank_chunks(
     top_k: int = DEFAULT_TOP_K,
     reranker_model: Optional[str] = RERANKER_MODEL,
     rerank_candidate_count: int = DEFAULT_RERANK_CANDIDATE_COUNT,
-    execution_mode: str = "retrieval_only" # Default mode for this function
+    execution_mode: str = "retrieval_only", # Default mode for this function
+    abstracts: Optional[bool] = True, # Flag to indicate if we are looking at abstracts of paper chunks
 ) -> List[Dict]:
     # Switch to Hype or Abstract collection based on config
     effective_collection_name = f"{collection_name}{HYPE_SUFFIX}" if HYPE else collection_name
@@ -138,7 +139,8 @@ def retrieve_and_rerank_chunks(
                 query,
                 combined_chunks_rrf, # Pass the RRF combined list
                 reranker_model,
-                top_k # Rerank and return the final top_k
+                top_k, # Rerank and return the final top_k
+                abstracts,
             )
         except Exception as e:
             print(f"Error during reranking: {e}")
@@ -473,7 +475,15 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
     if reranker_model and SENTENCE_TRANSFORMERS_AVAILABLE:
         print(f"\n--- Reranking Top {len(combined_chunks)} Candidates using {reranker_model} ---")
         try:
-            final_chunks = rerank_chunks(initial_query, combined_chunks, reranker_model, top_k)
+            final_chunks = rerank_chunks(initial_query, combined_chunks, reranker_model, DEFAULT_RERANK_CANDIDATE_COUNT, abstracts=False)
+            final_chunks = final_chunks[:top_k] # Limit to top_k after reranking
+            # only keep final chunks with ce_prob > 0.4
+            pre_filter_len = len(final_chunks)
+            relevance_score_filter = 0.4
+            final_chunks = [chunk for chunk in final_chunks if chunk.get('ce_prob', 0) > relevance_score_filter]
+            post_filter_len = len(final_chunks)
+            print(f"discarded because chunk with relevance score < {relevance_score_filter}: {pre_filter_len-post_filter_len}")
+
         except Exception as e:
             print(f"Error during reranking: {e}")
             traceback.print_exc()
