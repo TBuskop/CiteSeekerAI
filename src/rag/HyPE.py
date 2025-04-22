@@ -182,6 +182,35 @@ def run_hype_index(db_path: str, source_collection_name: str, hype_collection_na
 
     print("HyPE: Indexing and embedding completed.")
 
+def check_hype_db(path: str, dois: List[str]) -> List[dict]:
+    """
+    Check if the HyPE database contains the specified DOIs. And return the generated questions for those DOIs.
+    """
+    hype_col = get_chroma_collection(path, 'abstracts_hype', execution_mode="query")
+    results = hype_col.get(include=['metadatas'])
+    metadata_list = results.get('metadatas', [])
+    found_ids = {md.get('original_chunk_id') for md in metadata_list}
+    
+    if not found_ids:
+        print("HyPE: No DOIs found in the HyPE database.")
+        return None
+    # filter for requested DOIs
+    filtered_metadata = [md for md in metadata_list if md.get('original_chunk_id') in dois]
+    if not filtered_metadata:
+        print("HyPE: No matching DOIs found in the HyPE database.")
+        return None
+    
+    # return a dictionary with DOI as key and questions as value
+    doi_questions_dict = {}
+    for md in filtered_metadata:
+        doi = md.get('original_chunk_id')
+        question = md.get('question', [])
+        if doi not in doi_questions_dict:
+            doi_questions_dict[doi] = []
+        doi_questions_dict[doi].append(question)
+    
+    return doi_questions_dict
+
 
 if __name__ == '__main__':
     import sys
@@ -192,7 +221,18 @@ if __name__ == '__main__':
         print(f"Running HyPE for {source_collection} -> {hype_collection} in {db_path}")
         client_to_pass = initialize_clients()
         print(f"HyPE __main__: Client object after init: {type(client_to_pass)}")
-        run_hype_index(db_path, source_collection, hype_collection, client=client_to_pass)
+        # run_hype_index(db_path, source_collection, hype_collection, client=client_to_pass)
+        questions_dois = check_hype_db(db_path, ['10.1088/1748-9326/aa6b09', '10.1002/2015WR017148'])
+        # nicely print the questions_dois dict
+        if questions_dois:
+            print("HyPE: Found the following questions for the specified DOIs:")
+            for doi, questions in questions_dois.items():
+                print(f"DOI: {doi}")
+                for question in questions:
+                    print(f"  - {question}")
+        else:
+            print("HyPE: No questions found for the specified DOIs.")
+
     else:
         parser = argparse.ArgumentParser(description="HyPE indexing: generate hypothetical prompt embeddings for chunks")
         parser.add_argument('--db_path', required=True, help='Path to ChromaDB directory')
