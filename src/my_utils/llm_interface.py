@@ -405,9 +405,9 @@ def generate_subqueries(initial_query: str, model: str = SUBQUERY_MODEL) -> Dict
         if not (isinstance(parsed_json, dict) and "bm25_queries" in parsed_json and "vector_search_queries" in parsed_json):
             raise ValueError("JSON structure invalid")
         bm25_queries = [q for q in parsed_json["bm25_queries"] if isinstance(q, str) and q.strip()]
-        bm25_queries.append(initial_query) # Append original query to bm25 queries
+        bm25_queries.insert(0, initial_query) # Prepend original query to BM25 queries
         vector_search_queries = [q for q in parsed_json["vector_search_queries"] if isinstance(q, str) and q.strip()]
-        vector_search_queries.append(initial_query) # Append original query to vector search queries
+        vector_search_queries.insert(0, initial_query) # Prepend original query to vector search queries
         if not bm25_queries:
             bm25_queries = [initial_query]
             print("Warning: BM25 queries empty; using initial query.")
