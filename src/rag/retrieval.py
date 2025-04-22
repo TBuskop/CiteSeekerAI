@@ -287,8 +287,8 @@ def rerank_chunks(query: str, chunks: List[Dict],
     """
     Re-ranks chunks using a CrossEncoder model based on relevance to the query,
     converting raw logits to calibrated probabilities, with smart pruning:
+      - Filters to keep only the best RRF-scoring chunk per DOI.
       - Early-discard passages with low vector and BM25 scores.
-      - Dynamic k: start with 10, expand until confident or max.
     """
     # Fallback if reranker unavailable
     if not model_name or not SENTENCE_TRANSFORMERS_AVAILABLE or not CrossEncoder or not chunks:
@@ -304,62 +304,66 @@ def rerank_chunks(query: str, chunks: List[Dict],
     model = reranker_model_cache[model_name]
 
     import torch
-    # Dynamic k parameters
-    k       = min(10, len(chunks))
-    max_k   = len(chunks)
-    ce_thr  = 0.5
-    result  = []
 
     # Pre-rank by RRF score
     base_sorted = sorted(chunks, key=lambda c: c.get('rrf_score', 0.0), reverse=True)
 
-    while True:
-        candidates = base_sorted[:k]
-        pairs, idx_map = [], []
+    # --- Filter: Keep only the best RRF-scoring chunk per DOI ---
+    base_sorted_filtered = []
+    seen_dois = set()
+    for chunk in base_sorted:
+        # Prioritize 'doi', fallback to 'original_chunk_id' if available
+        doi = chunk.get('doi') or chunk.get('original_chunk_id')
+        if doi: # Only process if a DOI identifier is found
+            if doi not in seen_dois:
+                base_sorted_filtered.append(chunk)
+                seen_dois.add(doi)
+        else:
+            # If no DOI, keep the chunk (might be from a source without DOI)
+            base_sorted_filtered.append(chunk)
+    base_sorted_filtered = base_sorted_filtered[:top_n] # Limit to top_n after filtering
+    # --- End Filter ---
 
-        # Early‐discard low‐quality candidates
-        for i, chunk in enumerate(candidates):
-            # Use .get with defaults, and ensure comparison handles potential None (though less likely now)
-            vec_sim = chunk.get('vector_similarity', 0.0)
-            bm25_sc = chunk.get('bm25_score', 0.0)
-            # Add explicit checks for None before comparison, defaulting to a value that won't trigger discard if None
-            vec_sim_check = vec_sim if vec_sim is not None else 1.0 # Treat None as high similarity (won't discard)
-            bm25_sc_check = bm25_sc if bm25_sc is not None else avg_bm25 # Treat None as average score (won't discard)
+    # --- Rerank all filtered chunks ---
+    pairs, idx_map = [], []
 
-            if vec_sim_check < 0.2 and bm25_sc_check < avg_bm25:
+    # Prepare pairs for CrossEncoder, applying early discard
+    for i, chunk in enumerate(base_sorted_filtered):
+        # Use .get with defaults, and ensure comparison handles potential None
+        vec_sim = chunk.get('vector_similarity', 0.0)
+        bm25_sc = chunk.get('bm25_score', 0.0)
+        # Add explicit checks for None before comparison
+        vec_sim_check = vec_sim if vec_sim is not None else 1.0 # Treat None as high similarity
+        bm25_sc_check = bm25_sc if bm25_sc is not None else avg_bm25 # Treat None as average score
+
+        if vec_sim_check < 0.2 and bm25_sc_check < avg_bm25:
+            # Assign low scores directly if discarded
+            chunk['ce_logit'] = -float('inf')
+            chunk['ce_prob']  = 0.0
+        else:
+            text = chunk.get('contextualized_text', chunk.get('text', '')).strip()
+            if text:
+                pairs.append([query, text])
+                idx_map.append(i) # Store the original index in base_sorted_filtered
+            else:
+                # Assign low scores if text is empty
                 chunk['ce_logit'] = -float('inf')
                 chunk['ce_prob']  = 0.0
-            else:
-                text = chunk.get('contextualized_text', chunk.get('text', '')).strip()
-                if text:
-                    pairs.append([query, text])
-                    idx_map.append(i)
-                else:
-                    chunk['ce_logit'] = -float('inf')
-                    chunk['ce_prob']  = 0.0
 
-        if not pairs:
-            result = candidates
-            break
-
+    # Predict scores if there are valid pairs
+    if pairs:
         # Predict logits and convert to probabilities
         logits_tensor = torch.tensor(model.predict(pairs, show_progress_bar=False))
         probs_tensor  = torch.sigmoid(logits_tensor)
         logits, probs = logits_tensor.tolist(), probs_tensor.tolist()
 
-        # Attach CE scores back to chunks
-        for j, cand_idx in enumerate(idx_map):
-            candidates[cand_idx]['ce_logit'] = float(logits[j])
-            candidates[cand_idx]['ce_prob']  = float(probs[j])
+        # Attach CE scores back to the corresponding chunks in base_sorted_filtered
+        for j, original_idx in enumerate(idx_map):
+            base_sorted_filtered[original_idx]['ce_logit'] = float(logits[j])
+            base_sorted_filtered[original_idx]['ce_prob']  = float(probs[j])
 
-        # Re-sort by CE probability
-        candidates.sort(key=lambda c: c.get('ce_prob', 0.0), reverse=True)
-        result = candidates
-
-        # Stop if we've considered all or are confident about top_n
-        if k >= max_k or (len(result) >= top_n and result[top_n-1]['ce_prob'] > ce_thr):
-            break
-
-        k = min(max_k, k * 2)
+    # Sort the entire filtered list by CE probability (descending)
+    # Chunks discarded or without text will have low scores and end up at the bottom
+    result = sorted(base_sorted_filtered, key=lambda c: c.get('ce_prob', 0.0), reverse=True)
 
     return result[:top_n]

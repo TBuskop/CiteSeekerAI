@@ -158,7 +158,9 @@ def retrieve_and_rerank_chunks(
         return []
 
     # 4. Sort final list (important even if not reranked, RRF provides scores)
-    final_chunks_list.sort(key=lambda c: c.get('rerank_score', c.get('rrf_score', -float('inf'))), reverse=True)
+    # Use 'ce_prob' from the reranker if available, otherwise fallback to 'rrf_score'
+    final_chunks_list.sort(key=lambda c: c.get('ce_prob', c.get('rrf_score', -float('inf'))), reverse=True)
+
 
     print(f"\n--- Returning Top {len(final_chunks_list)} Final Chunks ---")
     return final_chunks_list

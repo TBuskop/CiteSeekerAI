@@ -30,12 +30,12 @@ DEFAULT_TOTAL_CONTEXT_WINDOW = 2000
 OUTPUT_EMBEDDING_DIMENSION = 768
 
 # Query configuration
-DEFAULT_TOP_K = 50
+DEFAULT_TOP_K = 30
 HYPE = True
 
 # --- Re-ranker Configuration ---
 RERANKER_MODEL = 'cross-encoder/ms-marco-MiniLM-L-12-v2'
-DEFAULT_RERANK_CANDIDATE_COUNT = 50
+DEFAULT_RERANK_CANDIDATE_COUNT = 100
 
 # Other defaults (if needed)
 DEFAULT_EMBED_BATCH_SIZE = 100 # max 100

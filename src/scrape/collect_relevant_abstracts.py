@@ -223,14 +223,14 @@ def combine_and_rerank_results(
     if reranker_model:
         print(f"\n--- Reranking Top {min(len(combined_chunks_rrf), rerank_candidates_count)} RRF Candidates using {reranker_model} ---")
         try:
-            candidates_to_rerank = combined_chunks_rrf[:rerank_candidates_count]
+            candidates_to_rerank = combined_chunks_rrf
             final_ranked_chunks = rerank_chunks(
                 initial_query,
                 candidates_to_rerank,
                 reranker_model,
-                top_n=len(candidates_to_rerank)
+                top_n=rerank_candidates_count,
             )
-            if len(final_ranked_chunks) < len(combined_chunks_rrf):
+            if len(final_ranked_chunks) < len(candidates_to_rerank):
                  print(f"Warning: Reranker returned {len(final_ranked_chunks)} items, expected up to {len(candidates_to_rerank)}.")
                  processed_reranked_ids = {c.get('chunk_id') for c in final_ranked_chunks}
                  remaining_chunks = [
