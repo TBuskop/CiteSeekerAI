@@ -1,29 +1,30 @@
 #!/usr/bin/env python
+import os
 import re
 import json
-import concurrent.futures
-from typing import List, Dict, Optional, Tuple
-import xml.etree.ElementTree as ET # <<< NEW: Import ElementTree
 import time
+import traceback
+import concurrent.futures
+import xml.etree.ElementTree as ET # <<< NEW: Import ElementTree
 from pathlib import Path # <<< NEW: Import Path
+from typing import List, Dict, Optional, Tuple # <<< NEW: Import typing hints
 
 import httpx
-import trafilatura
 import fitz  # PyMuPDF for PDF extraction
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright, Cookie
+from playwright.sync_api import sync_playwright, Cookie, TimeoutError as PlaywrightTimeoutError, Page, Download  # Added Playwright TimeoutError import, Page, Download
 from playwright_stealth import stealth_sync
+import trafilatura
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-# <<< NEW: Define patterns for URLs that likely require Playwright >>>
-# Add regex patterns for domains or URL structures known to need JS rendering.
-# Examples:
-# - r"https://(.*\.)?twitter\.com/.*"
-# - r"https://(.*\.)?facebook\.com/.*"
-# - r"https://www\.some-spa-site\.com/app/.*"
-# - r"https://(.*\.)?javascript-heavy-domain\.org/.*"
-# Assume most don't need it, so keep this list specific.
+# <<< NEW: Import from extract_text >>>
+from src.rag.extract_text import extract_text_from_pdf as extract_pdf_text_from_rag
+
+# --- Playwright PDF Download Function (for cookie-preserving PDF downloads) ---
+from typing import Optional  # ensure Optional is available at top
+
+
 
 # change run path to current file
 import os
@@ -43,20 +44,55 @@ DYNAMIC_URL_PATTERNS: List[str] = [
     r"perfdrive", # iopscience.com validation page,
     r"annualreviews\.org/.*", # annualreviews.org,
     r"ametsoc\.org/.*", # ametsoc.org,
+    r"https://(.*\.)?pubs\.acs\.org/.*", # pubs.acs
 ]
+
+# --- Helper function to decide on Playwright usage ---
+def _url_needs_playwright(url: str) -> bool:
+    if not url:
+        return False
+    for pattern in DYNAMIC_URL_PATTERNS:
+        try:
+            if re.search(pattern, url, re.IGNORECASE):
+                return True
+        except re.error:
+            continue
+    return False
+
+# --- Helper function to fetch URL metadata via HEAD request ---
+def _get_url_metadata(url: str, headers: Dict[str, str]) -> Optional[Dict[str, str]]:
+    try:
+        head_resp = httpx.head(url, follow_redirects=True, timeout=20, headers=headers)
+        final_url = str(head_resp.url)
+        # preserve perfdrive fragment
+        if "perfdrive" in final_url:
+            final_url = url + "#perfdrive"
+        content_type = head_resp.headers.get("content-type", "").lower()
+        return {"final_url": final_url, "content_type": content_type}
+    except Exception as e:
+        print(f"Error fetching URL metadata for {url}: {e}")
+        return None
 
 ###############################
 # Headless Browser with Stealth
 ###############################
 ####################################
-# <<< NEW: Copernicus XML Handling >>>
+# <<< NEW: Copernicus URL Handling >>>
 ####################################
 
-def construct_copernicus_xml_url(html_url: str) -> Optional[str]:
+def construct_copernicus_url(html_url: str, file_extension: str = ".xml") -> Optional[str]:
     """
-    Attempts to construct the Copernicus XML download URL from the article HTML URL.
+    Attempts to construct the Copernicus download URL (XML or PDF) from the article HTML URL.
     Example HTML URL: https://hess.copernicus.org/articles/19/1521/2015/
     Example XML URL:  https://hess.copernicus.org/articles/19/1521/2015/hess-19-1521-2015.xml
+    Example PDF URL:  https://hess.copernicus.org/articles/19/1521/2015/hess-19-1521-2015.pdf
+
+    Args:
+        html_url: The URL of the HTML article page.
+        file_extension: The desired file extension (e.g., ".xml" or ".pdf").
+
+    Returns:
+        The constructed download URL or None if the pattern doesn't match.
     """
     # Regex to capture the necessary parts: subdomain (journal), volume, page, year
     match = re.match(r"https://(?P<journal>[^.]+)\.copernicus\.org/articles/(?P<vol>\d+)/(?P<page>\d+)/(?P<year>\d+)/?", html_url)
@@ -64,8 +100,8 @@ def construct_copernicus_xml_url(html_url: str) -> Optional[str]:
         parts = match.groupdict()
         # Construct the base path
         base_path = f"https://{parts['journal']}.copernicus.org/articles/{parts['vol']}/{parts['page']}/{parts['year']}/"
-        # Construct the filename part
-        filename = f"{parts['journal']}-{parts['vol']}-{parts['page']}-{parts['year']}.xml"
+        # Construct the filename part using the provided extension
+        filename = f"{parts['journal']}-{parts['vol']}-{parts['page']}-{parts['year']}{file_extension}"
         return base_path + filename
     return None
 
@@ -144,18 +180,20 @@ def get_spoof_cookies(domain: str) -> list[Cookie]:
         Cookie(name="_gid", value="GA1.2.0987654321.1717171717", domain=domain, path="/"),
     ]
 
-COOKIE_FILE = Path("iop.json") # <<< CHANGED: Use Path object
-
 def fetch_with_playwright(url: str) -> str:
     """
     Loads *url* in a stealth‑configured Playwright browser,
     persisting IOP Science / perfdrive cookies in ``iop.json``.
     Determines headless mode based on IOP cookie file status.
-    Returns the rendered HTML.
+    Attempts PDF download via Playwright if HTML extraction fails for specific sites (e.g., Wiley).
+    Returns the rendered HTML or extracted PDF text.
     """
     html_str = ""
+    pdf_text = "" # <<< NEW: Variable to store potential PDF text
+    source = "html_playwright" # <<< NEW: Default source
     browser = None
     context = None
+    page: Optional[Page] = None # <<< NEW: Type hint for page
 
     try:
         with sync_playwright() as p:
@@ -167,7 +205,7 @@ def fetch_with_playwright(url: str) -> str:
             headless = True # Default to headless
 
             if needs_iop_state:
-                if COOKIE_FILE.exists():
+                if os.path.exists(COOKIE_FILE):
                     try:
                         # Check if the file is valid JSON
                         with open(COOKIE_FILE, 'r') as f:
@@ -209,7 +247,8 @@ def fetch_with_playwright(url: str) -> str:
                 viewport={"width": 1280, "height": 800},
                 geolocation={"latitude": 52.1326, "longitude": 5.2913},
                 permissions=["geolocation"],
-                **storage_kwarg, # Pass storage_state if set
+                **storage_kwarg, # Pass storage_state if set,
+                accept_downloads=True
             )
             if storage_kwarg:
                  print(f"Loaded stored IOP state from {COOKIE_FILE}")
@@ -235,6 +274,8 @@ def fetch_with_playwright(url: str) -> str:
 
             # Pick the right body selector and adjust URL if needed
             effective_url = url # Start with the original URL
+            pdf_download_url: Optional[str] = None # <<< NEW: Initialize pdf_download_url
+
             if "iopscience" in url or "perfdrive" in url:
                 text_selector = 'div[itemprop="articleBody"]'
                 # Modify the URL *after* selector logic if needed
@@ -255,10 +296,16 @@ def fetch_with_playwright(url: str) -> str:
                 text_selector = "div.itemFullTextHtml"
             elif "ametsoc" in url:
                 text_selector = "div#articleBody"
+            elif "pubs.acs" in url:
+                text_selector = "div.article_content"
 
             print(f"Fetching URL via Playwright (headless={headless}): {effective_url}")
             # Increased timeout slightly, kept networkidle
             page.goto(effective_url)
+            time.sleep(2) # Initial wait for page load
+
+            page.goto(effective_url) # 60s timeout
+            
             # Consider adjusting sleep if needed, especially for non-headless
             if headless:
                 sleep_duration = 2
@@ -273,9 +320,13 @@ def fetch_with_playwright(url: str) -> str:
                     f"<html><body>{page.locator(text_selector).inner_text()}</body></html>"
                 )
                 print("Successfully extracted text content via selector.")
-            except Exception as e_extract:
-                print(f"Failed to extract text with selector '{text_selector}': {e_extract}. Falling back to full page content.")
-                html_str = page.content()
+                source = "html_playwright_selector"
+            except Exception as e:
+                    print("Selector extraction failed. Attempting to extract full HTML...")
+                    print(f"Error: {e}")
+                    html_str = page.content()
+                    source = "html_playwright_full_content"
+
 
             # ───────────────────────────────────────────────────────────────
             # 6. Persist cookies back to disk if this was an IOP visit
@@ -307,6 +358,7 @@ def fetch_with_playwright(url: str) -> str:
             print("Closing browser due to error or incomplete exit...")
             browser.close()
 
+    # <<< NEW: Return PDF text if extracted, otherwise HTML string >>>
     return html_str
 
 
@@ -351,213 +403,92 @@ def extract_meta_redirect(html: str, base_url: str) -> Optional[str]:
 ####################################
 def remove_references_section(text):
     """
-    Attempts to remove text starting from the line containing the
-    'References' or 'Bibliography' section header onwards.
-    Uses a case-insensitive, multiline search.
+    Detects references-related section headers and removes text starting from the last one
+    ONLY IF it appears after the first 1500 characters.
     """
-    # Pattern explanation:
-    # ^       - Matches the beginning of a line (due to re.MULTILINE)
-    # \s*     - Matches zero or more whitespace characters (spaces, tabs)
-    # (References|Bibliography) - Matches either "References" or "Bibliography"
-    # \s*     - Matches zero or more whitespace characters after the keyword
-    # $       - Matches the end of the line (due to re.MULTILINE)
     pattern = r'^\s*(References|Bibliography|Acknowledgement|Acknowledgements|\*\*References Used:\*\*)\s*$'
+    matches = list(re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE))
 
-    # Perform a multiline, case-insensitive search
-    match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+    if matches:
+        print(f"[*] Found {len(matches)} references-related section header(s).")
 
-    if match:
-        # Found the start of the references section header line
-        refs_start_index = match.start()
-        found_header = match.group().strip() # Get the actual header found (e.g., "References")
-        print(f"[*] Found '{found_header}' section header at index {refs_start_index}. Removing text from this line onwards.")
+        for i, match in enumerate(matches):
+            print(f"  [{i+1}] Found '{match.group().strip()}' at index {match.start()}")
 
-        # Return the text *before* the start of the matched line
-        # Slicing up to match.start() ensures the header line itself is removed
-        return text[:refs_start_index].strip()
-    else:
-        # Optional: Add a print statement for debugging if needed
-        # print("[*] Did not find a standard 'References' or 'Bibliography' section header line.")
-        print("[*] No references section header found. No text removed.")
-        return text # Return original text if no pattern matched
-    
-def extract_pdf_text(pdf_bytes: bytes) -> str:
-    """
-    Extracts text from PDF bytes using PyMuPDF.
-    """
-    if not pdf_bytes:
-        return ""
-    text = ""
-    try:
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
-            for page in doc:
-                text += page.get_text()
-        return text
-    except Exception as e:
-        print(f"Error extracting PDF text: {e}")
-        return "" # Return empty string on error
+        last_match = matches[-1]
+        last_index = last_match.start()
 
-# =====================================================
-# WebPageHelper Class (Optional - not used by process_dois)
-# =====================================================
-class WebPageHelper:
-    """Helper class to process web pages and split text into chunks."""
-    def __init__(
-        self,
-        min_char_count: int = 150,
-        snippet_chunk_size: int = 1000,
-        max_thread_num: int = 10,
-    ):
-        self.httpx_client = httpx.Client(verify=False, follow_redirects=True, timeout=15.0)
-        self.min_char_count = min_char_count
-        self.max_thread_num = max_thread_num
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=snippet_chunk_size,
-            chunk_overlap=0,
-            length_function=len,
-            is_separator_regex=False,
-            separators=[
-                "\n\n", "\n", ".", "\uff0e", "\u3002", ",", "\uff0c", "\u3001",
-                " ", "\u200B", "",
-            ],
-        )
-
-    def _needs_playwright(self, url: str) -> bool:
-        """Checks if the URL matches any dynamic pattern."""
-        for pattern in DYNAMIC_URL_PATTERNS:
-            if re.search(pattern, url, re.IGNORECASE):
-                return True
-        return False
-
-    def download_webpage_content(self, url: str) -> Optional[bytes]:
-        """Downloads content, choosing method based on URL patterns."""
-        if self._needs_playwright(url):
-            print(f"[WebPageHelper] Using Playwright for {url}")
-            html_str = fetch_with_playwright(url)
-            return html_str.encode('utf-8') if html_str else None
+        if last_index > 1500:
+            print(f"[*] Removing text from last header '{last_match.group().strip()}' at index {last_index}.")
+            return text[:last_index].strip()
         else:
-            print(f"[WebPageHelper] Using httpx for {url}")
-            try:
-                res = self.httpx_client.get(url, timeout=15.0)
-                res.raise_for_status()
-                potential_html = res.content.decode(res.encoding or 'utf-8', errors='ignore')
-                redirect_url = extract_meta_redirect(potential_html, str(res.url))
-                if redirect_url:
-                    print(f"[WebPageHelper] Found meta redirect from {url} to {redirect_url}. Following...")
-                    return self.download_webpage_content(redirect_url)
-                else:
-                    return res.content
-            except httpx.RequestError as exc:
-                print(f"[WebPageHelper] httpx request error for {url}: {exc}")
-                return None
-            except httpx.HTTPStatusError as exc:
-                print(f"[WebPageHelper] httpx status error for {url}: {exc.response.status_code} - {exc}")
-                return None
-            except Exception as exc:
-                print(f"[WebPageHelper] General error downloading {url}: {exc}")
-                return None
-
-    def urls_to_articles(self, urls: List[str]) -> Dict[str, Dict]:
-        """Processes multiple URLs to extract article text."""
-        articles = {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_thread_num) as executor:
-            future_to_url = {executor.submit(self.download_webpage_content, url): url for url in urls}
-
-            for future in concurrent.futures.as_completed(future_to_url):
-                url = future_to_url[future]
-                try:
-                    content_bytes = future.result()
-                    if content_bytes:
-                        try:
-                            content_str = content_bytes.decode('utf-8', errors='ignore')
-                            article_text = trafilatura.extract(
-                                content_str,
-                                include_tables=False,
-                                include_comments=False,
-                                output_format="txt",
-                                url=url
-                            )
-                            if article_text and len(article_text) > self.min_char_count:
-                                source_type = "html/dynamic" if self._needs_playwright(url) else "html/static"
-                                articles[url] = {"text": article_text, "source": source_type}
-                            else:
-                                print(f"[WebPageHelper] Extracted text too short or None for {url}")
-                        except Exception as e:
-                            print(f"[WebPageHelper] Error processing content from {url}: {e}")
-                    else:
-                        print(f"[WebPageHelper] Failed to download content for {url}")
-                except Exception as exc:
-                    print(f"[WebPageHelper] Error processing URL {url}: {exc}")
-        return articles
-
-    def close(self):
-        """Closes the httpx client."""
-        self.httpx_client.close()
-        print("[WebPageHelper] httpx client closed.")
-
-####################################
-# Fetch Article from URL Function (Refactored)
-####################################
-
-def _url_needs_playwright(url: str) -> bool:
-    """Helper function to check if a URL matches dynamic patterns."""
-    if not url: return False # Handle None or empty URLs
-    for pattern in DYNAMIC_URL_PATTERNS:
-        # Add robustness for potential malformed patterns
-        try:
-            if re.search(pattern, url, re.IGNORECASE):
-                return True
-        except re.error as e:
-            print(f"Warning: Invalid regex pattern '{pattern}': {e}")
-    return False
-
-def _get_url_metadata(url: str, headers: Dict[str, str]) -> Optional[Dict[str, str]]:
-    """
-    Performs a HEAD request to get the final URL and content type after redirects.
-    Returns a dictionary with 'final_url' and 'content_type' or None on error.
-    """
-    try:
-        print(f"Checking URL type: {url}")
-        head_resp = httpx.head(url, follow_redirects=True, timeout=20, headers=headers)
-        # head_resp.raise_for_status()
-        final_url = str(head_resp.url)
-        if "perfdrive" in final_url:
-            final_url = url + "#perfdrive" # Reset to original URL if it resolves to a validation page
-        content_type = head_resp.headers.get("content-type", "").lower()
-        print(f"URL resolved to: {final_url}, Content-Type: {content_type}")
-        return {"final_url": final_url, "content_type": content_type}
-    except httpx.HTTPStatusError as e:
-        print(f"HTTP Status Error during HEAD request for {url}: {e.response.status_code} - {e.request.url}")
-        return None # Indicate error with None
-    except httpx.RequestError as e:
-        print(f"Request Error during HEAD request for {url}: {e}")
-        return None # Indicate error with None
-    except Exception as e:
-        print(f"General Error during HEAD request for {url}: {e}")
-        return None # Indicate error with None
-
+            print(f"[*] Last header found at index {last_index} is within the first 1500 characters. No text removed.")
+            return text
+    else:
+        print("[*] No references section header found. No text removed.")
+        return text
 
 def _handle_pdf_url(url: str, headers: Dict[str, str]) -> Dict[str, str]:
-    """Downloads PDF from URL and extracts text."""
-    print(f"Fetching PDF content from {url} using httpx")
+    """Downloads PDF from URL and extracts text using httpx (default) or Playwright."""
+    pdf_bytes = None
+    source_prefix = "pdf_httpx" # Default source
+
+    # --- Existing httpx download logic ---
+    print(f"[*] Attempting PDF download via httpx for: {url}")
+    source_prefix = "pdf_httpx"
     try:
-        r = httpx.get(url, timeout=30, follow_redirects=True, headers=headers)
-        r.raise_for_status()
-        pdf_text = extract_pdf_text(r.content)
-        if pdf_text:
-            return {"text": pdf_text, "source": "pdf"}
-        else:
-            print(f"Failed to extract text from PDF: {url}")
-            return {"text": "", "source": "pdf_extract_failed"}
+        with httpx.stream("GET", url, headers=headers, follow_redirects=True, timeout=40.0) as response:
+            response.raise_for_status()
+            # Check content type again just to be sure
+            content_type = response.headers.get("content-type", "").lower()
+            if "application/pdf" not in content_type:
+                print(f"Warning: Expected PDF but got Content-Type '{content_type}' from {url}. Attempting to process anyway.")
+
+            pdf_bytes_list = []
+            for chunk in response.iter_bytes():
+                pdf_bytes_list.append(chunk)
+            pdf_bytes = b"".join(pdf_bytes_list)
+            print(f"PDF downloaded successfully via httpx from: {url} ({len(pdf_bytes)} bytes)")
+
     except httpx.HTTPStatusError as e:
-        print(f"HTTP Status Error downloading PDF {url}: {e.response.status_code}")
-        return {"text": "", "source": "pdf_download_failed_status"}
+        print(f"HTTP Status Error {e.response.status_code} downloading PDF from {url}: {e}")
     except httpx.RequestError as e:
-        print(f"Request Error downloading PDF {url}: {e}")
-        return {"text": "", "source": "pdf_download_failed_request"}
+        print(f"Request Error downloading PDF from {url}: {e}")
     except Exception as e:
-        print(f"General Error downloading/processing PDF {url}: {e}")
-        return {"text": "", "source": "pdf_download_failed_general"}
+        print(f"General Error downloading PDF via httpx from {url}: {e}")
+    # --- End httpx download logic ---
+
+    # Process downloaded bytes (common logic for both methods)
+    if pdf_bytes:
+        # Use the temp path if created by Playwright, otherwise create one
+        temp_file_path = Path(f"./temp_extracted_pdf_{int(time.time())}.pdf")
+        try:
+            # If using httpx, write the bytes to the temp file
+            with open(temp_file_path, "wb") as f:
+                f.write(pdf_bytes)
+
+            pdf_text = extract_pdf_text_from_rag(temp_file_path)
+            if pdf_text:
+                print(f"[*] Successfully extracted text from PDF ({source_prefix}): {url}")
+                return {"text": pdf_text, "source": source_prefix}
+            else:
+                print(f"[!] Failed to extract text from PDF ({source_prefix}): {url}")
+                return {"text": "", "source": f"{source_prefix}_extract_failed"}
+        except Exception as e:
+            print(f"[!] Error processing PDF after download ({source_prefix}): {e}")
+            return {"text": "", "source": f"{source_prefix}_processing_error"}
+        finally:
+            # Clean up the temp file used for extraction
+            if temp_file_path.exists():
+                 try:
+                    temp_file_path.unlink()
+                    print(f"[*] Removed temporary PDF: {temp_file_path}")
+                 except OSError as e_unlink:
+                    print(f"[!] Error removing temporary PDF {temp_file_path}: {e_unlink}")
+    else:
+        # This case means download failed (either httpx or Playwright)
+        print(f"[!] PDF download failed for {url} using")
+        return {"text": "", "source": f"{source_prefix}_download_failed"}
 
 
 def _handle_copernicus_xml(html_url: str, headers: Dict[str, str]) -> Optional[Dict[str, str]]:
@@ -566,7 +497,8 @@ def _handle_copernicus_xml(html_url: str, headers: Dict[str, str]) -> Optional[D
     Returns extracted text and source if successful, None otherwise (indicating fallback).
     """
     print(f"Detected Copernicus article page: {html_url}. Attempting XML fetch.")
-    xml_url = construct_copernicus_xml_url(html_url)
+    # <<< CHANGED: Use new function name and specify .xml extension >>>
+    xml_url = construct_copernicus_url(html_url, file_extension=".xml")
     if not xml_url:
         print(f"Could not construct Copernicus XML URL from {html_url}.")
         return None # Signal to fallback to HTML
@@ -587,7 +519,7 @@ def _handle_copernicus_xml(html_url: str, headers: Dict[str, str]) -> Optional[D
             print("Successfully extracted text from Copernicus XML.")
             return {"text": xml_text, "source": "copernicus_xml"}
         else:
-            print("Failed to extract sufficient text from Copernicus XML. Falling back to HTML.")
+            print("Failed to extract sufficient text from Copernicus XML. Falling back to PDF download.")
             return None # Signal fallback
 
     except httpx.HTTPStatusError as e:
@@ -696,7 +628,7 @@ def _extract_text_from_html(html_str: str, url: str, source_method: str) -> Dict
         return {"text": "", "source": f"{source_method}_extract_error"}
 
 
-def fetch_article_from_url(url: str) -> Dict[str, str]:
+def fetch_article_from_url(url: str, doi: str) -> Dict[str, str]:
     """
     Fetches article text from a URL by orchestrating helper functions.
     Handles PDFs, Copernicus XML, dynamic/static HTML, and meta redirects.
@@ -736,9 +668,14 @@ def fetch_article_from_url(url: str) -> Dict[str, str]:
         if copernicus_result:
             return copernicus_result # XML success
         else:
-            # XML failed or not found, mark for HTML fallback
-            is_copernicus_html = True
-            print(f"Falling back to HTML processing for Copernicus URL: {final_url}")
+            # XML failed or not found, try to download pdf
+            copernicus_pdf_url = construct_copernicus_url(final_url, file_extension=".pdf")
+            copernicus_result = _handle_pdf_url(copernicus_pdf_url, headers)
+            if copernicus_result:
+                return copernicus_result # XML success
+            else:
+                is_copernicus_html = True
+                print(f"Falling back to HTML processing for Copernicus URL: {final_url}")
 
     # 4. Handle HTML (or fallback for Copernicus/unknown types)
     if is_copernicus_html or ("text/html" in content_type or "application/xhtml+xml" in content_type or not content_type):
@@ -749,7 +686,43 @@ def fetch_article_from_url(url: str) -> Dict[str, str]:
         final_html_url = html_fetch_result["final_url"] # URL after potential meta-redirects
 
         # Extract text from the fetched HTML
-        return _extract_text_from_html(html_str, final_html_url, source_method)
+        html_extraction_result = _extract_text_from_html(html_str, final_html_url, source_method)
+
+        # --- NEW: PDF Fallback Logic ---
+        min_text_length_threshold = 3000 # Define a threshold for acceptable text length
+        html_text = html_extraction_result.get("text", "")
+        is_html_sufficient = html_text and len(html_text) >= min_text_length_threshold and "fetch_failed" not in html_extraction_result.get("source", "") and "extract_failed" not in html_extraction_result.get("source", "")
+
+        if is_html_sufficient:
+            print(f"[*] HTML extraction successful for {final_html_url}")
+            return html_extraction_result # Return successful HTML extraction
+        else:
+            print(f"[!] HTML extraction failed or text too short (length: {len(html_text)}) for {final_html_url}. Source: {html_extraction_result.get('source', 'N/A')}. Attempting PDF fallback using resolved URL: {final_url}")
+            sci_hub_url = f"https://sci-hub.se/{doi}"
+            response = httpx.get(sci_hub_url, headers=headers, follow_redirects=True)
+            html_bs = BeautifulSoup(response, "html.parser")
+            # html tag is embed with type="application/pdf"
+            pdf_embed_tag = html_bs.find("embed", type="application/pdf") # Find the PDF link in the HTML
+            # find the src attribute of the embed tag
+            if pdf_embed_tag:
+                final_url = pdf_embed_tag.get("src")
+                # add https: to the url
+                if not final_url.startswith("http"):
+                    final_url = "https:" + final_url
+
+            # find the type "application/pdf" tag in the html and extract the url
+
+            pdf_fallback_result = _handle_pdf_url(final_url, headers)
+            pdf_text = pdf_fallback_result.get("text", "")
+            is_pdf_sufficient = pdf_text and len(pdf_text) >= min_text_length_threshold and "failed" not in pdf_fallback_result.get("source", "")
+
+            if is_pdf_sufficient:
+                print(f"[+] PDF fallback successful for {final_url}.")
+                return pdf_fallback_result # Return successful PDF extraction
+            else:
+                print(f"[!] PDF fallback also failed or text too short for {final_url}. Source: {pdf_fallback_result.get('source', 'N/A')}. Returning original HTML result.")
+                return html_extraction_result # Return the original (failed) HTML result
+        # --- END NEW: PDF Fallback Logic ---
 
     # 5. Handle other unsupported content types
     else:
@@ -817,7 +790,7 @@ def _process_single_doi(doi: str, output_directory: str, min_text_length: int = 
 
     if resolved_url:
         print(f"Resolved DOI {doi} to URL: {resolved_url}")
-        article_data = fetch_article_from_url(resolved_url)
+        article_data = fetch_article_from_url(resolved_url, doi)
         # remove everything after references in the article text
         if article_data and isinstance(article_data.get("text"), str):
             # references could be written in different ways, so we use regex to find them. They end with references\n or \nn
@@ -853,13 +826,16 @@ def _process_single_doi(doi: str, output_directory: str, min_text_length: int = 
     print(f"--- Finished processing for DOI: {doi} ---")
     return doi, result_dict
 
-
 def process_dois(dois: List[str], output_directory: str, max_workers: int = 8) -> Dict[str, Dict[str, str]]:
     """
     Processes a list of DOIs in parallel: resolves each DOI, fetches its content dynamically,
     and returns a dictionary mapping each DOI to its extracted text and source.
     Saves successful extractions to the specified directory.
     """
+    # save cookie file at output path
+    global COOKIE_FILE 
+    COOKIE_FILE = os.path.join(output_directory, "iop.json")
+
     results = {}
     min_text_length = 100
 
@@ -894,6 +870,15 @@ def process_dois(dois: List[str], output_directory: str, max_workers: int = 8) -
             print(f"Processed {processed_count} / {total_count} DOIs...", flush=True)
             # else: # Optional: Log successful completion from the main loop if needed
             #     print(f"Successfully completed processing for DOI: {original_doi}")
+
+    # remove iop.json if it exists
+    if os.path.exists(COOKIE_FILE):
+        try:
+            os.remove(COOKIE_FILE)
+            print(f"Removed temporary cookie file: {COOKIE_FILE}")
+        except OSError as e:
+            print(f"Error removing temporary cookie file {COOKIE_FILE}: {e}")
+    
 
     print(f"Finished parallel processing for {total_count} DOIs.")
     return results
