@@ -50,7 +50,7 @@ RELEVANT_CHUNKS_DB_PATH = os.path.join(BASE_DATA_DIR, "databases", "relevant_chu
 RELEVANT_CHUNKS_COLLECTION_NAME = "relevant_paper_chunks" # New collection name
 
 # Search String Generation Configuration
-INITIAL_RESEARCH_QUESTION = "What is the ACEA model in crop modelling?" #"What are the effects of sea level rise on italy?"
+INITIAL_RESEARCH_QUESTION = "How have climate impact storylines and climate event storylines been applied to african case studies?" #"What are the effects of sea level rise on italy?"
 # Fallback query if generation fails
 # MANUAL_SCOPUS_QUERY =  "(\"virtual water\" OR \"water footprint\") AND trade AND (agriculture OR \"food security\")" # Example: Add your manual query here
 MANUAL_SCOPUS_QUERY = """
@@ -81,6 +81,10 @@ QUERY_RERANK_CANDIDATES = config.DEFAULT_RERANK_CANDIDATE_COUNT # Use RAG config
 COMBINED_ANSWERS_OUTPUT_FILENAME = os.path.join(BASE_DATA_DIR, "output", f"combined_answers_{time.strftime('%Y%m%d_%H%M%S')}.txt") # Output file for combined final answers
 QUERY_SPECIFIC_OUTPUT_DIR = os.path.join(BASE_DATA_DIR, "output", "query_specific") # Output directory for per-query files
 
+# --- Create a unique directory for this run ---
+RUN_TIMESTAMP = time.strftime('%Y%m%d_%H%M%S')
+RUN_SPECIFIC_OUTPUT_DIR = os.path.join(QUERY_SPECIFIC_OUTPUT_DIR, RUN_TIMESTAMP)
+
 # --- Ensure Directories Exist ---
 os.makedirs(FULL_TEXT_DIR, exist_ok=True)
 os.makedirs(CSV_DIR, exist_ok=True)
@@ -89,11 +93,12 @@ os.makedirs(os.path.dirname(CHUNK_DB_PATH), exist_ok=True)
 # Ensure the relevant chunk DB directory exists
 os.makedirs(os.path.dirname(RELEVANT_CHUNKS_DB_PATH), exist_ok=True) # Added for relevant chunks DB
 os.makedirs(QUERY_SPECIFIC_OUTPUT_DIR, exist_ok=True) # Added for per-query output files
+os.makedirs(RUN_SPECIFIC_OUTPUT_DIR, exist_ok=True) # Ensure the run-specific directory exists
 
 
 # --- Step 1: Decompose query ---
 print("\n--- Step 1: Decomposing Research Question ---")
-decomposed_queries, overall_goal = query_decomposition(query=INITIAL_RESEARCH_QUESTION, number_of_sub_queries=6, model=config.SUBQUERY_MODEL)
+decomposed_queries, overall_goal = query_decomposition(query=INITIAL_RESEARCH_QUESTION, number_of_sub_queries=2, model=config.SUBQUERY_MODEL)
 if decomposed_queries:
     print("Decomposed queries:")
     for i, query in enumerate(decomposed_queries):
@@ -122,8 +127,8 @@ def process_subquery(query, query_index):
 
     # --- Step 3: Finding Relevant DOIs from Abstracts ---
     print(f"[Query {query_index+1}] Finding relevant DOIs...")
-    # Use a unique output filename for each query's relevant abstracts list
-    relevant_abstracts_output_filename_i = os.path.join(QUERY_SPECIFIC_OUTPUT_DIR, f"relevant_abstracts_{query_index+1}.txt")
+    # Use a unique output filename for each query's relevant abstracts list within the run-specific folder
+    relevant_abstracts_output_filename_i = os.path.join(RUN_SPECIFIC_OUTPUT_DIR, f"relevant_abstracts_{query_index+1}.txt")
     # Determine collection name, appending '_hype' if HYPE mode is on
     active_collection = f"{ABSTRACT_COLLECTION_NAME}{'_hype' if config.HYPE else ''}"
     relevant_doi_list = find_relevant_dois_from_abstracts(
@@ -179,8 +184,8 @@ def process_subquery(query, query_index):
     final_answer = None
     if relevant_doi_list and llm_interface.gemini_client: # Only run if DOIs were found and client is ready
         print(f"[Query {query_index+1}] Querying relevant chunks...")
-        # Use a unique output filename for each query's final answer
-        query_output_filename_i = os.path.join(QUERY_SPECIFIC_OUTPUT_DIR, f"final_answer_{query_index+1}.txt")
+        # Use a unique output filename for each query's final answer within the run-specific folder
+        query_output_filename_i = os.path.join(RUN_SPECIFIC_OUTPUT_DIR, f"final_answer_{query_index+1}.txt")
         query_config = {
             "mode": "query", # Or "query_direct" if preferred
             "db_path": RELEVANT_CHUNKS_DB_PATH, # Read access, should be safe concurrently
@@ -190,6 +195,8 @@ def process_subquery(query, query_index):
             "reranker": QUERY_RERANKER,
             "rerank_candidates": QUERY_RERANK_CANDIDATES,
             "output_filename": query_output_filename_i, # Use unique filename
+            "output_dir": RUN_SPECIFIC_OUTPUT_DIR, # Pass the run-specific directory
+            "query_index": query_index, # Pass the query index
             # Add other necessary parameters for run_query_mode if needed
             "subquery_model": config.SUBQUERY_MODEL,
             "answer_model": config.CHAT_MODEL,

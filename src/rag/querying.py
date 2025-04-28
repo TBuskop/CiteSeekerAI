@@ -170,7 +170,9 @@ def retrieve_and_rerank_chunks(
 
 # --- Answer Generation ---
 def generate_answer(query: str, combined_context: str, retrieved_chunks: List[dict],
-                    model: str = CHAT_MODEL) -> str:
+                    model: str = CHAT_MODEL,
+                    output_dir: Optional[str] = None,
+                    query_index: Optional[int] = None) -> str: # Add query_index parameter
     """Generate answer using context and chunks, citing sources."""
     if not combined_context or not combined_context.strip():
          return "Could not generate an answer: no relevant context found."
@@ -272,15 +274,33 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
     answer_max_tokens = max(answer_max_tokens, 4096) # E.g., max 4k tokens for the answer itself
 
     print(f"Generating final answer using {model} (context tokens: ~{context_tokens}, prompt tokens: ~{prompt_total_tokens}, max answer tokens: {answer_max_tokens})...")
-    # save prompt, query and context to file for debugging
-    # find the project root directory
-    PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    save_path = os.path.join(PROJECT_ROOT, 'data', 'output', 'final_prompt.txt')
+
+    # --- Save prompt, query and context to file for debugging ---
+    # Determine the save directory
+    if output_dir and os.path.isdir(output_dir):
+        save_directory = output_dir
+    else:
+        # Fallback to the old location if output_dir is not provided or invalid
+        # find the project root directory relative to this script's location
+        PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+        save_directory = os.path.join(PROJECT_ROOT, 'data', 'output')
+        if not output_dir:
+             print(f"Warning: output_dir not provided to generate_answer. Saving final_prompt.txt to default location: {save_directory}")
+        else:
+             print(f"Warning: Provided output_dir '{output_dir}' is not a valid directory. Saving final_prompt.txt to default location: {save_directory}")
+        os.makedirs(save_directory, exist_ok=True) # Ensure fallback directory exists
+
+    # Construct the save path within the determined directory
+    prompt_filename = f"final_prompt_{query_index + 1}.txt" if query_index is not None else "final_prompt.txt"
+    save_path = os.path.join(save_directory, prompt_filename) # Modified line
+
     try:
         with open(save_path, 'w', encoding='utf-8') as f:
             f.write(prompt_to_print)
+        print(f"Debug prompt saved to: {save_path}") # Add confirmation message
     except Exception as e:
-        print(f"Warning: Could not write final_prompt.txt: {e}")
+        print(f"Warning: Could not write {prompt_filename} to {save_path}: {e}")
 
     # Generate the answer using the LLM interface
     final_answer_raw = llm_interface.generate_llm_response(prompt, max_tokens=answer_max_tokens, temperature=0.1, model=model) # Low temp for factual answers
@@ -383,6 +403,8 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
                         reranker_model: Optional[str] = RERANKER_MODEL,
                         rerank_candidate_count: int = DEFAULT_RERANK_CANDIDATE_COUNT,
                         execution_mode: str = "query",
+                        output_dir: Optional[str] = None,
+                        query_index: Optional[int] = None, # Add query_index
                         use_hype: bool = False) -> str:
     """Performs iterative RAG with subquery generation, separate hybrid retrieval, RRF, and optional reranking."""
 
@@ -510,7 +532,8 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
                 f"Content:\n{content}"
             )
     combined_context = "\n\n---\n\n".join(context_parts)
-    final_answer = generate_answer(initial_query, combined_context, final_chunks, model=answer_model)
+    # Pass output_dir and query_index to generate_answer
+    final_answer = generate_answer(initial_query, combined_context, final_chunks, model=answer_model, output_dir=output_dir, query_index=query_index)
     return final_answer
 
 
@@ -520,6 +543,8 @@ def query_index(query: str, db_path: str, collection_name: str,
                 answer_model: str = CHAT_MODEL,
                 reranker_model: Optional[str] = RERANKER_MODEL,
                 rerank_candidate_count: int = DEFAULT_RERANK_CANDIDATE_COUNT,
+                output_dir: Optional[str] = None,
+                query_index: Optional[int] = None, # Add query_index
                 execution_mode: str = "query_direct") -> str:
     """Performs direct hybrid query (no subqueries), RRF, optional reranking, and answer generation."""
     # Determine effective collection name
@@ -578,7 +603,8 @@ def query_index(query: str, db_path: str, collection_name: str,
 
     # 3. Generate Final Answer
     print("\n--- Generating Final Answer (Direct Hybrid Query) ---")
-    answer = generate_answer(query, combined_context, final_chunks_list, model=answer_model)
+    # Pass output_dir and query_index to generate_answer
+    answer = generate_answer(query, combined_context, final_chunks_list, model=answer_model, output_dir=output_dir, query_index=query_index)
     return answer
 
 def follow_up_query_refinement(intended_next_query: str, overall_goal: str, previous_queries: str, previous_answers: str) -> str:

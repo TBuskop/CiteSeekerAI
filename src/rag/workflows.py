@@ -168,6 +168,8 @@ def run_query_mode(config_params: Dict[str, Any]):
     if isinstance(reranker_model, str) and reranker_model.strip().lower() in ['none', '']:
         reranker_model = None
     rerank_candidates = config_params.get('rerank_candidates', config.DEFAULT_RERANK_CANDIDATE_COUNT)
+    output_dir = config_params.get('output_dir') # Get the output directory
+    query_index = config_params.get('query_index') # Get the query index
 
     # --- Add Collection Verification Step ---
     print(f"\n--- Verifying Collection State ---")
@@ -249,6 +251,8 @@ def run_query_mode(config_params: Dict[str, Any]):
                     reranker_model=reranker_model,
                     rerank_candidate_count=rerank_candidates,
                     execution_mode=mode,
+                    output_dir=output_dir,
+                    query_index=query_index, # Pass query_index
                     use_hype = use_hype
                 )
         elif mode == "query_direct":
@@ -260,6 +264,8 @@ def run_query_mode(config_params: Dict[str, Any]):
                     answer_model=config.CHAT_MODEL,
                     reranker_model=reranker_model,
                     rerank_candidate_count=rerank_candidates,
+                    output_dir=output_dir,
+                    query_index=query_index, # Pass query_index
                     execution_mode=mode
                 )
         else:
