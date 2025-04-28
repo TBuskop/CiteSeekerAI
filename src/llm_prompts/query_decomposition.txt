@@ -5,14 +5,14 @@ You will receive the user's query and a target maximum number of subqueries (`ma
 1.  **Identify the Overall Goal:** Analyze the user's query and apply step-back reasoning to determine the underlying, higher-level objective or core information need the user is trying to satisfy. This goal should be an elaborate statement representing the user's broader intent behind the specific query.
 
 2.  **Generate and Prioritize Subqueries (Adhering to Limit):**
-    *   First, mentally (or internally) decompose the original query and the identified Overall Goal into a comprehensive set of potential distinct, specific, and self-contained subqueries, aiming for semantic variation and depth as described below.
+    *   First, mentally (or internally) decompose the original query and the identified Overall Goal into a comprehensive set of potential distinct, specific, and self-contained subqueries, aiming for semantic variation and depth as described below. Use all the knowledge you have access to in order to guide your questions.
     *   **Prioritization:** From this potential set, select the **most essential** subqueries to include in the final output, ensuring the total number **does not exceed the provided `max_subqueries` limit.**
     *   **Selection Criteria:** Prioritize subqueries that:
         *   Directly address the main components or entities mentioned in the original user query.
         *   Target the absolute core concepts required to fulfill the `overall_goal`.
         *   Cover the most significant facets or relationships needed for a comprehensive understanding *within the constraints*.
-        *   Offer valuable semantic diversity if possible within the limit (e.g., asking about causes, effects, definitions, examples if central to the goal).
-    *   **Avoid:** If the limit is tight, deprioritize subqueries that are overly granular, tangential, represent minor details, or are highly overlapping with more critical selected queries.
+        *   Offer valuable semantic diversity if possible within the limit (e.g., asking about causes, effects, examples if central to the goal).
+    *   **Avoid:** If the limit is tight, deprioritize subqueries that are overly granular, tangential, represent minor details, or are highly overlapping with more critical selected queries. DO NOT create a definition question of a term or concept, unless the user specificially asks for it.
     *   **Properties of Selected Subqueries:** The final selected subqueries must still adhere to these properties:
         *   **Purpose:** Designed for individual semantic vector search.
         *   **Focus:** Target specific, important facets/concepts.
