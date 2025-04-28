@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 
 # --- Add project root to sys.path ---
 # This allows absolute imports from 'src' assuming the script is in 'workflows'
@@ -27,7 +28,7 @@ import config
 # --- Central Configuration ---
 # General
 # Assuming the script is run from the project root (e.g., python workflows/paper_collection_pipeline.py)
-BASE_DATA_DIR = "../../data"
+BASE_DATA_DIR = os.path.join(_PROJECT_ROOT, "data")
 DOWNLOADS_DIR = os.path.join(BASE_DATA_DIR, "downloads")
 FULL_TEXT_DIR = os.path.join(DOWNLOADS_DIR, "full_doi_texts")
 CSV_DIR = os.path.join(DOWNLOADS_DIR, "csv")
@@ -49,11 +50,11 @@ RELEVANT_CHUNKS_DB_PATH = os.path.join(BASE_DATA_DIR, "databases", "relevant_chu
 RELEVANT_CHUNKS_COLLECTION_NAME = "relevant_paper_chunks" # New collection name
 
 # Search String Generation Configuration
-INITIAL_RESEARCH_QUESTION = "What is the fast track approach to calculating the crop water footprint and what are the benefits and downsides of this? It it still applicable in a changing climate?" #"What are the effects of sea level rise on italy?"
+INITIAL_RESEARCH_QUESTION = "What is the ACEA model in crop modelling?" #"What are the effects of sea level rise on italy?"
 # Fallback query if generation fails
 # MANUAL_SCOPUS_QUERY =  "(\"virtual water\" OR \"water footprint\") AND trade AND (agriculture OR \"food security\")" # Example: Add your manual query here
 MANUAL_SCOPUS_QUERY = """
-"climate change" AND storylines
+"water footprint*" AND "crop"
 """
 DEFAULT_SCOPUS_QUERY = "climate OR 'climate change' OR 'climate variability' AND robustness AND uncertainty AND policy AND decision AND making"
 SAVE_GENERATED_SEARCH_STRING = True # Whether to save the generated string to a file
@@ -77,7 +78,7 @@ RELEVANT_ABSTRACTS_OUTPUT_FILENAME = os.path.join(BASE_DATA_DIR, "output", "rele
 QUERY_TOP_K = 15 # Example: Number of results for the final query
 QUERY_RERANKER = config.RERANKER_MODEL # Use RAG config default
 QUERY_RERANK_CANDIDATES = config.DEFAULT_RERANK_CANDIDATE_COUNT # Use RAG config default
-COMBINED_ANSWERS_OUTPUT_FILENAME = os.path.join(BASE_DATA_DIR, "output", "combined_answers.txt") # Output file for combined final answers
+COMBINED_ANSWERS_OUTPUT_FILENAME = os.path.join(BASE_DATA_DIR, "output", f"combined_answers_{time.strftime('%Y%m%d_%H%M%S')}.txt") # Output file for combined final answers
 QUERY_SPECIFIC_OUTPUT_DIR = os.path.join(BASE_DATA_DIR, "output", "query_specific") # Output directory for per-query files
 
 # --- Ensure Directories Exist ---
@@ -92,7 +93,7 @@ os.makedirs(QUERY_SPECIFIC_OUTPUT_DIR, exist_ok=True) # Added for per-query outp
 
 # --- Step 1: Decompose query ---
 print("\n--- Step 1: Decomposing Research Question ---")
-decomposed_queries, overall_goal = query_decomposition(query=INITIAL_RESEARCH_QUESTION, number_of_sub_queries=1, model=config.SUBQUERY_MODEL)
+decomposed_queries, overall_goal = query_decomposition(query=INITIAL_RESEARCH_QUESTION, number_of_sub_queries=6, model=config.SUBQUERY_MODEL)
 if decomposed_queries:
     print("Decomposed queries:")
     for i, query in enumerate(decomposed_queries):

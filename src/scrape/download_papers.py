@@ -333,6 +333,11 @@ def fetch_with_playwright(url: str) -> str:
             # ───────────────────────────────────────────────────────────────
             if needs_iop_state:
                 print(f"Saving updated state to {COOKIE_FILE}...")
+                # check if cookies folder exists, if not create it
+                cookies_folder = Path(COOKIE_FILE).parent
+                if not cookies_folder.exists():
+                    cookies_folder.mkdir(parents=True, exist_ok=True)
+                    print(f"Created cookies folder: {cookies_folder}")
                 context.storage_state(path=str(COOKIE_FILE)) # Use str() for path object
                 print(f"Successfully saved state to {COOKIE_FILE}")
 
@@ -428,7 +433,7 @@ def remove_references_section(text):
         print("[*] No references section header found. No text removed.")
         return text
 
-def _handle_pdf_url(url: str, headers: Dict[str, str]) -> Dict[str, str]:
+def _handle_pdf_url(url: str, output_directory, headers: Dict[str, str]) -> Dict[str, str]:
     """Downloads PDF from URL and extracts text using httpx (default) or Playwright."""
     pdf_bytes = None
     source_prefix = "pdf_httpx" # Default source
@@ -460,8 +465,12 @@ def _handle_pdf_url(url: str, headers: Dict[str, str]) -> Dict[str, str]:
 
     # Process downloaded bytes (common logic for both methods)
     if pdf_bytes:
+        # create a temp folder in the output directory if it doesn't exist
+        
+        temp_dir = Path(output_directory) / "temp" # <<< NEW: Use output directory for temp files
+        temp_dir.mkdir(parents=True, exist_ok=True) # Create temp directory if it doesn't exist
         # Use the temp path if created by Playwright, otherwise create one
-        temp_file_path = Path(f"./temp_extracted_pdf_{int(time.time())}.pdf")
+        temp_file_path = temp_dir / f"temp_extracted_pdf_{int(time.time())}.pdf"
         try:
             # If using httpx, write the bytes to the temp file
             with open(temp_file_path, "wb") as f:
@@ -628,7 +637,7 @@ def _extract_text_from_html(html_str: str, url: str, source_method: str) -> Dict
         return {"text": "", "source": f"{source_method}_extract_error"}
 
 
-def fetch_article_from_url(url: str, doi: str) -> Dict[str, str]:
+def fetch_article_from_url(url: str, doi: str, output_directory) -> Dict[str, str]:
     """
     Fetches article text from a URL by orchestrating helper functions.
     Handles PDFs, Copernicus XML, dynamic/static HTML, and meta redirects.
@@ -658,7 +667,7 @@ def fetch_article_from_url(url: str, doi: str) -> Dict[str, str]:
 
     # 2. Handle PDF
     if "application/pdf" in content_type:
-        return _handle_pdf_url(final_url, headers)
+        return _handle_pdf_url(final_url, output_directory, headers)
 
     # 3. Handle Copernicus (Check for XML first)
     is_copernicus_html = False
@@ -670,7 +679,7 @@ def fetch_article_from_url(url: str, doi: str) -> Dict[str, str]:
         else:
             # XML failed or not found, try to download pdf
             copernicus_pdf_url = construct_copernicus_url(final_url, file_extension=".pdf")
-            copernicus_result = _handle_pdf_url(copernicus_pdf_url, headers)
+            copernicus_result = _handle_pdf_url(copernicus_pdf_url, output_directory,headers)
             if copernicus_result:
                 return copernicus_result # XML success
             else:
@@ -712,7 +721,7 @@ def fetch_article_from_url(url: str, doi: str) -> Dict[str, str]:
 
             # find the type "application/pdf" tag in the html and extract the url
 
-            pdf_fallback_result = _handle_pdf_url(final_url, headers)
+            pdf_fallback_result = _handle_pdf_url(final_url,output_directory, headers)
             pdf_text = pdf_fallback_result.get("text", "")
             is_pdf_sufficient = pdf_text and len(pdf_text) >= min_text_length_threshold and "failed" not in pdf_fallback_result.get("source", "")
 
@@ -790,7 +799,7 @@ def _process_single_doi(doi: str, output_directory: str, min_text_length: int = 
 
     if resolved_url:
         print(f"Resolved DOI {doi} to URL: {resolved_url}")
-        article_data = fetch_article_from_url(resolved_url, doi)
+        article_data = fetch_article_from_url(resolved_url, doi, output_directory)
         # remove everything after references in the article text
         if article_data and isinstance(article_data.get("text"), str):
             # references could be written in different ways, so we use regex to find them. They end with references\n or \nn
@@ -834,7 +843,7 @@ def process_dois(dois: List[str], output_directory: str, max_workers: int = 8) -
     """
     # save cookie file at output path
     global COOKIE_FILE 
-    COOKIE_FILE = os.path.join(output_directory, "iop.json")
+    COOKIE_FILE = os.path.join(output_directory, "cookies", "iop.json")
 
     results = {}
     min_text_length = 100
