@@ -29,6 +29,8 @@ try:
     from google import genai
     from google.api_core import exceptions as google_exceptions
     from google.genai.types import EmbedContentConfig, GenerateContentConfig, HarmCategory, HarmBlockThreshold
+    # --- Add ThinkingConfig import ---
+    from google.genai.types import ThinkingConfig
     GOOGLE_GENAI_AVAILABLE = True
 except ImportError:
     print("Warning: Google Generative AI library not installed (`pip install google-generativeai`). Gemini models unavailable.")
@@ -39,6 +41,7 @@ except ImportError:
     GenerateContentConfig = None
     HarmCategory = None
     HarmBlockThreshold = None
+    ThinkingConfig = None
 
 # --- REINTRODUCE Global client variable ---
 gemini_client: Optional[genai.Client] = None
@@ -248,7 +251,7 @@ def generate_llm_response(prompt: str, max_tokens: int, temperature: float = 0.7
     api_model_name = target_model if target_model.startswith("models/") else f"models/{target_model}"
 
     # Define supported models (adjust if necessary based on CHAT_MODEL/SUBQUERY_MODEL etc.)
-    supported_gemini_models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro", "gemini-1.0-pro", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-8b", "gemini-2.5-pro-exp-03-25", "gemini-2.5-pro-preview-03-25"]
+    supported_gemini_models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro", "gemini-1.0-pro", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-8b", "gemini-2.5-pro-exp-03-25", "gemini-2.5-pro-preview-03-25", "gemini-2.5-flash-preview-04-17", "gemini-2.5-flash-preview-04-17"]
     # Extract base model name for check
     base_model_name = api_model_name.split('/')[-1]
 
@@ -258,19 +261,23 @@ def generate_llm_response(prompt: str, max_tokens: int, temperature: float = 0.7
              return "[Error: Google GenAI client not available or not initialized correctly]"
 
         # Prepare generation config
-        generation_config = GenerateContentConfig(
-            temperature=temperature,
-            max_output_tokens=max_tokens,
-            response_mime_type="text/plain", # Often default, but can be explicit
-        )
-    
+        generation_config_kwargs = {
+            "temperature": temperature,
+            "max_output_tokens": max_tokens,
+            "response_mime_type": "text/plain",
+        }
+        if ThinkingConfig and "2.5-flash" in api_model_name:
+            generation_config_kwargs["thinking_config"] = ThinkingConfig(thinking_budget=0)
+        generation_config = GenerateContentConfig(**generation_config_kwargs)
+
         try:
             # Use the client.models.generate_content method
-            response = gemini_client.models.generate_content(
-                model=api_model_name, # Pass the full model name
-                contents=prompt,      # Pass the prompt string
-                config=generation_config,
-            )
+            generate_content_args = {
+                'model': api_model_name,
+                'contents': prompt,
+                'config': generation_config,
+            }
+            response = gemini_client.models.generate_content(**generate_content_args)
             # print(f"DEBUG: Full Response for {api_model_name}: {response}") # Optional debug
 
             # --- Process Gemini Response ---
