@@ -1,0 +1,16 @@
+beautifulsoup4
+chromadb
+google-api-core
+google-generativeai
+httpx
+langchain
+numpy
+pandas
+pdfminer.six
+playwright
+playwright-stealth
+PyMuPDF
+python-dotenv
+tiktoken
+trafilatura
+tqdm
