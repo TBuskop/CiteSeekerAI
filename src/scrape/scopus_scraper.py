@@ -149,7 +149,7 @@ class ScopusScraper:
             # or subsequent steps. The provided URL seems specific to VU Amsterdam via OCLC.
             # If institution is generic, a different starting URL might be needed.
             # For now, we keep the existing URL.
-            scopus_url = "https://www-scopus-com.vu-nl.idm.oclc.org/search/form.uri?display=basic"
+            scopus_url = "https://www.scopus.com/search/form.uri?display=basic"
             logger.info(f"Navigating to: {scopus_url}")
             self.page.goto(scopus_url)
             
@@ -366,7 +366,7 @@ class ScopusScraper:
             # Ensure we are on the search page
             if "search/form.uri" not in self.page.url:
                 logger.info("Not on search page, navigating...")
-                self.page.goto("https://www-scopus-com.vu-nl.idm.oclc.org/search/form.uri?display=basic")
+                self.page.goto("https://www.scopus.com/search/form.uri?display=basic")
                 self.page.wait_for_load_state('networkidle')
                 # Check again after navigation
                 if "search/form.uri" not in self.page.url:
