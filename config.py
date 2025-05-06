@@ -9,6 +9,12 @@ from dotenv import load_dotenv
 # Load environment variables from .env file if present
 load_dotenv(override=True)  # Force override of existing environment variables
 
+# --- Query ---
+QUERY = """
+    How can probabbilities be integrated into climate impact storylines?
+"""
+QUERY_DECOMPOSITION_NR = 3  # Number of sub-queries to generate from the main query
+
 # --- API Keys ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 

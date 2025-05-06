@@ -46,7 +46,8 @@ RELEVANT_CHUNKS_DB_PATH = os.path.join(BASE_DATA_DIR, "databases", "relevant_chu
 RELEVANT_CHUNKS_COLLECTION_NAME = "relevant_paper_chunks"
 
 # --- Research Question & Search Configuration ---
-INITIAL_RESEARCH_QUESTION = "what are the main drivers of crop water use for virtual trade?"
+INITIAL_RESEARCH_QUESTION = config.QUERY
+QUERY_DECOMPOSITION_NR = config.QUERY_DECOMPOSITION_NR  # Number of sub-queries to generate from the main query 
 
 # Abstract Collection Configuration
 TOP_K_ABSTRACTS = config.TOP_K_ABSTRACTS
@@ -77,7 +78,7 @@ os.makedirs(RUN_SPECIFIC_OUTPUT_DIR, exist_ok=True)
 print("\n--- Step 1: Decomposing Research Question ---")
 decomposed_queries, overall_goal = query_decomposition(
     query=INITIAL_RESEARCH_QUESTION,
-    number_of_sub_queries=2,
+    number_of_sub_queries= QUERY_DECOMPOSITION_NR,
     model=config.SUBQUERY_MODEL
 )
 if decomposed_queries:
