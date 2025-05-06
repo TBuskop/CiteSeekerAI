@@ -607,7 +607,7 @@ def query_index(query: str, db_path: str, collection_name: str,
     answer = generate_answer(query, combined_context, final_chunks_list, model=answer_model, output_dir=output_dir, query_index=query_index)
     return answer
 
-def follow_up_query_refinement(intended_next_query: str, overall_goal: str, previous_queries: str, previous_answers: str) -> str:
+def follow_up_query_refinement(intended_next_query: str, overall_goal: str, previous_queries: str, previous_answers: str, model: str) -> str:
     """
     Generates a follow-up query based on the previous answer.
     This is a placeholder function and should be implemented as needed.
@@ -635,7 +635,7 @@ def follow_up_query_refinement(intended_next_query: str, overall_goal: str, prev
     
     response = llm_interface.generate_llm_response(
             prompt=full_prompt,
-            model=SUBQUERY_MODEL,
+            model=model,
             temperature=1,
             max_tokens=100000 # Adjust based on expected complexity
         )

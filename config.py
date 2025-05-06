@@ -15,6 +15,12 @@ QUERY = """
 """
 QUERY_DECOMPOSITION_NR = 3  # Number of sub-queries to generate from the main query
 
+# --- Scopus Search string ---
+SCOPUS_SEARCH_STRING = """
+    ("climate impact storylines" AND "probability")
+"""
+
+
 # --- API Keys ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -50,6 +56,8 @@ HYPE = True  # Enable or disable HyPE for query generation
 HYPE_SUFFIX = "_hype"
 # Source abstracts collection for enriching HyPE metadata
 HYPE_SOURCE_COLLECTION_NAME = os.getenv("HYPE_SOURCE_COLLECTION_NAME", "abstracts")
+HYPE_MODEL = "gemini-2.0-flash-lite" # cheap model for HyPE question generation
+
 
 # --- Re-ranker Configuration ---
 # For refining search results after initial retrieval.

@@ -14,7 +14,7 @@ import concurrent.futures
 from typing import List
 from src.rag.chroma_manager import get_chroma_collection
 from src.my_utils.llm_interface import initialize_clients, generate_llm_response  # Keep others
-from config import EMBEDDING_MODEL, OUTPUT_EMBEDDING_DIMENSION, DEFAULT_EMBED_BATCH_SIZE, DEFAULT_EMBED_DELAY
+from config import EMBEDDING_MODEL, OUTPUT_EMBEDDING_DIMENSION, DEFAULT_EMBED_BATCH_SIZE, DEFAULT_EMBED_DELAY, HYPE_MODEL
 from src.rag.embedding import run_embed_mode_logic, EMBEDDING_IMPORTS_OK, genai  # batch embedding helper
 
 SYSTEM_PROMPT = """
@@ -79,7 +79,7 @@ Plain Language: Use clear, accessible language suitable for search queries. Avoi
 Include Variations/Synonyms (Optional): Where helpful for search, incorporate synonyms or alternative phrasings for key concepts (e.g., "precipitation change" vs "rainfall variability").
 """
 
-model = "gemini-2.0-flash-lite" # cheap model for HyPE question generation
+model = HYPE_MODEL # cheap model for HyPE question generation
 
 def run_hype_index(db_path: str, source_collection_name: str, hype_collection_name: str, client=None):
     # Initialization of clients should happen outside, not in parallel contexts
@@ -221,8 +221,8 @@ if __name__ == '__main__':
         print(f"Running HyPE for {source_collection} -> {hype_collection} in {db_path}")
         client_to_pass = initialize_clients()
         print(f"HyPE __main__: Client object after init: {type(client_to_pass)}")
-        # run_hype_index(db_path, source_collection, hype_collection, client=client_to_pass)
-        questions_dois = check_hype_db(db_path, ['10.1088/1748-9326/aa6b09', '10.1002/2015WR017148'])
+        run_hype_index(db_path, source_collection, hype_collection, client=client_to_pass)
+        questions_dois = check_hype_db(db_path, ['10.1088/1748-9326/aa6b09', '10.5194/hess-26-923-2022'])
         # nicely print the questions_dois dict
         if questions_dois:
             print("HyPE: Found the following questions for the specified DOIs:")

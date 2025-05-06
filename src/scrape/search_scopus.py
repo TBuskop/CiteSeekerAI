@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 # --- Add project root to sys.path ---
 # This allows absolute imports from 'src' assuming the script is in 'workflows'
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
@@ -48,7 +48,9 @@ def parse_arguments():
     # read generated_search_string.txt and use it as the default query
     PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
     save_path = os.path.join(PROJECT_ROOT, 'data', 'output', "generated_scopus_search_string.txt")
-    default_query_file = save_path
+    default_query_file = Path(save_path)
+
+    print(f"Default query file path: {default_query_file}")
     if default_query_file.exists():
         try:
             default_query = default_query_file.read_text().strip()
@@ -133,6 +135,10 @@ def run_scopus_search(query: str = None, headless: bool = False,
         username = username or os.getenv("SCOPUS_USERNAME")
         password = password or os.getenv("SCOPUS_PASSWORD")
         institution = institution or os.getenv("SCOPUS_INSTITUTION")
+
+        username = "depricated"
+        password = "depricated"
+        institution = "depricated"
         
         # Add fallback check for old environment variable names
         if not username:
@@ -202,12 +208,12 @@ def run_scopus_search(query: str = None, headless: bool = False,
         ) as scraper:
             logger.info("Scopus scraper initialized successfully.")
             
-            # Login to Scopus
-            login_success = scraper.login(username=username, password=password)
-            if not login_success:
-                logger.error("Login failed. Check credentials and network connection.")
-                return False, None
-            logger.info("Logged in successfully.")
+            # # Login to Scopus
+            # login_success = scraper.login(username=username, password=password)
+            # if not login_success:
+            #     logger.error("Login failed. Check credentials and network connection.")
+            #     return False, None
+            # logger.info("Logged in successfully.")
             
             # Perform search
             search_success = scraper.search(query)
