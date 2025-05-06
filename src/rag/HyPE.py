@@ -125,7 +125,7 @@ def run_hype_index(db_path: str, source_collection_name: str, hype_collection_na
         abstracts_list = [{'id': aid, 'abstract': txt} for aid, txt in zip(batch_ids, batch_texts)]
         prompt = SYSTEM_PROMPT + "\n\nProvide output as JSON array where each element has 'id' and 'questions' list.\n"
         prompt += f"Input abstracts: {json.dumps(abstracts_list)}"
-        response = generate_llm_response(prompt, max_tokens=2048, temperature=0, model=model).strip()
+        response = generate_llm_response(prompt, max_tokens=3048, temperature=0, model=model).strip()
         # remove markdown wrappers
         for wrapper in ("```json\n", "\n```"):
             if response.startswith(wrapper): response = response[len(wrapper):]
@@ -147,7 +147,7 @@ def run_hype_index(db_path: str, source_collection_name: str, hype_collection_na
             text = docs_list[0]
             for idx_q, question in enumerate(qs):
                 ids_.append(f"{aid}_hq{idx_q}")
-                mds.append({'doi': aid, 'question': question, 'has_embedding': False})
+                mds.append({'original_chunk_id': aid, 'question': question, 'has_embedding': False})
                 docs.append(text)
         if ids_:
             # detect duplicate question IDs
