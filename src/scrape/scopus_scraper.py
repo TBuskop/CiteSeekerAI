@@ -15,7 +15,6 @@ class ScopusScraper:
     def __init__(self, 
                  headless: bool = False, 
                  download_dir: Optional[Path] = None,
-                 institution: Optional[str] = None,
                  screenshots_dir: Optional[Path] = None):
         """
         Initialize the Scopus scraper.
@@ -23,12 +22,10 @@ class ScopusScraper:
         Args:
             headless: Whether to run the browser in headless mode
             download_dir: Directory where downloads should be saved
-            institution: Name of your institution
             screenshots_dir: Directory to save screenshots (defaults to tests/screenshots)
         """
         self.headless = headless
         self.download_dir = download_dir or Path.home() / "Downloads"
-        self.institution = institution
         self.browser = None
         self.page = None
         self.playwright = None
@@ -129,225 +126,6 @@ class ScopusScraper:
             self.playwright = None
             
         logger.info("Browser closed")
-    
-    def login(self, username: Optional[str] = None, password: Optional[str] = None) -> bool:
-        """
-        Login to Scopus using provided credentials or institutional access.
-        
-        Args:
-            username: Scopus username (required for direct or institutional login)
-            password: Scopus password (required for direct or institutional login)
-            
-        Returns:
-            bool: True if login successful, False otherwise
-        """
-        try:
-            logger.info("Attempting to access Scopus...")
-            
-            # Navigate to Scopus - Use institution-specific URL if provided, otherwise generic
-            # Assuming the institution logic requires a specific entry point handled by the URL
-            # or subsequent steps. The provided URL seems specific to VU Amsterdam via OCLC.
-            # If institution is generic, a different starting URL might be needed.
-            # For now, we keep the existing URL.
-            scopus_url = "https://www.scopus.com/search/form.uri?display=basic"
-            logger.info(f"Navigating to: {scopus_url}")
-            self.page.goto(scopus_url)
-            
-            # Wait for page to load completely
-            self.page.wait_for_load_state('networkidle')
-            
-            # Check if already logged in
-            if "search/form.uri" in self.page.url and not ("signin" in self.page.url or "login" in self.page.url):
-                logger.info("Already logged in to Scopus")
-                return True
-            
-            # Check if we need to proceed to login (specific to OCLC proxy?)
-            proceed_button = self.page.query_selector('input[value="PROCEED TO LOGIN"]')
-            if proceed_button:
-                logger.info("Clicking 'PROCEED TO LOGIN' button")
-                proceed_button.click()
-                self.page.wait_for_load_state('networkidle')
-            
-            # Check for institution selection screen (specific to VU Amsterdam)
-            # This part might need generalization if other institutions are used.
-            vu_selector = 'div[data-entityid="http://stsfed.login.vu.nl/adfs/services/trust"]'
-            if self.page.query_selector(vu_selector):
-                logger.info("Found institution selection screen, selecting VU Amsterdam")
-                self.page.click(vu_selector)
-                self.page.wait_for_load_state('networkidle')
-
-            # Check if we're on the VU login screen or similar institutional login
-            if "id.vu.nl" in self.page.url or self.page.query_selector('#userNameInput'):
-                logger.info("Found institutional login form (e.g., VU), entering credentials")
-                
-                if not username or not password:
-                    logger.error("Username and password required for institutional login but not provided")
-                    self._save_screenshot("login_missing_credentials")
-                    return False
-                
-                # Fill in username/ID
-                # Use generic selectors first, fallback to specific ones
-                user_input_selectors = ['#userNameInput', 'input[name="username"]', 'input[type="email"]']
-                pass_input_selectors = ['#passwordInput', 'input[name="password"]', 'input[type="password"]']
-                submit_button_selectors = ['#submitButton', 'button[type="submit"]', 'button:has-text("Sign in")']
-
-                filled_user = False
-                for selector in user_input_selectors:
-                    if self.page.is_visible(selector):
-                        self.page.fill(selector, username)
-                        filled_user = True
-                        break
-                if not filled_user:
-                     logger.error("Could not find username input field on institutional login page.")
-                     self._save_screenshot("login_no_user_field")
-                     return False
-
-                filled_pass = False
-                for selector in pass_input_selectors:
-                     if self.page.is_visible(selector):
-                         self.page.fill(selector, password)
-                         filled_pass = True
-                         break
-                if not filled_pass:
-                     logger.error("Could not find password input field on institutional login page.")
-                     self._save_screenshot("login_no_pass_field")
-                     return False
-
-                clicked_submit = False
-                for selector in submit_button_selectors:
-                     if self.page.is_visible(selector):
-                         self.page.click(selector)
-                         clicked_submit = True
-                         break
-                if not clicked_submit:
-                     logger.error("Could not find submit button on institutional login page.")
-                     self._save_screenshot("login_no_submit_button")
-                     return False
-
-                # Wait for redirect and authentication to complete
-                logger.info("Waiting for login process to complete...")
-                try:
-                    # Wait longer for potential redirects after login
-                    self.page.wait_for_url("**/search/form.uri**", timeout=60000) 
-                except PlaywrightTimeoutError:
-                     logger.warning("Timeout waiting for Scopus search page after login. Checking current URL.")
-                
-                # Give additional time for redirects and processing
-                time.sleep(5) # Keep a short sleep just in case
-                
-                # Check if we reached Scopus successfully
-                if "scopus" in self.page.url and "search/form" in self.page.url:
-                    logger.info("Login successful, reached Scopus search page")
-                    return True
-                else:
-                    # Check for error messages
-                    error_selector = '.error, .errorText, #errorText, [data-testid="error"]'
-                    error_msg = "Unknown login error"
-                    if self.page.query_selector(error_selector):
-                        error_msg = self.page.text_content(error_selector)
-                    logger.error(f"Login failed. Error: '{error_msg}'. Current URL: {self.page.url}")
-                    self._save_screenshot("login_failed")
-                    return False
-            
-            # Fallback: Check if it's a direct Elsevier/Scopus login page
-            elif "id.elsevier.com" in self.page.url or self.page.query_selector('input[name="username"]'):
-                 logger.info("Attempting direct login via Elsevier page.")
-                 if not username or not password:
-                     logger.error("Username and password required for direct login but not provided.")
-                     self._save_screenshot("login_direct_missing_credentials")
-                     return False
-                 return self._login_with_direct_credentials(username, password)
-
-            # Unknown login state
-            else:
-                logger.warning(f"Unsupported or unexpected login page encountered: {self.page.url}")
-                logger.info("Assuming login might require manual intervention or is already complete.")
-                # Take a screenshot for debugging
-                self._save_screenshot("login_unknown_page")
-                # Check again if we are actually on the search page now
-                if "search/form.uri" in self.page.url:
-                    logger.info("Detected Scopus search page after all. Assuming login succeeded.")
-                    return True
-                else:
-                    logger.error("Could not confirm successful login.")
-                    return False # Return False as we couldn't confirm success
-                
-        except PlaywrightTimeoutError as pe:
-            logger.error(f"Login timed out: {str(pe)}")
-            self._save_screenshot("login_timeout_error")
-            return False
-        except Exception as e:
-            logger.error(f"Login failed with unexpected error: {str(e)}")
-            self._save_screenshot("login_exception")
-            return False
-    
-    def _login_with_direct_credentials(self, username: str, password: str) -> bool:
-        """
-        Handle login on a direct Elsevier/Scopus username/password page.
-        Assumes the page is already loaded.
-        
-        Args:
-            username: Scopus username
-            password: Scopus password
-            
-        Returns:
-            bool: True if login successful, False otherwise
-        """
-        try:
-            logger.info("Attempting direct login with credentials...")
-            
-            # Fill username
-            user_field = self.page.query_selector('input[name="username"]')
-            if not user_field:
-                logger.error("Direct login: Could not find username field.")
-                self._save_screenshot("direct_login_no_user")
-                return False
-            user_field.fill(username)
-            
-            # Click continue/submit after username
-            continue_button = self.page.query_selector('button[type="submit"], button:has-text("Continue")')
-            if continue_button:
-                continue_button.click()
-                # Wait briefly for password field to appear potentially
-                time.sleep(1) 
-            else:
-                logger.warning("Direct login: Could not find continue button after username.")
-
-            # Fill password
-            pass_field = self.page.query_selector('input[name="password"]')
-            if not pass_field:
-                logger.error("Direct login: Could not find password field.")
-                self._save_screenshot("direct_login_no_pass")
-                return False
-            pass_field.fill(password)
-
-            # Click sign in/submit
-            submit_button = self.page.query_selector('button[type="submit"], button:has-text("Sign in")')
-            if not submit_button:
-                logger.error("Direct login: Could not find submit button.")
-                self._save_screenshot("direct_login_no_submit")
-                return False
-            submit_button.click()
-            
-            # Check if login was successful by waiting for navigation to Scopus search
-            try:
-                self.page.wait_for_url("**/search/form.uri**", timeout=30000)
-                logger.info("Direct login successful, reached Scopus search page.")
-                return True
-            except PlaywrightTimeoutError:
-                logger.error("Direct login failed - did not reach Scopus search page.")
-                self._save_screenshot("direct_login_failed_redirect")
-                # Check for error messages on the current page
-                error_selector = '.error, .errorText, #errorText, [data-testid="error"]'
-                if self.page.query_selector(error_selector):
-                    error_msg = self.page.text_content(error_selector)
-                    logger.error(f"Login error message found: {error_msg}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Direct login failed with error: {str(e)}")
-            self._save_screenshot("direct_login_exception")
-            return False
     
     def search(self, query: str) -> bool:
         """
@@ -966,14 +744,13 @@ class ScopusScraper:
             filename: Optional filename for the downloaded CSV
             year_from: Start year for filtering (optional)
             year_to: End year for filtering (optional)
-            username: Username for login
-            password: Password for login
 
         Returns:
             Path to the downloaded file or None if any step failed
         """
-        # Login is handled outside this method now by the calling script.
-        # Assume login was successful before calling this.
+        # Login is assumed to be handled by institutional network access.
+        # If direct navigation to Scopus search page fails, it might indicate an issue
+        # with network access or Scopus availability.
 
         if not self.search(query):
             logger.error("Search step failed.")

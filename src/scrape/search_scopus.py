@@ -60,7 +60,6 @@ def parse_arguments():
     else:
         logger.info(f"{default_query_file} not found, using fallback default query.")
 
-    
     parser.add_argument(
         "--query", 
         type=str, 
@@ -70,12 +69,6 @@ def parse_arguments():
         "--headless", 
         action="store_true", 
         help="Run browser in headless mode"
-    )
-    # Institution is now primarily loaded from .env
-    parser.add_argument(
-        "--institution", 
-        type=str,
-        help="Institution name (optional, overrides .env)"
     )
     parser.add_argument(
         "--download-dir", 
@@ -93,19 +86,14 @@ def parse_arguments():
         type=int,
         help="End year for filtering results"
     )
-    # Add arguments for credentials as optional overrides
-    parser.add_argument("--username", type=str, help="Scopus username (overrides .env)")
-    parser.add_argument("--password", type=str, help="Scopus password (overrides .env)")
 
     return parser.parse_args()
 
 def run_scopus_search(query: str = None, headless: bool = False, 
                      year_from: Optional[int] = None, year_to: Optional[int] = None, 
                      download_dir: str = "data/downloads/csv",
-                     output_csv_path: Optional[Union[str, Path]] = None,
-                     username: Optional[str] = None, 
-                     password: Optional[str] = None,
-                     institution: Optional[str] = None) -> Tuple[bool, Optional[Path]]:
+                     output_csv_path: Optional[Union[str, Path]] = None
+                     ) -> Tuple[bool, Optional[Path]]:
     """
     Run a search on Scopus and download results as CSV.
     
@@ -116,9 +104,6 @@ def run_scopus_search(query: str = None, headless: bool = False,
         year_to: End year for filtering results
         download_dir: Directory to save downloaded files (used if output_csv_path is None)
         output_csv_path: Specific path (including filename) to save the CSV. Overrides download_dir and generated filename.
-        username: Scopus username (overrides env variables)
-        password: Scopus password (overrides env variables)
-        institution: Institution name (overrides env variables)
         
     Returns:
         Tuple containing (success: bool, csv_path: Optional[Path])
@@ -130,36 +115,6 @@ def run_scopus_search(query: str = None, headless: bool = False,
         
         # Load environment variables
         load_dotenv(override=True)
-        
-        # Get credentials from args or environment variables
-        username = username or os.getenv("SCOPUS_USERNAME")
-        password = password or os.getenv("SCOPUS_PASSWORD")
-        institution = institution or os.getenv("SCOPUS_INSTITUTION")
-
-        username = "depricated"
-        password = "depricated"
-        institution = "depricated"
-        
-        # Add fallback check for old environment variable names
-        if not username:
-            username = os.getenv("USER_NAME")
-            logger.warning("SCOPUS_USERNAME not found, falling back to USER_NAME")
-        
-        if not password:
-            password = os.getenv("PASSWORD")
-            logger.warning("SCOPUS_PASSWORD not found, falling back to PASSWORD")
-            
-        if not institution:
-            institution = os.getenv("UNI_NAME")
-            logger.warning("SCOPUS_INSTITUTION not found, falling back to UNI_NAME")
-
-        if not username or not password:
-            logger.error("Scopus username and password are required.")
-            return False, None
-
-        logger.info(f"Using institution: {institution}")
-        logger.info(f"Using username: {username}")
-        logger.info("Password: [masked for security]")
         
         # Create screenshots directory
         screenshots_dir = Path(script_dir) / "screenshots"
@@ -203,17 +158,9 @@ def run_scopus_search(query: str = None, headless: bool = False,
         with ScopusScraper(
             headless=headless,
             download_dir=final_download_dir,
-            institution=institution,
             screenshots_dir=screenshots_dir
         ) as scraper:
             logger.info("Scopus scraper initialized successfully.")
-            
-            # # Login to Scopus
-            # login_success = scraper.login(username=username, password=password)
-            # if not login_success:
-            #     logger.error("Login failed. Check credentials and network connection.")
-            #     return False, None
-            # logger.info("Logged in successfully.")
             
             # Perform search
             search_success = scraper.search(query)
@@ -270,10 +217,7 @@ if __name__ == "__main__":
         headless=args.headless,
         year_from=args.year_from,
         year_to=args.year_to,
-        download_dir=args.download_dir,
-        username=args.username,
-        password=args.password,
-        institution=args.institution
+        download_dir=args.download_dir
     )
     
     if success and csv_file:
