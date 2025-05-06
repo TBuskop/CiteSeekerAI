@@ -74,32 +74,6 @@ os.makedirs(QUERY_SPECIFIC_OUTPUT_DIR, exist_ok=True)
 os.makedirs(RUN_SPECIFIC_OUTPUT_DIR, exist_ok=True)
 
 
-# --- Step 1: Decompose Initial Research Question ---
-print("\n--- Step 1: Decomposing Research Question ---")
-decomposed_queries, overall_goal = query_decomposition(
-    query=INITIAL_RESEARCH_QUESTION,
-    number_of_sub_queries= QUERY_DECOMPOSITION_NR,
-    model=config.SUBQUERY_MODEL
-)
-if decomposed_queries:
-    print(f"Overall Goal: {overall_goal}")
-    print("Decomposed queries:")
-    for i, query in enumerate(decomposed_queries):
-        print(f"  Subquery {i+1}: {query}")
-else:
-    print("Failed to decompose the query. Exiting.")
-    sys.exit(1)
-
-# --- Initialize LLM Clients ---
-print("\n--- Initializing LLM Clients ---")
-try:
-    llm_interface.initialize_clients()
-    if not llm_interface.gemini_client:
-        print("Warning: Gemini client initialization might have failed. Check API keys/config.")
-except Exception as init_err:
-    print(f"Error initializing LLM clients: {init_err}. Final query step might fail.")
-
-
 # --- Define Worker Function for Processing Each Subquery ---
 def process_subquery(query: str, query_index: int):
     """
@@ -212,60 +186,91 @@ def process_subquery(query: str, query_index: int):
     return query_index, query, final_answer
 
 
-# --- Execute Subqueries Sequentially ---
-print(f"\n--- Starting Sequential Processing for {len(decomposed_queries)} Subqueries ---")
-results = []
+# --- Main Pipeline Function ---
+def run_deep_research_pipeline():
+    # --- Step 1: Decompose Initial Research Question ---
+    print("\n--- Step 1: Decomposing Research Question ---")
+    decomposed_queries, overall_goal = query_decomposition(
+        query=INITIAL_RESEARCH_QUESTION,
+        number_of_sub_queries= QUERY_DECOMPOSITION_NR,
+        model=config.SUBQUERY_MODEL
+    )
+    if decomposed_queries:
+        print(f"Overall Goal: {overall_goal}")
+        print("Decomposed queries:")
+        for i, query in enumerate(decomposed_queries):
+            print(f"  Subquery {i+1}: {query}")
+    else:
+        print("Failed to decompose the query. Exiting.")
+        sys.exit(1)
 
-for i, original_subquery in enumerate(decomposed_queries):
-    print(f"\n--- Processing Subquery {i + 1} of {len(decomposed_queries)} ---")
-    current_query = original_subquery
-
+    # --- Initialize LLM Clients ---
+    print("\n--- Initializing LLM Clients ---")
     try:
-        if i > 0 and results:
-            print(f"[Query {i+1}] Refining query based on previous results...")
-            previous_queries = [res[1] for res in results]
-            previous_answers = [res[2] for res in results]
-            refined_query = follow_up_query_refinement(
-                current_query=original_subquery,
-                overall_goal=overall_goal,
-                previous_queries=previous_queries,
-                previous_answers=previous_answers,
-                model=config.SUBQUERY_MODEL
-            )
-            if refined_query and refined_query != original_subquery:
-                 print(f"[Query {i+1}] Refined query: '{refined_query}'")
-                 current_query = refined_query
-            else:
-                 print(f"[Query {i+1}] Query refinement did not change the query or failed.")
+        llm_interface.initialize_clients()
+        if not llm_interface.gemini_client:
+            print("Warning: Gemini client initialization might have failed. Check API keys/config.")
+    except Exception as init_err:
+        print(f"Error initializing LLM clients: {init_err}. Final query step might fail.")
 
-        result_tuple = process_subquery(current_query, i)
-        results.append(result_tuple)
-        print(f"--- Completed Processing for Subquery {i + 1} ---")
+    # --- Execute Subqueries Sequentially ---
+    print(f"\n--- Starting Sequential Processing for {len(decomposed_queries)} Subqueries ---")
+    results = []
 
-    except Exception as exc:
-        error_msg = f"Subquery {i + 1} ('{current_query}') generated an unhandled exception: {exc}"
-        print(f"--- {error_msg} ---")
-        results.append((i, current_query, f"Failed with exception: {exc}"))
+    for i, original_subquery in enumerate(decomposed_queries):
+        print(f"\n--- Processing Subquery {i + 1} of {len(decomposed_queries)} ---")
+        current_query = original_subquery
 
-results.sort(key=lambda x: x[0])
+        try:
+            if i > 0 and results:
+                print(f"[Query {i+1}] Refining query based on previous results...")
+                previous_queries = [res[1] for res in results]
+                previous_answers = [res[2] for res in results]
+                refined_query = follow_up_query_refinement(
+                    intended_next_query=original_subquery,
+                    overall_goal=overall_goal,
+                    previous_queries=previous_queries,
+                    previous_answers=previous_answers,
+                    model=config.SUBQUERY_MODEL
+                )
+                if refined_query and refined_query != original_subquery:
+                     print(f"[Query {i+1}] Refined query: '{refined_query}'")
+                     current_query = refined_query
+                else:
+                     print(f"[Query {i+1}] Query refinement did not change the query or failed.")
 
-# --- Write Combined Results ---
-print(f"\n--- Writing Combined Answers to {COMBINED_ANSWERS_OUTPUT_FILENAME} ---")
-try:
-    with open(COMBINED_ANSWERS_OUTPUT_FILENAME, "w", encoding="utf-8") as f:
-        f.write(f"Original Research Question: {INITIAL_RESEARCH_QUESTION}\n")
-        f.write(f"Refined Overall Goal: {overall_goal}\n\n")
-        f.write("--- Decomposed Queries and Final Answers ---\n\n")
-        for index, processed_query, final_answer in results:
-            original_query_text = decomposed_queries[index]
-            f.write(f"--- Subquery {index+1} ---\n")
-            f.write(f"Original Subquery: {original_query_text}\n")
-            if processed_query != original_query_text:
-                 f.write(f"Refined Subquery: {processed_query}\n")
-            f.write(f"Final Answer/Status:\n{final_answer}\n\n")
-    print(f"Combined answers successfully written to {COMBINED_ANSWERS_OUTPUT_FILENAME}")
-except IOError as e:
-    print(f"Error writing combined answers file: {e}")
+            result_tuple = process_subquery(current_query, i)
+            results.append(result_tuple)
+            print(f"--- Completed Processing for Subquery {i + 1} ---")
 
-print("\n--- DeepResearch Sequential Pipeline Finished ---")
+        except Exception as exc:
+            error_msg = f"Subquery {i + 1} ('{current_query}') generated an unhandled exception: {exc}"
+            print(f"--- {error_msg} ---")
+            results.append((i, current_query, f"Failed with exception: {exc}"))
+
+    results.sort(key=lambda x: x[0])
+
+    # --- Write Combined Results ---
+    print(f"\n--- Writing Combined Answers to {COMBINED_ANSWERS_OUTPUT_FILENAME} ---")
+    try:
+        with open(COMBINED_ANSWERS_OUTPUT_FILENAME, "w", encoding="utf-8") as f:
+            f.write(f"Original Research Question: {INITIAL_RESEARCH_QUESTION}\n")
+            f.write(f"Refined Overall Goal: {overall_goal}\n\n")
+            f.write("--- Decomposed Queries and Final Answers ---\n\n")
+            for index, processed_query, final_answer in results:
+                original_query_text = decomposed_queries[index]
+                f.write(f"--- Subquery {index+1} ---\n")
+                f.write(f"Original Subquery: {original_query_text}\n")
+                if processed_query != original_query_text:
+                     f.write(f"Refined Subquery: {processed_query}\n")
+                f.write(f"Final Answer/Status:\n{final_answer}\n\n")
+        print(f"Combined answers successfully written to {COMBINED_ANSWERS_OUTPUT_FILENAME}")
+    except IOError as e:
+        print(f"Error writing combined answers file: {e}")
+
+    print("\n--- DeepResearch Sequential Pipeline Finished ---")
+
+
+if __name__ == "__main__":
+    run_deep_research_pipeline()
 
