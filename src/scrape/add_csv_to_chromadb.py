@@ -32,7 +32,6 @@ try:
         EMBEDDING_MODEL,
         OUTPUT_EMBEDDING_DIMENSION
     )
-    print("Successfully imported components from 'rag' package.")
 except ImportError as e:
     print(f"Error importing from 'rag' package: {e}")
     print(f"Project Root: {_PROJECT_ROOT}")

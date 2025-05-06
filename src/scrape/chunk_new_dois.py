@@ -28,7 +28,6 @@ try:
         EMBEDDING_MODEL, # Needed for embedding function config
         OUTPUT_EMBEDDING_DIMENSION # Needed for embedding function config
     )
-    print("Successfully imported components from 'rag' package.")
 except ImportError as e:
     print(f"Error importing required modules: {e}")
     print("Ensure 'langchain', 'chromadb', 'tqdm', and the 'rag' package are installed and accessible.")
