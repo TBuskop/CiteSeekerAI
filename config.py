@@ -9,45 +9,51 @@ from dotenv import load_dotenv
 # Load environment variables from .env file if present
 load_dotenv(override=True)  # Force override of existing environment variables
 
-# API Keys (Load from environment variables)
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") # Example, keep if you might use OpenAI
+# --- API Keys ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Model Configuration (now hardcoded, not from env)
-EMBEDDING_MODEL = "text-embedding-004"
-CHUNK_CONTEXT_MODEL = "gemini-1.5-flash-8b"
-SUBQUERY_MODEL = "gemini-2.5-pro-exp-03-25" # gemini-2.5-pro-exp-03-25 # gemini-2.5-pro-preview-03-25 (this is a paid one but the action is small so still chip)
-SUBQUERY_MODEL_SIMPLE = "gemini-2.0-flash-lite" # gemini-2.5-pro-exp-03-25 # gemini-2.5-pro-preview-03-25 (this is a paid one but the action is small so still chip)
-CHAT_MODEL = "gemini-2.5-flash-preview-04-17" #"gemini-2.0-flash-lite"  # gemini-2.5-pro-exp-03-25 (using free but good one for large requests)
+# --- Core Model Configuration ---
+# These are the primary models you'll interact with.
+EMBEDDING_MODEL = "text-embedding-004"  # Model for creating text embeddings
+CHAT_MODEL = "gemini-2.5-flash-preview-04-17" #"gemini-2.0-flash-lite", "gemini-2.5-pro-exp-03-25"  # Main model for chat and generation
+SUBQUERY_MODEL = "gemini-2.5-pro-exp-03-25" # Model for generating sub-queries (more powerful is better and relevant questions)
 
-# Chunking Parameters
-DEFAULT_MAX_TOKENS = 1000
-DEFAULT_CHUNK_OVERLAP = 150
-DEFAULT_CONTEXT_LENGTH = 120
-DEFAULT_TOTAL_CONTEXT_WINDOW = 2000
+# --- Query Configuration ---
+# How many results to retrieve at different stages.
+TOP_K_ABSTRACTS = 2  # Number of papers to retrieve based on abstract similarity
+DEFAULT_TOP_K = 4    # Number of chunks to retrieve from the selected papers for context
 
-# Embedding Configuration
-OUTPUT_EMBEDDING_DIMENSION = 768
+# --- Chunking Parameters ---
+# Settings for how documents are split into smaller pieces.
+DEFAULT_MAX_TOKENS = 1000        # Maximum tokens per chunk
+DEFAULT_CHUNK_OVERLAP = 150      # Number of tokens to overlap between chunks
+DEFAULT_CONTEXT_LENGTH = 120     # Desired length of context extracted from chunks (e.g., for summaries)
+DEFAULT_TOTAL_CONTEXT_WINDOW = 2000 # Total context window size for models (informational)
 
-# Query configuration
-TOP_K_ABSTRACTS = 2 # number of papers to retrieve based on abstract
-DEFAULT_TOP_K = 4 # number of chunks to retrieve for the retrieved papers
+# --- Embedding Configuration ---
+OUTPUT_EMBEDDING_DIMENSION = 768 # Expected dimension of the embeddings
 
-# create hypothetical prompt embeddings (HyPE) for the query
-HYPE = True
+# --- Advanced Model Configuration ---
+# Models for more specific or internal tasks.
+CHUNK_CONTEXT_MODEL = "gemini-1.5-flash-8b"   # Model for processing/summarizing chunks
+SUBQUERY_MODEL_SIMPLE = "gemini-2.0-flash-lite" # Simpler/faster model for sub-queries
+
+# --- Hypothetical Document Embeddings (HyPE) Configuration ---
+HYPE = True  # Enable or disable HyPE for query generation
+# Suffix to append for HyPE collections in the vector store
+HYPE_SUFFIX = "_hype"
+# Source abstracts collection for enriching HyPE metadata
+HYPE_SOURCE_COLLECTION_NAME = os.getenv("HYPE_SOURCE_COLLECTION_NAME", "abstracts")
 
 # --- Re-ranker Configuration ---
-RERANKER_MODEL = 'cross-encoder/ms-marco-MiniLM-L-12-v2'
-DEFAULT_RERANK_CANDIDATE_COUNT = 100
+# For refining search results after initial retrieval.
+RERANKER_MODEL = 'cross-encoder/ms-marco-MiniLM-L-12-v2' # Model for re-ranking
+DEFAULT_RERANK_CANDIDATE_COUNT = 100 # Number of candidates to re-rank
 
-# Other defaults (if needed)
-DEFAULT_EMBED_BATCH_SIZE = 100 # max 100
-DEFAULT_EMBED_DELAY = 0
-DEFAULT_CHROMA_COLLECTION_NAME = "rag_chunks_hybrid_default"
-# Suffix to append for HyPE collections
-HYPE_SUFFIX = "_hype"
-# Source abstracts collection for enriching Hype metadata
-HYPE_SOURCE_COLLECTION_NAME = os.getenv("HYPE_SOURCE_COLLECTION_NAME", "abstracts")
+# --- Other Defaults & ChromaDB Settings ---
+DEFAULT_EMBED_BATCH_SIZE = 100  # Max batch size for embedding (API limits may apply)
+DEFAULT_EMBED_DELAY = 0         # Delay between embedding batches (if needed for rate limiting)
+DEFAULT_CHROMA_COLLECTION_NAME = "rag_chunks_hybrid_default" # Default collection name in ChromaDB
 
 # --- Validate Essential Config ---
 if not GEMINI_API_KEY:
