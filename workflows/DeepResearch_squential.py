@@ -187,7 +187,7 @@ def process_subquery(query: str, query_index: int):
 
 
 # --- Main Pipeline Function ---
-def run_deep_research_pipeline():
+def run_deep_research():
     # --- Step 1: Decompose Initial Research Question ---
     print("\n--- Step 1: Decomposing Research Question ---")
     decomposed_queries, overall_goal = query_decomposition(
@@ -272,5 +272,5 @@ def run_deep_research_pipeline():
 
 
 if __name__ == "__main__":
-    run_deep_research_pipeline()
+    run_deep_research()
 
