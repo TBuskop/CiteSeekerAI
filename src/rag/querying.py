@@ -522,8 +522,12 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
     for chunk in final_chunks:
         content = chunk.get('contextualized_text', '').strip() or chunk.get('text', '')
         if chunk.get('cited_by') is not None:
+            first_author_raw = chunk.get('authors', 'N/A').split(';', 1)[0].strip()
+            first_author     = re.sub(r'\s+[A-Z](?:\.[A-Z])*\.?$', '', first_author_raw).strip()
+
             context_parts.append(
-                f"{chunk.get('authors', 'N/A').split(';')[0]} et al., {chunk.get('year', 'N/A')}, Chunk #{chunk.get('chunk_number', '?')}\n"
+                f"{first_author} et al., {chunk.get('year', 'N/A')}, "
+                f"Chunk #{chunk.get('chunk_number', '?')}\n"
                 f"Content:\n{content}"
             )
         else:
