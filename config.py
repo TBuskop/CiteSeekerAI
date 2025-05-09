@@ -9,6 +9,12 @@ from dotenv import load_dotenv
 # Load environment variables from .env file if present
 load_dotenv(override=True)  # Force override of existing environment variables
 
+
+# ------------------------------------
+# --- Most Important Settings ---
+# ------------------------------------
+
+
 # --- Query ---
 QUERY = """
     What are climate risk storylines and how can they informa climate adaptation plans?
@@ -22,18 +28,25 @@ SCOPUS_SEARCH_STRING = """
 
 # --- Query Configuration ---
 # How many results to retrieve at different stages.
+# the top number of papers to retrieve based on the query. To many papers might lead to irrelevant results and to few papers might lead to missing relevant results
 TOP_K_ABSTRACTS = 20  # Number of papers to retrieve based on abstract similarity
+
+# From all relevant papers how many chunks of text to send to the LLM. The more default top_k the more expensive the query as more chunks are sent to the LLM 
 DEFAULT_TOP_K = 30    # Number of chunks to retrieve from the selected papers for context
 
 USE_SCIHUB = False  # Use SciHub for collecting papers
-
-# --- API Keys ---
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # --- Core Model Configuration ---
 # These are the primary models you'll interact with.
 CHAT_MODEL = "gemini-2.5-flash-preview-04-17" #"gemini-2.0-flash-lite", "gemini-2.5-pro-exp-03-25"  # Main model for chat and generation
 SUBQUERY_MODEL = "gemini-2.5-pro-exp-03-25" # Model for generating sub-queries (more powerful is better and relevant questions)
+
+# ------------------------------------
+# --- Advanced Model Configuration ---
+# ------------------------------------
+
+# --- API Keys ---
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # --- Chunking Parameters ---
 # Settings for how documents are split into smaller pieces.
@@ -46,7 +59,6 @@ DEFAULT_TOTAL_CONTEXT_WINDOW = 2000 # Total context window size for models (info
 EMBEDDING_MODEL = "text-embedding-004"  # Model for creating text embeddings
 OUTPUT_EMBEDDING_DIMENSION = 768 # Expected dimension of the embeddings
 
-# --- Advanced Model Configuration ---
 # Models for more specific or internal tasks.
 CHUNK_CONTEXT_MODEL = "gemini-1.5-flash-8b"   # Model for processing/summarizing chunks
 SUBQUERY_MODEL_SIMPLE = "gemini-2.0-flash-lite" # Simpler/faster model for sub-queries
