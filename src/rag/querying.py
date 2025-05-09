@@ -364,7 +364,7 @@ def query_decomposition(query: str, number_of_sub_queries=5,model: str = SUBQUER
             prompt=full_prompt,
             model=model,
             temperature=1,
-            max_tokens=2000 # Adjust based on expected complexity
+            max_tokens=20000 # Adjust based on expected complexity
         )
 
         # 4. Parse the JSON response
