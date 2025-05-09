@@ -17,7 +17,7 @@ load_dotenv(override=True)  # Force override of existing environment variables
 
 # --- Query ---
 QUERY = """
-    What are climate risk storylines and how can they informa climate adaptation plans?
+    What are climate risk storylines and how can they inform climate adaptation plans?
 """
 QUERY_DECOMPOSITION_NR = 3  # Number of sub-queries to generate from the main query
 
