@@ -94,3 +94,6 @@ python src/main.py
 ## Disclaimer
 This project includes features for downloading and processing academic papers. Users are solely responsible for ensuring that their use of these features complies with all applicable laws, including copyright regulations, and the terms of service of any websites or APIs accessed. The authors of this project are not liable for any misuse or legal issues arising from the use of this software. Always respect publisher copyrights and terms of use.
 
+## To Note
+- Sometimes the process takes a while. Run the script, get a coffee and come back to your result.
+- Each query does cost a little bit of money. A query can be very cheap (less than a cent) or be very complex involving advanced reasoning models and many subqueries and a large amount of chunks being sent to the LLM to generate and answer.
