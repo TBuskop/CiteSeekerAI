@@ -54,28 +54,29 @@ This saves you many hours of manual searching, sifting through papers, and tryin
 ## Setup
 1.  **Clone the repository:**
 
-    ```bash
-
-    git clone <repository-url>
-
-    cd academic_lit_llm_2
-
-    ```
+ ```bash
+ 
+ git clone https://github.com/TBuskop/CiteSeekerAI.git
+ 
+ cd academic_lit_llm_2
+ ```
 
 2.  **Install dependencies:**
-    ```bash
 
-    pip install -r requirements.txt
+```bash
 
-    ```
+ pip install -r requirements.txt
+
+ ```
  
 3.  **Environment Variables:**
-    Create a `.env` file in the project root directory (you can copy/rename `.env.example` if provided). Add your API keys, for example:
-    ```env
+    Create a `.env` file in the project root directory and add the api key (you can also rename `.env.example` to .env)
 
-    GEMINI_API_KEY="YOUR_GEMINI_API_KEY_HERE"
+```env
 
-    ```
+ GEMINI_API_KEY="YOUR_GEMINI_API_KEY_HERE"
+
+ ```
   
 ## Configuration
 Adjust the search query for scopus, your question and how many iterations for the question it should go through. The script will recognise if abstracts need te be collected based on previous queries and will only download papers relevant to the question and that are not in the databse already.    
