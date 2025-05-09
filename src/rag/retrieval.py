@@ -306,13 +306,13 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
     print(f"DEBUG (combine_results_rrf): Returning {len(final_results_list)} combined chunks. {count_with_bm25_score} have a positive 'bm25_score'.") # Updated log
 
     # print top 10 final result_list names and year for debug top score first
-    print(f"DEBUG (combine_results_rrf): Top 10 final results: {[{'name': m.get('title'), 'year': m.get('year')} for m in final_results_list[:10]]}") # Optional detailed log
+    # print(f"DEBUG (combine_results_rrf): Top 10 final results: {[{'name': m.get('title'), 'year': m.get('year')} for m in final_results_list[:10]]}") # Optional detailed log
     # show top ten based on bm25 score
     # handle potential None values in bm25_score during sorting for debug print
-    print(f"DEBUG (combine_results_rrf): Top 10 final results by BM25 score: {[{'name': m.get('title'), 'bm25_score': m.get('bm25_score')} for m in sorted(final_results_list, key=lambda c: c.get('bm25_score', 0.0), reverse=True)[:10]]}") # Optional detailed log
+    # print(f"DEBUG (combine_results_rrf): Top 10 final results by BM25 score: {[{'name': m.get('title'), 'bm25_score': m.get('bm25_score')} for m in sorted(final_results_list, key=lambda c: c.get('bm25_score', 0.0), reverse=True)[:10]]}") # Optional detailed log
     # show top ten based on vector similarity from vector_results
     # Handle potential None values in vector_similarity during sorting for debug print
-    print(f"DEBUG (combine_results_rrf): Top 10 final results by vector similarity: {[{'name': m.get('title'), 'vector_similarity': m.get('vector_similarity')} for m in sorted(final_results_list, key=lambda c: c.get('vector_similarity') if c.get('vector_similarity') is not None else -1.0, reverse=True)[:10]]}") # Optional detailed log
+    # print(f"DEBUG (combine_results_rrf): Top 10 final results by vector similarity: {[{'name': m.get('title'), 'vector_similarity': m.get('vector_similarity')} for m in sorted(final_results_list, key=lambda c: c.get('vector_similarity') if c.get('vector_similarity') is not None else -1.0, reverse=True)[:10]]}") # Optional detailed log
 
     return final_results_list
 

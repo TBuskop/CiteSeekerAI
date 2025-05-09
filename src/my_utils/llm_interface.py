@@ -63,7 +63,6 @@ def initialize_clients():
             gemini_client = genai.Client(api_key=GEMINI_API_KEY)
             # Optional: Add a check here, e.g., try listing models via the client if supported
             # models = gemini_client.list_models() # Check documentation for exact method
-            print("Google GenAI client configured successfully using genai.Client().")
             initialization_successful = True # Mark success
         except ImportError:
             print("Warning - Google Generative AI library not installed (ImportError during client creation).")
@@ -77,11 +76,8 @@ def initialize_clients():
         print("Info: GEMINI_API_KEY not found in config, skipping Gemini client initialization.")
 
     # --- Added Debugging ---
-    print(f"DEBUG (llm_interface.initialize_clients): Initialization complete.")
-    print(f"DEBUG (llm_interface.initialize_clients): gemini_client type = {type(gemini_client)}")
-    print(f"DEBUG (llm_interface.initialize_clients): gemini_client is None = {gemini_client is None}")
     if initialization_successful and isinstance(gemini_client, genai.Client):
-        print("DEBUG (llm_interface.initialize_clients): Client appears to be a valid genai.Client instance.")
+        pass # Client initialized successfully
     else:
         print("DEBUG (llm_interface.initialize_clients): Client is NOT a valid genai.Client instance after initialization attempt.")
     # --- End Debugging ---

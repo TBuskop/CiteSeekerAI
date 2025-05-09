@@ -419,7 +419,7 @@ def find_relevant_dois_from_abstracts(
         "rerank_candidates": rerank_candidates,
         "execution_mode": "collect_abstracts"
     }
-    print(f"Configuration for abstract collection: {config}")
+    
 
     bm25_queries, vector_search_queries = generate_search_queries(config["initial_query"])
 
