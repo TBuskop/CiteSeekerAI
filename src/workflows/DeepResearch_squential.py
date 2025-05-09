@@ -5,7 +5,7 @@ import time
 # --- Add project root to sys.path ---
 # Ensures that modules from the 'src' directory can be imported correctly.
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
@@ -60,7 +60,7 @@ QUERY_RERANK_CANDIDATES = config.DEFAULT_RERANK_CANDIDATE_COUNT
 
 # Output file/directory setup
 RUN_TIMESTAMP = time.strftime('%Y%m%d_%H%M%S')
-BASE_OUTPUT_DIR = os.path.join(BASE_DATA_DIR, "output")
+BASE_OUTPUT_DIR = os.path.join(_PROJECT_ROOT, "output")
 COMBINED_ANSWERS_OUTPUT_FILENAME = os.path.join(BASE_OUTPUT_DIR, f"combined_answers_{RUN_TIMESTAMP}.txt")
 QUERY_SPECIFIC_OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, "query_specific")
 RUN_SPECIFIC_OUTPUT_DIR = os.path.join(QUERY_SPECIFIC_OUTPUT_DIR, RUN_TIMESTAMP)
@@ -70,6 +70,7 @@ os.makedirs(FULL_TEXT_DIR, exist_ok=True)
 os.makedirs(CSV_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(CHUNK_DB_PATH), exist_ok=True)
 os.makedirs(os.path.dirname(RELEVANT_CHUNKS_DB_PATH), exist_ok=True)
+os.makedirs(BASE_OUTPUT_DIR, exist_ok=True)
 os.makedirs(QUERY_SPECIFIC_OUTPUT_DIR, exist_ok=True)
 os.makedirs(RUN_SPECIFIC_OUTPUT_DIR, exist_ok=True)
 

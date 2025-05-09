@@ -9,8 +9,8 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(_CURRENT_FILE_DIR, os.pardir))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from workflows.obtain_store_abstracts import obtain_store_abstracts
-from workflows.DeepResearch_squential import run_deep_research
+from src.workflows.obtain_store_abstracts import obtain_store_abstracts
+from src.workflows.DeepResearch_squential import run_deep_research
 
 
 def main():
