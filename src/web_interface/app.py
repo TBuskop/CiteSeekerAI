@@ -50,13 +50,13 @@ def process_research_question(job_id, question, subquestions_count=3):
     try:
         # Update job status
         processing_jobs[job_id]["status"] = "Processing"
-        
-        # processing_jobs[job_id]["progress"] = "Obtaining abstracts..."
-        # # Pass the question directly to the pipeline functions
-        # obtain_store_abstracts(question)
-        
-        processing_jobs[job_id]["progress"] = "Running deep research..."
-        run_deep_research(question, subquestions_count)
+        # Callback to send fine-grained progress updates to web UI
+        def update_web_progress(message):
+            if job_id in processing_jobs:
+                processing_jobs[job_id]["progress"] = message
+        update_web_progress("Initializing deep research...")
+        # Run deep research with callback
+        run_deep_research(question, subquestions_count, progress_callback=update_web_progress)
 
         # Find the output file
         output_file = find_latest_output_file()
@@ -181,31 +181,6 @@ def get_result(job_id):
         })
     
     return jsonify({"status": "not_found"})
-
-@app.route('/history')
-def view_history():
-    """View all past questions and answers"""
-    # Sort chat_history by timestamp descending (newest first)
-    sorted_history = OrderedDict(
-        sorted(
-            chat_history.items(),
-            key=lambda item: item[1]["timestamp"],
-            reverse=True
-        )
-    )
-    return render_template('history.html', chat_history=sorted_history)
-
-@app.route('/history_list')
-def history_list():
-    """Return just the rendered history list for AJAX updates."""
-    sorted_history = OrderedDict(
-        sorted(
-            chat_history.items(),
-            key=lambda item: item[1]["timestamp"],
-            reverse=True
-        )
-    )
-    return render_template('history_list.html', chat_history=sorted_history)
 
 @app.route('/output/<filename>')
 def output_file(filename):
