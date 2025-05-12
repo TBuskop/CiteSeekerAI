@@ -140,7 +140,6 @@ def retrieve_chunks_bm25(query: str, db_path: str, collection_name: str, top_k: 
         # Get top K results with scores > 0 (BM25 scores can be negative, often irrelevant)
         # We might want to keep scores >= 0 depending on interpretation. Let's stick to > 0.
         results = [(chunk_id, score) for chunk_id, score in sorted_results if score > 0][:top_k]
-        print(f"DEBUG (retrieve_chunks_bm25): Found {len(results)} BM25 results with score > 0.") # Add log
         return results
 
     except Exception as e:
