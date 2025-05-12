@@ -1,5 +1,6 @@
 beautifulsoup4
 chromadb
+flask
 google-api-core
 google-generativeai
 httpx

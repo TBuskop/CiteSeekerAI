@@ -1,0 +1,143 @@
+/* CiteSeekerAI Web Interface Styles */
+
+/* Base Styles */
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #f8f9fa;
+    padding-bottom: 50px;
+}
+
+/* Navbar */
+.navbar {
+    background-color: #0d6efd;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.navbar-brand {
+    font-weight: bold;
+    color: white !important;
+}
+
+/* Chat Container */
+.chat-container {
+    height: 70vh;
+    overflow-y: auto;
+    padding: 20px;
+    background-color: white;
+    border-radius: 5px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    margin-bottom: 20px;
+}
+
+/* Chat Messages */
+.user-message {
+    background-color: #e9ecef;
+    padding: 10px 15px;
+    border-radius: 10px;
+    margin-bottom: 15px;
+    max-width: 80%;
+    align-self: flex-end;
+    margin-left: auto;
+}
+
+.assistant-message {
+    background-color: #d1e7ff;
+    padding: 10px 15px;
+    border-radius: 10px;
+    margin-bottom: 15px;
+    max-width: 80%;
+}
+
+.message-time {
+    font-size: 0.8em;
+    color: #6c757d;
+    text-align: right;
+}
+
+/* Loading animation */
+.loading {
+    display: inline-block;
+    margin-left: 10px;
+}
+
+.loading:after {
+    content: "...";
+    animation: dots 1.5s steps(5, end) infinite;
+}
+
+@keyframes dots {
+    0%, 20% { content: "."; }
+    40% { content: ".."; }
+    60%, 100% { content: "..."; }
+}
+
+/* Content formatting */
+pre {
+    white-space: pre-wrap;
+    background-color: #f8f9fa;
+    padding: 10px;
+    border-radius: 5px;
+    margin: 10px 0;
+}
+
+.references {
+    font-size: 0.9em;
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid #e9ecef;
+}
+
+/* History items */
+.history-item {
+    cursor: pointer;
+    padding: 10px;
+    border-bottom: 1px solid #e9ecef;
+    transition: background-color 0.2s;
+}
+
+.history-item:hover {
+    background-color: #f8f9fa;
+}
+
+/* History page */
+.history-card {
+    margin-bottom: 20px;
+    transition: transform 0.2s;
+}
+
+.history-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+/* Markdown content */
+.markdown-content h1, 
+.markdown-content h2, 
+.markdown-content h3, 
+.markdown-content h4 {
+    margin-top: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.markdown-content ul, 
+.markdown-content ol {
+    padding-left: 1.5rem;
+}
+
+.markdown-content blockquote {
+    border-left: 4px solid #d1e7ff;
+    padding-left: 1rem;
+    color: #6c757d;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .chat-container {
+        height: 60vh;
+    }
+    
+    .user-message, 
+    .assistant-message {
+        max-width: 90%;
+    }
+}

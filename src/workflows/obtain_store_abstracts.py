@@ -59,16 +59,19 @@ os.makedirs(os.path.dirname(RELEVANT_CHUNKS_DB_PATH), exist_ok=True) # Added for
 
 # --- Pipeline Execution ---
 
-def obtain_store_abstracts():
+def obtain_store_abstracts(search_query=None):
     print("--- Initializing LLM Clients ---")
     llm_client = llm_interface.initialize_clients() # Initialize LLM client
+
+    # Use the passed question or fall back to config.QUERY
+    search_query = search_query if search_query is not None else config.QUERY
 
     print("--- Step 0: Generating Scopus Search String ---")
     if MANUAL_SCOPUS_QUERY:
         SCOPUS_QUERY = MANUAL_SCOPUS_QUERY # Use manual query if provided
     else:
         success, generated_query = generate_scopus_search_string(
-            query=INITIAL_RESEARCH_QUESTION,
+            query=search_query,
             save_to_file=SAVE_GENERATED_SEARCH_STRING
         )
         if success and generated_query:

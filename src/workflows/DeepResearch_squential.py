@@ -188,12 +188,17 @@ def process_subquery(query: str, query_index: int):
 
 
 # --- Main Pipeline Function ---
-def run_deep_research():
+def run_deep_research(question=None, query_numbers=None):
+    # Use the passed question or fall back to config.QUERY
+    initial_research_question = question if question is not None else config.QUERY
+    query_numbers = query_numbers if query_numbers is not None else config.QUERY_DECOMPOSITION_NR
+
+
     # --- Step 1: Decompose Initial Research Question ---
     print("\n--- Step 1: Decomposing Research Question ---")
     decomposed_queries, overall_goal = query_decomposition(
-        query=INITIAL_RESEARCH_QUESTION,
-        number_of_sub_queries= QUERY_DECOMPOSITION_NR,
+        query=initial_research_question,
+        number_of_sub_queries= query_numbers,
         model=config.SUBQUERY_MODEL
     )
     if decomposed_queries:
@@ -255,7 +260,7 @@ def run_deep_research():
     print(f"\n--- Writing Combined Answers to {COMBINED_ANSWERS_OUTPUT_FILENAME} ---")
     try:
         with open(COMBINED_ANSWERS_OUTPUT_FILENAME, "w", encoding="utf-8") as f:
-            f.write(f"Original Research Question: {INITIAL_RESEARCH_QUESTION}\n")
+            f.write(f"Original Research Question: {initial_research_question}")
             f.write(f"Refined Overall Goal: {overall_goal}\n\n")
             f.write("--- Decomposed Queries and Final Answers ---\n\n")
             for index, processed_query, final_answer in results:
@@ -263,8 +268,8 @@ def run_deep_research():
                 f.write(f"--- Subquery {index+1} ---\n")
                 f.write(f"Original Subquery: {original_query_text}\n")
                 if processed_query != original_query_text:
-                     f.write(f"Refined Subquery: {processed_query}\n")
-                f.write(f"Final Answer/Status:\n{final_answer}\n\n")
+                     f.write(f"Refined Subquery: {processed_query}\n\n")
+                f.write(f"Final Answer:\n{final_answer}\n\n")
         print(f"Combined answers successfully written to {COMBINED_ANSWERS_OUTPUT_FILENAME}")
     except IOError as e:
         print(f"Error writing combined answers file: {e}")
