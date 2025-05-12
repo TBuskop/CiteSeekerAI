@@ -226,42 +226,41 @@ def process_abstract_search(job_id, query):
     try:
         # Update job status
         processing_jobs[job_id]["status"] = "Processing"
-        processing_jobs[job_id]["progress"] = "Running Scopus search and storing abstracts..."
-          # Temporarily override the SCOPUS_SEARCH_STRING in config
+        # Callback for UI progress updates
+        def update_web_progress(message):
+            if job_id in processing_jobs:
+                processing_jobs[job_id]["progress"] = message
+        update_web_progress("Initializing abstract collection...")
+        # Temporarily override the SCOPUS_SEARCH_STRING in config
         original_scopus_search_string = config.SCOPUS_SEARCH_STRING
         config.SCOPUS_SEARCH_STRING = query
-        
-        # Run with the manual query using the config.SCOPUS_SEARCH_STRING
-        obtain_store_abstracts()
-        
+
+        # Run with callback to update progress
+        obtain_store_abstracts(query, progress_callback=update_web_progress)
+
         # Restore original config
         config.SCOPUS_SEARCH_STRING = original_scopus_search_string
-        
-        # Update job status
+
+        # Finalize job status
         processing_jobs[job_id]["status"] = "Completed"
-        processing_jobs[job_id]["progress"] = "Abstract collection completed!"
-          # Add more details about the results
+        update_web_progress("Abstract collection completed!")
+        # Add more details about the results
         csv_dir = os.path.join(_PROJECT_ROOT, 'data', 'downloads', 'csv')
         latest_csv = max(glob.glob(os.path.join(csv_dir, "*.csv")), key=os.path.getctime, default=None)
-        
         if latest_csv:
             processing_jobs[job_id]["file_path"] = latest_csv
-            
             # Try to count rows in the CSV
             try:
                 with open(latest_csv, 'r', encoding='utf-8') as f:
-                    # Count lines and subtract header
                     count = sum(1 for _ in f) - 1
                 processing_jobs[job_id]["count"] = count
             except:
                 pass
-    
     except Exception as e:
         processing_jobs[job_id]["status"] = "Error"
         processing_jobs[job_id]["error"] = str(e)
-        print(f"Error in abstract collection job {job_id}: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        print(f"Error in abstract collection job {job_id}: {e}")
+        import traceback; traceback.print_exc()
 
 @app.route('/static/<path:path>')
 def serve_static(path):
