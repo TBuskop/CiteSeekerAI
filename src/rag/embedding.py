@@ -5,8 +5,8 @@ from typing import List, Dict, Tuple, Any, Optional
 from tqdm import tqdm
 
 # --- Local Imports ---
-from rag.chroma_manager import get_chroma_collection, _update_db_batch # Use the helper from chroma_manager
-from my_utils.llm_interface import get_embedding, GOOGLE_GENAI_AVAILABLE, gemini_client # Need client status/object
+from rag.chroma_manager import _update_db_batch # Use the helper from chroma_manager
+from my_utils.llm_interface import get_embedding
 from config import EMBEDDING_MODEL, OUTPUT_EMBEDDING_DIMENSION
 # --- Add default values from config for fallback ---
 from config import DEFAULT_EMBED_BATCH_SIZE, DEFAULT_EMBED_DELAY

@@ -2,7 +2,7 @@ import os
 import re
 import traceback
 import json # <-- Add json import
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Optional
 
 # --- Add google.genai import for type checking ---
 try:

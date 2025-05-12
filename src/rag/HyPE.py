@@ -6,15 +6,13 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-print(f"{_PROJECT_ROOT} added to sys.path")
-
 import argparse
 import json
 import concurrent.futures
 from typing import List
 from src.rag.chroma_manager import get_chroma_collection
 from src.my_utils.llm_interface import initialize_clients, generate_llm_response  # Keep others
-from config import EMBEDDING_MODEL, OUTPUT_EMBEDDING_DIMENSION, DEFAULT_EMBED_BATCH_SIZE, DEFAULT_EMBED_DELAY, HYPE_MODEL
+from config import DEFAULT_EMBED_BATCH_SIZE, DEFAULT_EMBED_DELAY, HYPE_MODEL
 from src.rag.embedding import run_embed_mode_logic, EMBEDDING_IMPORTS_OK, genai  # batch embedding helper
 
 SYSTEM_PROMPT = """

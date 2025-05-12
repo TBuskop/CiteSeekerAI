@@ -1,7 +1,6 @@
 import os
 import re
 import argparse
-import sys
 from pathlib import Path
 from pdfminer.high_level import extract_text as pdfminer_extract_text
 import google.generativeai as genai

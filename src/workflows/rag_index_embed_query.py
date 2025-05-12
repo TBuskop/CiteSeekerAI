@@ -1,5 +1,4 @@
 import os
-import shutil
 import subprocess  # Import the subprocess module
 # from rag_bm25 import initialize_clients # Keep this if needed elsewhere, but not strictly required for running subprocess
 

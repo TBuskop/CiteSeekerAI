@@ -3,7 +3,6 @@ import os
 import re
 import json
 import time
-import traceback
 import concurrent.futures
 import xml.etree.ElementTree as ET # <<< NEW: Import ElementTree
 from pathlib import Path # <<< NEW: Import Path
@@ -12,13 +11,11 @@ from typing import List, Dict, Optional, Tuple # <<< NEW: Import typing hints
 import httpx
 import fitz  # PyMuPDF for PDF extraction
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright, Cookie, TimeoutError as PlaywrightTimeoutError, Page, Download  # Added Playwright TimeoutError import, Page, Download
+from playwright.sync_api import sync_playwright, Cookie, TimeoutError as PlaywrightTimeoutError, Page  # Added Playwright TimeoutError import, Page, Download
 from playwright_stealth import stealth_sync
 import trafilatura
 
 import config
-
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 # <<< NEW: Import from extract_text >>>
 from src.rag.extract_text import extract_text_from_pdf as extract_pdf_text_from_rag

@@ -1,7 +1,6 @@
 from google import genai
 import os
 import re
-from pathlib import Path
 from typing import Tuple, Optional
 
 # load environment variables from .env file
@@ -88,7 +87,7 @@ def generate_scopus_search_string(query: str, save_to_file: bool = True) -> Tupl
 # Keep the original script functionality when run directly
 if __name__ == "__main__":
     initial_query = "what are plausibilistic climate storylines and how are they different from other climate storylines?"
-    success, search_string = generate_search_string(initial_query)
+    success, search_string = generate_scopus_search_string(initial_query)
     
     if success:
         print(f"Generated search string ready for use: {search_string}")

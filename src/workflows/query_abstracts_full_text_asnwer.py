@@ -9,12 +9,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 # --- Updated Imports (with src prefix) ---
-from src.scrape.search_scopus import run_scopus_search
-from src.scrape.add_csv_to_chromadb import ingest_csv_to_chroma
 from src.scrape.collect_relevant_abstracts import find_relevant_dois_from_abstracts
-from src.scrape.download_papers import download_dois
-from src.scrape.get_search_string import generate_scopus_search_string
-from src.scrape.chunk_new_dois import process_folder_for_chunks
 from src.scrape.build_relevant_papers_db import build_relevant_db
 from src.rag import workflows as rag_workflows
 from src.my_utils import llm_interface

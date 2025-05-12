@@ -1,7 +1,6 @@
 # peek in the scrape/abstract_chroma_db database and the scrape/data/chroma_dbs/full_text_chunks_db
 # to see how many unique dois are in the database
 import os
-import sqlite3 # Keep for potential direct inspection if needed, but client is preferred
 import chromadb
 from typing import Set, Optional, Tuple, Dict # Added Dict
 from tqdm import tqdm
