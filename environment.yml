@@ -6,6 +6,7 @@ dependencies:
   - python=3.10  # Or whichever version you prefer
   - beautifulsoup4
   - chromadb
+  - flask
   - google-api-core
   - httpx
   - langchain

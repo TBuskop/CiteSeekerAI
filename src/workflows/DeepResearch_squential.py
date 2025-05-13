@@ -76,7 +76,7 @@ os.makedirs(RUN_SPECIFIC_OUTPUT_DIR, exist_ok=True)
 
 
 # --- Define Worker Function for Processing Each Subquery ---
-def process_subquery(query: str, query_index: int):
+def process_subquery(query: str, query_index: int, progress_callback=None):
     """
     Processes a single subquery through the pipeline steps:
     Find relevant DOIs -> Download papers -> Chunk papers -> Build relevant chunk DB -> Query relevant chunks.
@@ -88,10 +88,16 @@ def process_subquery(query: str, query_index: int):
     Returns:
         tuple: (query_index, original_query, final_answer_or_status)
     """
-    print(f"\n[Query {query_index+1}] Starting processing for: '{query}'")
+    # helper to report subquery progress
+    def log_progress_sub(msg):
+        tag = f"[Subquery {query_index+1}]"
+        if progress_callback:
+            progress_callback(f"{tag} {msg}")
+        print(f"{tag} {msg}")
+    log_progress_sub(f"Starting processing for: '{query}'")
 
     # --- Step 3: Finding Relevant DOIs from Abstracts ---
-    print(f"[Query {query_index+1}] Finding relevant DOIs from abstracts...")
+    log_progress_sub("Finding relevant DOIs from abstracts...")
     relevant_abstracts_output_filename_i = os.path.join(RUN_SPECIFIC_OUTPUT_DIR, f"relevant_abstracts_{query_index+1}.txt")
 
     relevant_doi_list = find_relevant_dois_from_abstracts(
@@ -103,22 +109,22 @@ def process_subquery(query: str, query_index: int):
         output_filename=relevant_abstracts_output_filename_i,
         use_hype=config.HYPE,
     )
-    print(f"[Query {query_index+1}] Found {len(relevant_doi_list)} relevant DOIs.")
+    log_progress_sub(f"Found {len(relevant_doi_list)} relevant DOIs.")
 
     # --- Step 4: Downloading Full Texts ---
     if relevant_doi_list:
-        print(f"[Query {query_index+1}] Downloading full texts for {len(relevant_doi_list)} DOIs...")
+        log_progress_sub(f"Downloading full texts for {len(relevant_doi_list)} DOIs...")
         download_dois(
             proposed_dois=relevant_doi_list,
             output_directory=FULL_TEXT_DIR
         )
-        print(f"[Query {query_index+1}] Download step completed.")
+        log_progress_sub("Download step completed.")
     else:
-        print(f"[Query {query_index+1}] No relevant DOIs found, skipping download.")
+        log_progress_sub("No relevant DOIs found, skipping download.")
 
     # --- Step 5 & 6: Chunking and Building Relevant DB ---
     if relevant_doi_list:
-        print(f"[Query {query_index+1}] Chunking downloaded documents...")
+        log_progress_sub("Chunking downloaded documents...")
         process_folder_for_chunks(
             folder_path=FULL_TEXT_DIR,
             db_path=CHUNK_DB_PATH,
@@ -126,9 +132,9 @@ def process_subquery(query: str, query_index: int):
             chunk_size=CHUNK_SIZE,
             chunk_overlap=CHUNK_OVERLAP,
         )
-        print(f"[Query {query_index+1}] Chunking complete.")
+        log_progress_sub("Chunking complete.")
 
-        print(f"[Query {query_index+1}] Building relevant chunks database...")
+        log_progress_sub("Building relevant chunks database...")
         build_relevant_db(
             relevant_doi_list=relevant_doi_list,
             source_chunk_db_path=CHUNK_DB_PATH,
@@ -138,16 +144,16 @@ def process_subquery(query: str, query_index: int):
             target_db_path=RELEVANT_CHUNKS_DB_PATH,
             target_collection_name=RELEVANT_CHUNKS_COLLECTION_NAME
         )
-        print(f"[Query {query_index+1}] Relevant chunk database build complete.")
+        log_progress_sub("Relevant chunk database build complete.")
     else:
-         print(f"[Query {query_index+1}] Skipping chunking and relevant DB build (no relevant DOIs).")
+         log_progress_sub("Skipping chunking and relevant DB build (no relevant DOIs).")
 
     # --- Step 8: Querying Relevant Chunks Database ---
     final_answer = None
     query_status = "Processing..."
 
     if relevant_doi_list and llm_interface.gemini_client:
-        print(f"[Query {query_index+1}] Querying the relevant chunks database...")
+        log_progress_sub("Querying the relevant chunks database...")
         query_output_filename_i = os.path.join(RUN_SPECIFIC_OUTPUT_DIR, f"final_answer_{query_index+1}.txt")
 
         query_config = {
@@ -168,32 +174,37 @@ def process_subquery(query: str, query_index: int):
         try:
             final_answer = rag_workflows.run_query_mode(query_config)
             query_status = f"Query complete. Answer stored in {query_output_filename_i}."
-            print(f"[Query {query_index+1}] {query_status}")
+            log_progress_sub(query_status)
         except Exception as query_err:
             error_message = f"An error occurred during the final query step: {query_err}"
-            print(f"[Query {query_index+1}] {error_message}")
+            log_progress_sub(error_message)
             final_answer = f"Error: {error_message}"
             query_status = "Query failed."
     elif not relevant_doi_list:
         query_status = "Skipped (no relevant DOIs found)."
-        print(f"[Query {query_index+1}] {query_status}")
+        log_progress_sub(query_status)
         final_answer = query_status
     elif not llm_interface.gemini_client:
         query_status = "Skipped (LLM client initialization failed)."
-        print(f"[Query {query_index+1}] {query_status}")
+        log_progress_sub(query_status)
         final_answer = query_status
 
-    print(f"[Query {query_index+1}] Finished processing.")
+    log_progress_sub("Finished processing.")
     return query_index, query, final_answer
 
 
 # --- Main Pipeline Function ---
-def run_deep_research():
+def run_deep_research(question=None, query_numbers=None, progress_callback=None):
+    # Use the passed question or fall back to config.QUERY
+    initial_research_question = question if question is not None else config.QUERY
+    query_numbers = query_numbers if query_numbers is not None else config.QUERY_DECOMPOSITION_NR
+
+
     # --- Step 1: Decompose Initial Research Question ---
     print("\n--- Step 1: Decomposing Research Question ---")
     decomposed_queries, overall_goal = query_decomposition(
-        query=INITIAL_RESEARCH_QUESTION,
-        number_of_sub_queries= QUERY_DECOMPOSITION_NR,
+        query=initial_research_question,
+        number_of_sub_queries= query_numbers,
         model=config.SUBQUERY_MODEL
     )
     if decomposed_queries:
@@ -240,7 +251,7 @@ def run_deep_research():
                 else:
                      print(f"[Query {i+1}] Query refinement did not change the query or failed.")
 
-            result_tuple = process_subquery(current_query, i)
+            result_tuple = process_subquery(current_query, i, progress_callback=progress_callback)
             results.append(result_tuple)
             print(f"--- Completed Processing for Subquery {i + 1} ---")
 
@@ -255,16 +266,17 @@ def run_deep_research():
     print(f"\n--- Writing Combined Answers to {COMBINED_ANSWERS_OUTPUT_FILENAME} ---")
     try:
         with open(COMBINED_ANSWERS_OUTPUT_FILENAME, "w", encoding="utf-8") as f:
-            f.write(f"Original Research Question: {INITIAL_RESEARCH_QUESTION}\n")
-            f.write(f"Refined Overall Goal: {overall_goal}\n\n")
-            f.write("--- Decomposed Queries and Final Answers ---\n\n")
+            f.write(f"## Original Research Question\n{initial_research_question}\n\n")
+            f.write(f"## Refined Overall Goal\n{overall_goal}\n\n")
+            f.write("### Decomposed Queries and Final Answers\n\n")
             for index, processed_query, final_answer in results:
                 original_query_text = decomposed_queries[index]
-                f.write(f"--- Subquery {index+1} ---\n")
-                f.write(f"Original Subquery: {original_query_text}\n")
+                f.write(f"#### Subquery {index+1}\n\n")
+                f.write(f"**Original Subquery:** {original_query_text}\n\n")
                 if processed_query != original_query_text:
-                     f.write(f"Refined Subquery: {processed_query}\n")
-                f.write(f"Final Answer/Status:\n{final_answer}\n\n")
+                     f.write(f"**Refined Subquery:** {processed_query}\n\n")
+                f.write(f"**Final Answer:**\n{final_answer}\n\n")
+                f.write("---\n\n") # Add a horizontal rule for better separation
         print(f"Combined answers successfully written to {COMBINED_ANSWERS_OUTPUT_FILENAME}")
     except IOError as e:
         print(f"Error writing combined answers file: {e}")

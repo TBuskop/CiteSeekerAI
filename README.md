@@ -50,6 +50,7 @@ This saves you many hours of manual searching, sifting through papers, and tryin
 *   **Sequential Processing & Refinement:** Handles sub-queries one after another and allowing for  refinement of later sub-queries based on prior results.
 *   **Configurable:** Uses a central `config.py` queries, , LLM models and default parameters.
 *   **Adjusment of LLM system prompts to your needs:** System prompts are provided and can be edited to suit your needs
+*   **Web Interface:** Provides a user-friendly web interface for interacting with the research assistant, viewing chat history, and collecting abstracts.
 
 ## Setup
 1.  **Clone the repository:**
@@ -84,11 +85,45 @@ Adjust the search query for scopus, your question and how many iterations for th
 
 ## Running the Workflow
 
-The main workflow orchestrates the entire process from abstract collection using scopus, downloading relevant papers, query decomposition, al the way to final answer generation. It is executed via:
+There are two main ways to interact with CiteSeekerAI:
+
+### 1. Command-Line Interface (CLI)
+
+The main workflow orchestrates the entire process from abstract collection using Scopus, downloading relevant papers, query decomposition, all the way to final answer generation. It is executed via:
 
 ```bash
 
 python src/main.py
+
+```
+
+### 2. Web Interface
+
+CiteSeekerAI also offers a web-based interface for a more interactive experience.
+
+**Features of the Web Interface:**
+*   **Chat-based Interaction:** Ask research questions directly in a chat window.
+*   **View Previous Questions:** Access and review the history of your past research queries and their answers.
+*   **Citation Context:** Hover over citations to see the original text to get a better understanding of the statement. 
+*   **Abstract Collection:** Collecting abstracts based on your search terms.
+
+**How to Run the Web Interface:**
+
+Simply execute the `run_web_interface.bat` script located in the root directory of the project:
+
+```bash
+run_web_interface.bat
+```
+This script will:
+1. Activate the necessary conda environment.
+2. Start the Flask server.
+3. Automatically open the web interface in your default browser (usually at `http://127.0.0.1:5000`).
+
+Or run
+
+```bash
+
+python src/app.py
 
 ```
 

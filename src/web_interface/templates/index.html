@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CiteSeekerAI - Research Assistant</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">    <link href="/static/css/styles.css" rel="stylesheet">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg mb-4">
+        <div class="container">
+            <a class="navbar-brand" href="/">CiteSeekerAI</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/">Chat</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/abstracts">Collect Abstracts</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="row">
+            <div class="col-md-3">
+                <div class="mb-3">
+                    <button class="btn btn-outline-secondary w-100" id="new-chat-btn">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-plus-circle-fill me-1" viewBox="0 0 16 16">
+                            <path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zM8.5 4.5a.5.5 0 0 0-1 0v3h-3a.5.5 0 0 0 0 1h3v3a.5.5 0 0 0 1 0v-3h3a.5.5 0 0 0 0-1h-3v-3z"/>
+                        </svg>
+                        New Chat
+                    </button>
+                </div>
+                <div class="card mb-4">
+                    <div class="card-header">
+                        Previous Questions
+                    </div>
+                    <div class="card-body p-0">
+                        <div id="history-list" style="max-height: 70vh; overflow-y: auto;">
+                            {% if chat_history %}
+                                {% for job_id, chat in chat_history.items() %}
+                                <div class="history-item" data-job-id="{{ job_id }}">
+                                    <strong class="d-block text-truncate" style="max-width: 100%;">{{ chat.question }}</strong>
+                                    <small class="text-muted">{{ chat.timestamp }}</small>
+                                </div>
+                                {% endfor %}
+                            {% else %}
+                                <div class="p-3 text-center text-muted">
+                                    No previous questions
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-9">
+                <div class="chat-container" id="chat-container">
+                    <div class="assistant-message">
+                        <p>Hello! I'm CiteSeekerAI, your research assistant. Ask me a research question, and I'll analyze academic literature to provide you with a comprehensive answer.</p>
+                        <p>For example: "What is the difference between water scarcity and water security?"</p>
+                    </div>
+                </div>
+
+                <form id="question-form" class="mb-4">
+                    <div class="input-group">
+                        <input type="text" id="question-input" class="form-control" placeholder="Type your research question..." required>
+                        <select id="subquestions-count" class="form-select" style="max-width: 180px;">
+                            <option value="1">1 Subquestion</option>
+                            <option value="2">2 Subquestions</option>
+                            <option value="3" selected>3 Subquestions</option>
+                            <option value="4">4 Subquestions</option>
+                            <option value="5">5 Subquestions</option>
+                            <option value="6">6 Subquestions</option>
+                            <option value="7">7 Subquestions</option>
+                            <option value="8">8 Subquestions</option>
+                            <option value="9">9 Subquestions</option>
+                            <option value="10">10 Subquestions</option>
+                        </select>
+                        <button class="btn btn-primary" type="submit" id="submit-btn">Ask</button>
+                    </div>
+                </form>
+                
+                <div id="status-container" class="alert alert-info d-none">
+                    <span id="status-text">Processing your question...</span>
+                    <div class="progress mt-2">
+                        <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="/static/js/chat.js"></script>
+</body>
+</html>

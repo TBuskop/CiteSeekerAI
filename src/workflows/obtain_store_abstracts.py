@@ -59,16 +59,25 @@ os.makedirs(os.path.dirname(RELEVANT_CHUNKS_DB_PATH), exist_ok=True) # Added for
 
 # --- Pipeline Execution ---
 
-def obtain_store_abstracts():
-    print("--- Initializing LLM Clients ---")
+def obtain_store_abstracts(search_query=None, progress_callback=None):
+    # helper for UI progress and console
+    def log_progress(msg):
+        if progress_callback:
+            progress_callback(msg)
+        print(msg)
+        
+    log_progress("--- Initializing LLM Clients ---")
     llm_client = llm_interface.initialize_clients() # Initialize LLM client
 
-    print("--- Step 0: Generating Scopus Search String ---")
+    # Use the passed question or fall back to config.QUERY
+    search_query = search_query if search_query is not None else config.QUERY
+
+    log_progress("--- Step 0: Generating Scopus Search String ---")
     if MANUAL_SCOPUS_QUERY:
         SCOPUS_QUERY = MANUAL_SCOPUS_QUERY # Use manual query if provided
     else:
         success, generated_query = generate_scopus_search_string(
-            query=INITIAL_RESEARCH_QUESTION,
+            query=search_query,
             save_to_file=SAVE_GENERATED_SEARCH_STRING
         )
         if success and generated_query:
@@ -92,7 +101,7 @@ def obtain_store_abstracts():
     SCOPUS_OUTPUT_CSV_FILENAME = f"scopus_{clean_query}.csv"
     SCOPUS_OUTPUT_CSV_PATH = os.path.join(CSV_DIR, SCOPUS_OUTPUT_CSV_FILENAME)
 
-    print("\n--- Step 1: Running Scopus Search ---")
+    log_progress("--- Step 1: Running Scopus Search ---")
     # Run the Scopus search using the determined query and output path
     if MANUAL_SCOPUS_QUERY:
        # check if file exists before running the search
@@ -121,13 +130,13 @@ def obtain_store_abstracts():
     # Check if the search was successful and update the path variable
     if search_success and actual_csv_path:
         SCOPUS_OUTPUT_CSV_PATH = str(actual_csv_path) # Update path to the actual one used/created
-        print(f"Scopus search successful. Results saved to: {SCOPUS_OUTPUT_CSV_PATH}")
+        log_progress(f"Scopus search successful. Results saved to: {SCOPUS_OUTPUT_CSV_PATH}")
     else:
         print(f"Error: Scopus search failed. Check logs in search_scopus script.")
         # Decide how to proceed: exit or try to continue? Exiting is safer.
         exit() # Exit if search failed
 
-    print("\n--- Step 2: Ingesting CSV to ChromaDB which contains all abstracts ever collected ---")
+    log_progress("--- Step 2: Ingesting CSV to ChromaDB ---")
     # This step now implicitly relies on search_success being True from Step 1
     ingest_csv_to_chroma(
         csv_file_path=SCOPUS_OUTPUT_CSV_PATH,
@@ -136,7 +145,7 @@ def obtain_store_abstracts():
         force_reindex=FORCE_REINDEX_CHROMA
     )
 
-    print("\n--- Step 2.5: Running HyPE Indexing on Abstracts ---")
+    log_progress("--- Step 2.5: Running HyPE Indexing on Abstracts ---")
     # This step generates hypothetical questions for abstracts and embeds them.
     # It uses the same DB as abstracts but a different collection.
     if config.HYPE:
