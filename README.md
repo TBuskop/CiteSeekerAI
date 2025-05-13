@@ -63,8 +63,10 @@ This saves you many hours of manual searching, sifting through papers, and tryin
 2.  **Install dependencies:**
 
 ```bash
-
- pip install -r requirements.txt
+cd your_path/CiteSeekerAI
+conda env create -f environment.yml
+conda activate citeseeker
+playwright install
 
  ```
  
