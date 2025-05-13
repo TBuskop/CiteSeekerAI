@@ -3,10 +3,10 @@ echo Starting CiteSeekerAI Web Interface...
 echo.
 
 REM Activate the conda environment
-call C:\Users\buskop\AppData\Local\miniconda3\Scripts\activate.bat academic_lit_search
+call %USERPROFILE%\AppData\Local\miniconda3\Scripts\activate.bat citeseeker
 
 REM Start the Flask server in a new terminal window
-start "CiteSeekerAI Server" python src/web_interface/app.py
+start "CiteSeekerAI Server" python "%~dp0src\web_interface\app.py"
 
 REM Wait a bit to ensure the server has time to start
 timeout /t 15 > nul
