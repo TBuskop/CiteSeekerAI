@@ -9,7 +9,6 @@ from pathlib import Path # <<< NEW: Import Path
 from typing import List, Dict, Optional, Tuple # <<< NEW: Import typing hints
 
 import httpx
-import fitz  # PyMuPDF for PDF extraction
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright, Cookie, TimeoutError as PlaywrightTimeoutError, Page  # Added Playwright TimeoutError import, Page, Download
 from playwright_stealth import stealth_sync
