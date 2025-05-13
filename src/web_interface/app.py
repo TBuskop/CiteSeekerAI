@@ -102,11 +102,36 @@ def load_chat_history():
                 content = f.read()
                 
             # Extract original question
-            question_match = content.split("Original Research Question:", 1)
-            if len(question_match) > 1:
-                question = question_match[1].strip().split("\n", 1)[0].strip()
+            question = "Unknown Question"  # Default value
+            
+            # Try new format: "## Original Research Question\n{question}\n..."
+            marker_new = "## Original Research Question"
+            idx_marker_new = content.find(marker_new)
+
+            if idx_marker_new != -1:
+                # Calculate start of the content after the marker text itself
+                start_of_question_part = idx_marker_new + len(marker_new)
+                # Get the rest of the content from this point
+                question_section = content[start_of_question_part:]
+                
+                # The question is expected on the next line.
+                # Strip leading whitespace (like the \n immediately after the marker)
+                question_section_stripped = question_section.lstrip()
+                
+                # Take the first line from this stripped section as the question
+                question_lines = question_section_stripped.split('\n', 1)
+                if question_lines and question_lines[0].strip(): # Check if the line is not empty
+                    question = question_lines[0].strip()
             else:
-                question = "Unknown Question"
+                # Try old format: "Original Research Question: {question}\n"
+                marker_old = "Original Research Question:"
+                # Split content by the old marker
+                question_match_parts = content.split(marker_old, 1)
+                if len(question_match_parts) > 1:
+                    # The question is in the part after the marker
+                    # Strip leading spaces from this part, then take the first line
+                    first_line_after_marker = question_match_parts[1].lstrip().split("\n", 1)[0]
+                    question = first_line_after_marker.strip()
                 
             job_id = os.path.basename(file_path).replace("combined_answers_", "").replace(".txt", "")
             
