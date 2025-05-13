@@ -267,6 +267,51 @@ def serve_static(path):
     """Serve static files"""
     return send_from_directory(app.static_folder, path)
 
+@app.route('/get_prompt_chunk')
+def get_prompt_chunk():
+    job_id = request.args.get('job_id')
+    citation_key = request.args.get('citation_key')
+
+    if not job_id or not citation_key:
+        return jsonify({"status": "error", "message": "Missing job_id or citation_key"}), 400
+
+    prompt_dir = os.path.join(OUTPUT_DIR, "query_specific", job_id)
+    if not os.path.isdir(prompt_dir):
+        return jsonify({"status": "error", "message": "Invalid job_id or prompt directory not found"}), 400
+
+    # Search each final_prompt file for the citation key
+    for file_path in glob.glob(os.path.join(prompt_dir, "final_prompt_*.txt")):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+        except Exception as e:
+            print(f"Error reading prompt file {file_path}: {e}")
+            continue # Try next file
+
+        for idx, line in enumerate(lines):
+            if line.strip() == citation_key:
+                # Found the citation key, now find "Content:"
+                i = idx + 1
+                while i < len(lines) and not lines[i].strip().startswith("Content:"):
+                    i += 1
+                
+                if i < len(lines) and lines[i].strip().startswith("Content:"):
+                    i += 1 # Move past "Content:" line to start of actual content
+                    content_lines = []
+                    # Collect content until the next '---' separator
+                    while i < len(lines) and not lines[i].strip().startswith("---"):
+                        content_lines.append(lines[i])
+                        i += 1
+                    chunk_text = "".join(content_lines).strip()
+                    if chunk_text: # Ensure chunk is not empty
+                        return jsonify({"status": "success", "chunk": chunk_text})
+                    # If chunk_text is empty, it means Content: was followed immediately by --- or EOF.
+                    # Continue searching in case of multiple matches or other files.
+                # If "Content:" not found or content is empty, this match is invalid.
+                # Continue searching in the rest of the file or other files.
+    
+    return jsonify({"status": "error", "message": "Chunk not found for the given citation key"}), 404
+
 if __name__ == '__main__':
     # change run path to current directory
     os.chdir(_PROJECT_ROOT)
