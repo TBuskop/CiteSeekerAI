@@ -1,0 +1,27 @@
+name: citeseeker
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10  # Or whichever version you prefer
+  - beautifulsoup4
+  - chromadb
+  - google-api-core
+  - httpx
+  - langchain
+  - nltk
+  - numpy
+  - pandas
+  - pdfminer.six
+  - python-dotenv
+  - tqdm
+  - pip
+  - pip:
+      - google-genai
+      - google-generativeai
+      - playwright == 1.40.0
+      - playwright-stealth
+      - rank_bm25
+      - tiktoken
+      - trafilatura
+      - pymupdf
