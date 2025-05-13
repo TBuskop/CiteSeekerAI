@@ -238,7 +238,7 @@ def fetch_with_playwright(url: str) -> str:
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/105.0.5195.102 Safari/537.36" # Consider updating UA periodically
+                    "Chrome/124.0.0.0 Safari/537.36" # Updated User-Agent
                 ),
                 locale="nl-NL",
                 timezone_id="Europe/Amsterdam",
@@ -298,19 +298,29 @@ def fetch_with_playwright(url: str) -> str:
                 text_selector = "div.article_content"
 
             print(f"Fetching URL via Playwright (headless={headless}): {effective_url}")
-            # Increased timeout slightly, kept networkidle
-            page.goto(effective_url)
-            time.sleep(2) # Initial wait for page load
-
-            page.goto(effective_url) # 60s timeout
             
-            # Consider adjusting sleep if needed, especially for non-headless
-            if headless:
-                sleep_duration = 2
-            else:
-                sleep_duration = 5 # longer wait to allow for captcha
-            print(f"Waiting {sleep_duration}s after navigation...")
-            time.sleep(sleep_duration)
+            print(f"Navigating to {effective_url}...")
+            # Main navigation call. Wait for DOM content to be loaded.
+            # Set timeout to 60s.
+            page.goto(effective_url, timeout=60000, wait_until="domcontentloaded") 
+            print(f"Initial navigation to {effective_url} complete (DOM loaded).")
+
+            # Wait for JavaScript challenges to resolve and network activity to settle.
+            # This is crucial for pages that load content dynamically or run anti-bot scripts.
+            print("Waiting for network activity to become idle (up to 15s) to allow JS challenges to complete...")
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+                print("Network is now idle.")
+            except PlaywrightTimeoutError:
+                print("Network did not become idle within 15s. This might happen on pages with continuous background activity or if a challenge is blocking. Proceeding with content extraction.")
+            except Exception as e: # Catch other potential errors during wait
+                print(f"An error occurred while waiting for network idle: {e}. Proceeding.")
+
+            # An additional short, fixed wait can sometimes be beneficial,
+            # especially if running non-headless to allow for any final rendering or manual checks/CAPTCHAs.
+            final_wait_duration = 5 if not headless else 2
+            print(f"Performing a final wait of {final_wait_duration}s...")
+            time.sleep(final_wait_duration)
 
             try:
                 print(f"Attempting to extract text using selector: '{text_selector}'")

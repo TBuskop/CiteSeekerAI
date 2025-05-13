@@ -35,6 +35,7 @@ class ConfigurableEmbeddingFunction(EmbeddingFunction):
         self._model_name = model_name if model_name else EMBEDDING_MODEL
         if not self._model_name:
              raise ValueError("Embedding model name must be provided.")
+        
 
         self._mode = current_mode
         self._task_type = task_type # Task type for actual embedding calls
@@ -48,9 +49,13 @@ class ConfigurableEmbeddingFunction(EmbeddingFunction):
              raise ValueError(f"Embedding dimension must be set (config/override) for mode '{self._mode}'.")
         elif self.dimension is None and self._mode == "index":
              # This is risky - Chroma might fail if it needs dimension info during collection creation/upsert
-             # even if we return zeros later. Best practice is to always define OUTPUT_EMBEDDING_DIMENSION.
              print("WARNING (EmbeddingFunction Init): Dimension not set in 'index' mode. ChromaDB operations might fail if dimension is required upfront.")
              # We cannot generate zero vectors of unknown size later.
+
+    def name(self) -> str:
+        """Returns a unique name for this embedding function instance."""
+        sanitized_model_name = self._model_name.replace("models/", "").replace("/", "_").replace("-", "_").lower()
+        return f"csa_ef_{sanitized_model_name}"
 
     def __call__(self, input_texts: Documents) -> Embeddings:
         """

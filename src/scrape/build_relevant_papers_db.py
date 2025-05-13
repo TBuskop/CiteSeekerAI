@@ -4,6 +4,8 @@ from typing import List
 from chromadb.errors import NotFoundError
 # --- Add BM25 Import ---
 from src.rag.bm25_manager import build_and_save_bm25_index
+# --- Custom Embedding Function Import ---
+from src.rag.chroma_manager import ConfigurableEmbeddingFunction
 
 def build_relevant_db(
     relevant_doi_list: List[str],
@@ -60,8 +62,17 @@ def build_relevant_db(
             print("Proceeding to create the collection.")
 
         # --- Create the target collection (now guaranteed to be new or recreated) ---
-        target_collection = target_client.get_or_create_collection(name=target_collection_name)
-        print(f"Target collection '{target_collection_name}' created/retrieved.")
+        # Instantiate the custom embedding function.
+        # 'current_mode="index"' is suitable here as embeddings are pre-computed and provided during upsert.
+        # The ConfigurableEmbeddingFunction will use EMBEDDING_MODEL and OUTPUT_EMBEDDING_DIMENSION from config.py by default.
+        emb_func = ConfigurableEmbeddingFunction(current_mode="index")
+        
+        target_collection = target_client.create_collection(
+            name=target_collection_name,
+            embedding_function=emb_func,
+            metadata={"hnsw:space": "cosine"}  # Preserve metadata if used by ChromaDB
+        )
+        print(f"Target collection '{target_collection_name}' created with custom embedding function.")
 
         # --- Fetch Abstract Metadata for all relevant DOIs ---
         print(f"\nFetching metadata from abstract DB for {len(relevant_doi_list)} DOIs...")
