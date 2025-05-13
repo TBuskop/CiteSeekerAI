@@ -123,7 +123,7 @@ Or run
 
 ```bash
 
-python src/app.py
+python src/web_interface/app.py
 
 ```
 
