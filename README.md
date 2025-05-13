@@ -50,6 +50,7 @@ This saves you many hours of manual searching, sifting through papers, and tryin
 *   **Sequential Processing & Refinement:** Handles sub-queries one after another and allowing for  refinement of later sub-queries based on prior results.
 *   **Configurable:** Uses a central `config.py` queries, , LLM models and default parameters.
 *   **Adjusment of LLM system prompts to your needs:** System prompts are provided and can be edited to suit your needs
+*   **Web Interface:** Provides a user-friendly web interface for interacting with the research assistant, viewing chat history, and collecting abstracts.
 
 ## Setup
 1.  **Clone the repository:**
@@ -58,15 +59,15 @@ This saves you many hours of manual searching, sifting through papers, and tryin
  
  git clone https://github.com/TBuskop/CiteSeekerAI.git
  
- cd academic_lit_llm_2
  ```
 
 2.  **Install dependencies:**
 
 ```bash
-
- pip install -r requirements.txt
- playwrigth install
+cd your_path/CiteSeekerAI
+conda env create -f environment.yml
+conda activate citeseeker
+playwright install
 
  ```
  
@@ -84,38 +85,47 @@ Adjust the search query for scopus, your question and how many iterations for th
 
 ## Running the Workflow
 
-The main workflow orchestrates the entire process from abstract collection using scopus, downloading relevant papers, query decomposition, all the way to final answer generation. It is executed via:
+There are two main ways to interact with CiteSeekerAI:
+
+### 1. Command-Line Interface (CLI)
+
+The main workflow orchestrates the entire process from abstract collection using Scopus, downloading relevant papers, query decomposition, all the way to final answer generation. It is executed via:
 
 ```bash
+
 python src/main.py
+
 ```
 
-### Using the Web Interface
+### 2. Web Interface
 
-CiteSeekerAI also includes a web interface that allows you to interact with the system through a user-friendly chat interface:
+CiteSeekerAI also offers a web-based interface for a more interactive experience.
 
-1. **Start the web server:**
+**Features of the Web Interface:**
+*   **Chat-based Interaction:** Ask research questions directly in a chat window.
+*   **View Previous Questions:** Access and review the history of your past research queries and their answers.
+*   **Citation Context:** Hover over citations to see the original text to get a better understanding of the statement. 
+*   **Abstract Collection:** Collecting abstracts based on your search terms.
+
+**How to Run the Web Interface:**
+
+Simply execute the `run_web_interface.bat` script located in the root directory of the project:
 
 ```bash
-# On Windows, use the batch file
 run_web_interface.bat
-
-# Or run directly with Python
-python -m src.web_interface.flask
 ```
+This script will:
+1. Activate the necessary conda environment.
+2. Start the Flask server.
+3. Automatically open the web interface in your default browser (usually at `http://127.0.0.1:5000`).
 
-2. **Access the interface:**
-   - Open your web browser and navigate to `http://localhost:5000`
-   - You'll see a chat interface where you can ask research questions
+Or run
 
-3. **Features of the web interface:**
-   - Ask research questions through a simple chat interface
-   - View processing status in real-time
-   - Access a history of previous questions and answers
-   - Browse through scholarly references
-   - Download complete research reports
+```bash
 
-The web interface makes CiteSeekerAI accessible to users who prefer a graphical interface over command-line tools.
+python src/app.py
+
+```
 
 ## Disclaimer
 This project includes features for downloading and processing academic papers. Users are solely responsible for ensuring that their use of these features complies with all applicable laws, including copyright regulations, and the terms of service of any websites or APIs accessed. The authors of this project are not liable for any misuse or legal issues arising from the use of this software. Always respect publisher copyrights and terms of use.
