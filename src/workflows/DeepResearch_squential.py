@@ -266,16 +266,17 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None)
     print(f"\n--- Writing Combined Answers to {COMBINED_ANSWERS_OUTPUT_FILENAME} ---")
     try:
         with open(COMBINED_ANSWERS_OUTPUT_FILENAME, "w", encoding="utf-8") as f:
-            f.write(f"Original Research Question: {initial_research_question}")
-            f.write(f"Refined Overall Goal: {overall_goal}\n\n")
-            f.write("--- Decomposed Queries and Final Answers ---\n\n")
+            f.write(f"## Original Research Question\n{initial_research_question}\n\n")
+            f.write(f"## Refined Overall Goal\n{overall_goal}\n\n")
+            f.write("### Decomposed Queries and Final Answers\n\n")
             for index, processed_query, final_answer in results:
                 original_query_text = decomposed_queries[index]
-                f.write(f"--- Subquery {index+1} ---\n")
-                f.write(f"Original Subquery: {original_query_text}\n")
+                f.write(f"#### Subquery {index+1}\n\n")
+                f.write(f"**Original Subquery:** {original_query_text}\n\n")
                 if processed_query != original_query_text:
-                     f.write(f"Refined Subquery: {processed_query}\n\n")
-                f.write(f"Final Answer:\n{final_answer}\n\n")
+                     f.write(f"**Refined Subquery:** {processed_query}\n\n")
+                f.write(f"**Final Answer:**\n{final_answer}\n\n")
+                f.write("---\n\n") # Add a horizontal rule for better separation
         print(f"Combined answers successfully written to {COMBINED_ANSWERS_OUTPUT_FILENAME}")
     except IOError as e:
         print(f"Error writing combined answers file: {e}")
