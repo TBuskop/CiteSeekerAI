@@ -3,11 +3,11 @@ import traceback
 import re
 import json
 import os
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any 
 
 import sys
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
@@ -387,7 +387,7 @@ def generate_subqueries(initial_query: str, model: str = SUBQUERY_MODEL) -> Dict
     """
     default_result = {"bm25_queries": [initial_query], "vector_search_queries": [initial_query]}
     # retrieve based on project path
-    prompt_path = os.path.join(_PROJECT_ROOT, "llm_prompts", "subquery_prompt.txt")
+    prompt_path = os.path.join(_PROJECT_ROOT, "src", "llm_prompts", "subquery_prompt.txt")
     try:
         with open(prompt_path, "r", encoding="utf-8") as f:
             prompt_template = f.read()
