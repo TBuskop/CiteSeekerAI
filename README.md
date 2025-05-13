@@ -58,7 +58,6 @@ This saves you many hours of manual searching, sifting through papers, and tryin
  
  git clone https://github.com/TBuskop/CiteSeekerAI.git
  
- cd academic_lit_llm_2
  ```
 
 2.  **Install dependencies:**
