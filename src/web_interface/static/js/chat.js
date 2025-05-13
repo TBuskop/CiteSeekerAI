@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const statusContainer = document.getElementById('status-container');
     const statusText = document.getElementById('status-text');
     const progressBar = document.getElementById('progress-bar');
+    const newChatBtn = document.getElementById('new-chat-btn'); // Added
     // const historyItems = document.querySelectorAll('.history-item'); // Will be handled by updateHistoryList
     
     // Variables
@@ -72,6 +73,26 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     // Initial attachment
     attachHistoryEventListeners();
+
+    // New Chat button functionality
+    if (newChatBtn) {
+        newChatBtn.addEventListener('click', function() {
+            if (chatContainer) {
+                chatContainer.innerHTML = ''; // Clear chat area
+                // Add default greeting message
+                addMessage('assistant', "Hello! I'm CiteSeekerAI, your research assistant. Ask me a research question, and I'll analyze academic literature to provide you with a comprehensive answer.\n\nFor example: \"What is the difference between water scarcity and water security?\"");
+            }
+            currentJobId = null; // Reset current job ID
+            if (statusContainer) statusContainer.classList.add('d-none'); // Hide status
+            if (progressBar) {
+                progressBar.style.width = '0%'; // Reset progress bar
+                progressBar.classList.remove('bg-danger');
+            }
+            resetForm(); // Reset the input form
+            questionInput.value = ''; // Clear the question input field
+            // Optionally, deselect any active history item visually if you implement such styling
+        });
+    }
 
 
     // Submit question form

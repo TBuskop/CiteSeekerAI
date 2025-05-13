@@ -132,6 +132,18 @@ def index():
     )
     return render_template('index.html', chat_history=sorted_history)
 
+@app.route('/history_list')
+def history_list():
+    """Serves an HTML snippet of the chat history list."""
+    sorted_history = OrderedDict(
+        sorted(
+            chat_history.items(),
+            key=lambda item: item[1]["timestamp"],
+            reverse=True
+        )
+    )
+    return render_template('_history_list.html', chat_history=sorted_history)
+
 @app.route('/ask', methods=['POST'])
 def ask_question():
     """Handle new research questions"""
@@ -252,10 +264,16 @@ def process_abstract_search(job_id, query):
             # Try to count rows in the CSV
             try:
                 with open(latest_csv, 'r', encoding='utf-8') as f:
-                    count = sum(1 for _ in f) - 1
+                    count = sum(1 for _ in f) - 1 # -1 for header
                 processing_jobs[job_id]["count"] = count
-            except:
+                update_web_progress(f"Abstract collection completed! Found {count} abstracts. File: {os.path.basename(latest_csv)}")
+            except Exception as e_count:
+                print(f"Could not count rows in {latest_csv}: {e_count}")
+                update_web_progress(f"Abstract collection completed! File: {os.path.basename(latest_csv)}")
                 pass
+        else:
+            update_web_progress("Abstract collection completed! No CSV file found to report details.")
+            
     except Exception as e:
         processing_jobs[job_id]["status"] = "Error"
         processing_jobs[job_id]["error"] = str(e)

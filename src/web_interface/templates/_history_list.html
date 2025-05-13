@@ -1,0 +1,12 @@
+{% if chat_history %}
+    {% for job_id, chat in chat_history.items() %}
+    <div class="history-item" data-job-id="{{ job_id }}">
+        <strong class="d-block text-truncate" style="max-width: 100%;">{{ chat.question }}</strong>
+        <small class="text-muted">{{ chat.timestamp }}</small>
+    </div>
+    {% endfor %}
+{% else %}
+    <div class="p-3 text-center text-muted">
+        No previous questions
+    </div>
+{% endif %}
