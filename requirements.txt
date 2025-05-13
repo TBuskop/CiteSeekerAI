@@ -4,6 +4,7 @@ google-api-core
 google-genai
 httpx
 langchain
+nltk
 numpy
 pandas
 pdfminer.six
@@ -11,8 +12,8 @@ playwright
 playwright-stealth
 PyMuPDF
 python-dotenv
+rank_bm25
 tiktoken
 trafilatura
 tqdm
-rank_bm25
-nltk
+
