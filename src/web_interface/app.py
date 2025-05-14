@@ -14,7 +14,7 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
-    print(f"Added {_PROJECT_ROOT} to sys.path")
+    
 
 # --- Add project root to sys.path ---
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -55,12 +55,14 @@ def process_research_question(job_id, question, subquestions_count=3):
             if job_id in processing_jobs:
                 processing_jobs[job_id]["progress"] = message
         update_web_progress("Initializing deep research...")
-        # Run deep research with callback
-        run_deep_research(question, subquestions_count, progress_callback=update_web_progress)
+        
+        # Run deep research with callback and pass the job_id as run_id
+        run_deep_research(question, subquestions_count, progress_callback=update_web_progress, run_id=job_id)
 
-        # Find the output file
-        output_file = find_latest_output_file()
-        if output_file:
+        # Find the expected output file directly using job_id instead of finding latest
+        output_file = os.path.join(OUTPUT_DIR, f"combined_answers_{job_id}.txt")
+        
+        if os.path.exists(output_file):
             with open(output_file, 'r', encoding='utf-8') as f:
                 answer = f.read()
             
@@ -76,12 +78,35 @@ def process_research_question(job_id, question, subquestions_count=3):
             processing_jobs[job_id]["status"] = "Completed"
             processing_jobs[job_id]["output_file"] = output_file
         else:
-            processing_jobs[job_id]["status"] = "Error"
-            processing_jobs[job_id]["error"] = "Output file not found"
+            # Fall back to finding the latest file if the expected file doesn't exist
+            output_file = find_latest_output_file()
+            if output_file:
+                with open(output_file, 'r', encoding='utf-8') as f:
+                    answer = f.read()
+                
+                # Store in chat history
+                chat_history[job_id] = {
+                    "question": question,
+                    "answer": answer,
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "file_path": output_file
+                }
+                
+                # Update job status
+                processing_jobs[job_id]["status"] = "Completed"
+                processing_jobs[job_id]["output_file"] = output_file
+                # Log the mismatch for debugging
+                print(f"Warning: Expected output file {job_id}.txt not found, using latest: {os.path.basename(output_file)}")
+            else:
+                processing_jobs[job_id]["status"] = "Error"
+                processing_jobs[job_id]["error"] = "Output file not found"
     
     except Exception as e:
         processing_jobs[job_id]["status"] = "Error"
         processing_jobs[job_id]["error"] = str(e)
+        print(f"Error processing question: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 def find_latest_output_file():
     """Find the latest combined answers output file"""

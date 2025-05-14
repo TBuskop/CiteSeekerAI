@@ -376,7 +376,10 @@ document.addEventListener('DOMContentLoaded', function() {
             citationTooltip.style.display = 'block';
             positionTooltip(el);
 
-            fetch(`/get_prompt_chunk?job_id=${encodeURIComponent(jobId)}&citation_key=${encodeURIComponent(citationKey)}`)
+            // Using full absolute path to ensure URL is correctly formed
+            const fetchUrl = `${window.location.origin}/get_prompt_chunk?job_id=${encodeURIComponent(jobId)}&citation_key=${encodeURIComponent(citationKey)}`;
+            
+            fetch(fetchUrl)
                 .then(res => res.json())
                 .then(data => {
                     if (citationTooltip.style.display === 'block') { // Check if tooltip is still meant to be shown
@@ -390,7 +393,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 })
                 .catch(err => {
-                    console.error("Error fetching chunk:", err);
+                    console.error("Error fetching chunk:", err, "URL was:", fetchUrl);
                     if (citationTooltip.style.display === 'block') {
                         citationTooltip.innerText = 'Error loading chunk.';
                         positionTooltip(el);

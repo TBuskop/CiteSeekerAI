@@ -318,13 +318,14 @@ def generate_answer(query: str, combined_context: str, retrieved_chunks: List[di
 
 
 # --- Query Decomposition ---
-def query_decomposition(query: str, number_of_sub_queries=5,model: str = SUBQUERY_MODEL) -> List[str]:
+def query_decomposition(query: str, number_of_sub_queries=5, model: str = SUBQUERY_MODEL, output_dir: Optional[str] = None) -> List[str]:
     """
     Decomposes a complex query into a list of simpler sub-questions using an LLM.
 
     Args:
         query: The original complex query string.
         model: The LLM model to use for decomposition.
+        output_dir: Optional directory to save the subqueries JSON.
 
     Returns:
         A list of simpler sub-question strings. Returns the original query in a list
@@ -375,6 +376,16 @@ def query_decomposition(query: str, number_of_sub_queries=5,model: str = SUBQUER
         parsed_response = json.loads(response_cleaned)
 
         subqueries, overall_goal = parsed_response.get("subqueries", []), parsed_response.get("overall_goal", None)
+
+        # Save the subqueries file if output_dir is provided
+        if output_dir and os.path.isdir(output_dir):
+            subqueries_filename = os.path.join(output_dir, 'subqueries.json')
+            try:
+                with open(subqueries_filename, 'w', encoding='utf-8') as f:
+                    json.dump(parsed_response, f, indent=2)
+                print(f"Saved subqueries to: {subqueries_filename}")
+            except Exception as e:
+                print(f"Warning: Could not save subqueries to '{subqueries_filename}': {e}")
 
         if isinstance(subqueries, list) and all(isinstance(q, str) for q in subqueries) and subqueries:
             print(f"--- Generated {len(subqueries)} Subqueries ---")
@@ -611,17 +622,29 @@ def query_index(query: str, db_path: str, collection_name: str,
     answer = generate_answer(query, combined_context, final_chunks_list, model=answer_model, output_dir=output_dir, query_index=query_index)
     return answer
 
-def follow_up_query_refinement(intended_next_query: str, overall_goal: str, previous_queries: str, previous_answers: str, model: str) -> str:
+def follow_up_query_refinement(intended_next_query: str, overall_goal: str, previous_queries: str, previous_answers: str, model: str, output_dir: Optional[str] = None, query_index: Optional[int] = None) -> str:
     """
     Generates a follow-up query based on the previous answer.
-    This is a placeholder function and should be implemented as needed.
+    
+    Args:
+        intended_next_query: The initially planned next query
+        overall_goal: The overall research goal
+        previous_queries: List of previous queries that have been executed
+        previous_answers: List of answers to those previous queries
+        model: LLM model to use for refinement
+        output_dir: Directory to save the refined query JSON
+        query_index: Index of the current query (for filename)
+    
+    Returns:
+        The refined follow-up query
     """
+    print(f"\n--- Refining Follow-Up Query using {model} ---")
     # open the system prompt file
     system_prompt_path = os.path.join(_PROJECT_ROOT, 'llm_prompts', 'follow_up_query_refinement.txt')
     with open(system_prompt_path, 'r', encoding='utf-8') as f:
         system_prompt = f.read().strip() 
 
-    # Construct the full prompt for the LLM. Place each query and answer togheter
+    # Construct the full prompt for the LLM. Place each query and answer together
     full_prompt = (
         f"{system_prompt}\n\n"
         f"Overall Goal: \"{overall_goal}\"\n\n"
@@ -645,5 +668,54 @@ def follow_up_query_refinement(intended_next_query: str, overall_goal: str, prev
         )
     
     new_subquery = response.strip()
+    
+    # Save the refined query to the JSON file if output_dir provided
+    if output_dir and os.path.isdir(output_dir) and query_index is not None:
+        # First, check if the subqueries.json file exists and load it
+        subqueries_file = os.path.join(output_dir, 'subqueries.json')
+        subqueries_data = {}
+        
+        if os.path.exists(subqueries_file):
+            try:
+                with open(subqueries_file, 'r', encoding='utf-8') as f:
+                    subqueries_data = json.load(f)
+            except Exception as e:
+                print(f"Warning: Could not read subqueries file '{subqueries_file}': {e}")
+        
+        # Update the subquery at the specified index if subqueries exists
+        if "subqueries" in subqueries_data and len(subqueries_data["subqueries"]) > query_index:
+            # Save the original subquery if not already tracked
+            if "original_subqueries" not in subqueries_data:
+                subqueries_data["original_subqueries"] = subqueries_data["subqueries"].copy()
+            
+            # Add the refined query to tracking
+            if "refined_subqueries" not in subqueries_data:
+                subqueries_data["refined_subqueries"] = [None] * len(subqueries_data["subqueries"])
+            subqueries_data["refined_subqueries"][query_index] = new_subquery
+            
+            # Update the main subqueries list with the refined query
+            subqueries_data["subqueries"][query_index] = new_subquery
+            
+            # Write the updated data back to the file
+            try:
+                with open(subqueries_file, 'w', encoding='utf-8') as f:
+                    json.dump(subqueries_data, f, indent=2)
+                print(f"Updated subqueries file with refined query at index {query_index}")
+            except Exception as e:
+                print(f"Warning: Could not write to subqueries file '{subqueries_file}': {e}")
+        else:
+            # If we can't update the main file, create a separate file for this refined query
+            refined_query_file = os.path.join(output_dir, f'refined_query_{query_index+1}.json')
+            try:
+                with open(refined_query_file, 'w', encoding='utf-8') as f:
+                    json.dump({
+                        "original_query": intended_next_query,
+                        "refined_query": new_subquery,
+                        "query_index": query_index,
+                        "overall_goal": overall_goal
+                    }, f, indent=2)
+                print(f"Saved refined query to: {refined_query_file}")
+            except Exception as e:
+                print(f"Warning: Could not save refined query to '{refined_query_file}': {e}")
 
     return new_subquery

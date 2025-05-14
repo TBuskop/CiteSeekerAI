@@ -59,7 +59,7 @@ QUERY_RERANKER = config.RERANKER_MODEL
 QUERY_RERANK_CANDIDATES = config.DEFAULT_RERANK_CANDIDATE_COUNT
 
 # Output file/directory setup
-RUN_TIMESTAMP = time.strftime('%Y%m%d_%H%M%S')
+RUN_TIMESTAMP = time.strftime('%Y%m%d_%H%M%S')  # Default timestamp if no run_id provided
 BASE_OUTPUT_DIR = os.path.join(_PROJECT_ROOT, "output")
 COMBINED_ANSWERS_OUTPUT_FILENAME = os.path.join(BASE_OUTPUT_DIR, f"combined_answers_{RUN_TIMESTAMP}.txt")
 QUERY_SPECIFIC_OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, "query_specific")
@@ -203,7 +203,26 @@ def process_subquery(query: str, query_index: int, progress_callback=None):
 
 
 # --- Main Pipeline Function ---
-def run_deep_research(question=None, query_numbers=None, progress_callback=None):
+def run_deep_research(question=None, query_numbers=None, progress_callback=None, run_id=None):
+    """
+    Run the deep research pipeline.
+    
+    Args:
+        question (str): The main research question to process
+        query_numbers (int): Number of subqueries to generate
+        progress_callback (function): Callback to report progress updates
+        run_id (str): Optional ID to use for output files instead of generating a timestamp
+    """
+    global RUN_TIMESTAMP, COMBINED_ANSWERS_OUTPUT_FILENAME, RUN_SPECIFIC_OUTPUT_DIR
+    
+    # Use the provided run_id if available (overrides the default timestamp)
+    if run_id:
+        RUN_TIMESTAMP = run_id
+        COMBINED_ANSWERS_OUTPUT_FILENAME = os.path.join(BASE_OUTPUT_DIR, f"combined_answers_{run_id}.txt")
+        RUN_SPECIFIC_OUTPUT_DIR = os.path.join(QUERY_SPECIFIC_OUTPUT_DIR, run_id)
+        # Ensure the directory exists with the new run_id
+        os.makedirs(RUN_SPECIFIC_OUTPUT_DIR, exist_ok=True)
+    
     # Use the passed question or fall back to config.QUERY
     initial_research_question = question if question is not None else config.QUERY
     query_numbers = query_numbers if query_numbers is not None else config.QUERY_DECOMPOSITION_NR
@@ -213,8 +232,9 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None)
     print("\n--- Step 1: Decomposing Research Question ---")
     decomposed_queries, overall_goal = query_decomposition(
         query=initial_research_question,
-        number_of_sub_queries= query_numbers,
-        model=config.SUBQUERY_MODEL
+        number_of_sub_queries=query_numbers,
+        model=config.SUBQUERY_MODEL,
+        output_dir=RUN_SPECIFIC_OUTPUT_DIR
     )
     if decomposed_queries:
         print(f"Overall Goal: {overall_goal}")
@@ -252,7 +272,9 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None)
                     overall_goal=overall_goal,
                     previous_queries=previous_queries,
                     previous_answers=previous_answers,
-                    model=config.SUBQUERY_MODEL
+                    model=config.SUBQUERY_MODEL,
+                    output_dir=RUN_SPECIFIC_OUTPUT_DIR,
+                    query_index=i
                 )
                 if refined_query and refined_query != original_subquery:
                      print(f"[Query {i+1}] Refined query: '{refined_query}'")
