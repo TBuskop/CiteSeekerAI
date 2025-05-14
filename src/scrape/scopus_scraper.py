@@ -5,6 +5,9 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 from typing import Dict, Optional, List, Union, Tuple
 from pathlib import Path
 
+# new import
+from config import SCOPUS_SEARCH_SCOPE
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -144,8 +147,8 @@ class ScopusScraper:
             # Ensure we are on the search page
             if "search/form.uri" not in self.page.url:
                 logger.info("Not on search page, navigating...")
-                self.page.goto("https://www.scopus.com/search/form.uri?display=basic")
-                self.page.wait_for_load_state('networkidle')
+                self.page.goto("https://www.scopus.com/search/form.uri?display=basic", wait_until="domcontentloaded")
+
                 # Check again after navigation
                 if "search/form.uri" not in self.page.url:
                      logger.error(f"Failed to navigate to search page. Current URL: {self.page.url}")
@@ -155,6 +158,20 @@ class ScopusScraper:
                          # Consider attempting re-login here if desired, but for now, fail.
                      self._save_screenshot("search_nav_failed")
                      return False
+
+            # Select the search scope/field from the dropdown
+            search_scope_selector = 'select[data-testid="select-field-select"]'
+            if self.page.is_visible(search_scope_selector):
+                logger.info(f"Selecting search scope: {SCOPUS_SEARCH_SCOPE}")
+                try:
+                    self.page.select_option(search_scope_selector, SCOPUS_SEARCH_SCOPE)
+                    time.sleep(0.5)  # Brief pause to let the UI update
+                    logger.info(f"Selected search scope: {SCOPUS_SEARCH_SCOPE}")
+                except Exception as e:
+                    logger.warning(f"Failed to select search scope: {str(e)}")
+                    self._save_screenshot("search_scope_error")
+            else:
+                logger.warning("Search scope dropdown not found. Will use the default search scope.")
 
             # Try to find the search input field
             search_selectors = [

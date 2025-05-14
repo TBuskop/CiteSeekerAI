@@ -70,7 +70,7 @@ def obtain_store_abstracts(search_query=None, progress_callback=None):
     llm_client = llm_interface.initialize_clients() # Initialize LLM client
 
     # Use the passed question or fall back to config.QUERY
-    search_query = search_query if search_query is not None else config.QUERY
+    search_query = search_query if search_query is not None else config.SCOPUS_SEARCH_STRING
 
     log_progress("--- Step 0: Generating Scopus Search String ---")
     if MANUAL_SCOPUS_QUERY:

@@ -23,8 +23,9 @@ QUERY_DECOMPOSITION_NR = 3  # Number of sub-queries to generate from the main qu
 
 # --- Scopus Search string ---
 SCOPUS_SEARCH_STRING = """
-    ("climate storylines")
+    ("climate storylines" AND "drought*")
 """
+SCOPUS_SEARCH_SCOPE = "ALL"  # Options: "ALL", "TITLE_ABS_KEY"
 
 # --- Query Configuration ---
 # How many results to retrieve at different stages.
