@@ -64,16 +64,18 @@ document.addEventListener('DOMContentLoaded', function() {
             // Captures: 1. baseRef (e.g., "Author et al., YYYY")
             //           2. chunksGroup (e.g., ", Chunk #1, Chunk #2") - requires at least one chunk.
             //           3. citingInfo (e.g., ", citing Some Ref, YYYY") - optional.
-            const segmentRegex = /^\s*([A-Z][^,]+(?:,\s*(?!Chunk #\d|citing)[^,]+)*?,\s*\d{4})((?:,\s*Chunk #\d+)+)((?:,\s*citing\s*[^;)]+)?)?\s*$/;
+            //           4. additionalInfo (e.g., ", Equation (15)") - optional.
+            const segmentRegex = /^\s*([A-Z][^,]+(?:,\s*(?!Chunk #\d|citing)[^,]+)*?,\s*\d{4})((?:,\s*Chunk #\d+)+)(,\s*citing\s*[^;)]+)?(.*)\s*$/;
 
             for (const segment of citationSegments) {
                 const segmentTrimmed = segment.trim();
                 const segmentMatch = segmentTrimmed.match(segmentRegex);
 
                 if (segmentMatch) {
-                    let [, baseRef, chunksGroup, citingInfo] = segmentMatch;
+                    let [, baseRef, chunksGroup, citingInfo, additionalInfo] = segmentMatch;
                     // Ensure citingInfo is a string (empty if not present or only whitespace)
                     citingInfo = citingInfo ? citingInfo.trim() : "";
+                    additionalInfo = additionalInfo ? additionalInfo.trim() : ""; // Trim and ensure string
 
                     let currentSegmentHtml = "";
                     // Split chunksGroup by (Chunk #N) and filter out empty strings from the split.
@@ -117,7 +119,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         }
                     }
 
-                    // Construct the HTML for the segment, attaching citingInfo to the last chunk span.
+                    // Construct the HTML for the segment, attaching citingInfo and additionalInfo to the last chunk span.
                     for (let i = 0; i < elementsToRender.length; i++) {
                         const el = elementsToRender[i];
                         if (el.type === 'chunk') {
@@ -130,9 +132,15 @@ document.addEventListener('DOMContentLoaded', function() {
                                     break;
                                 }
                             }
-                            // If this is the last chunk element and citingInfo exists, append it.
-                            if (isLastChunkElement && citingInfo) {
-                                spanText += citingInfo;
+                            // If this is the last chunk element, append citingInfo and additionalInfo.
+                            if (isLastChunkElement) {
+                                if (citingInfo) {
+                                    spanText += citingInfo;
+                                }
+                                if (additionalInfo) {
+                                    // HTML-escape additionalInfo as it's free text
+                                    spanText += additionalInfo.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                                }
                             }
                             currentSegmentHtml += `<span class="citation" data-job-id="${currentJobIdForSpans}" data-citation-key="${el.citationKey}">${spanText}</span>`;
                         } else if (el.type === 'separator') {
