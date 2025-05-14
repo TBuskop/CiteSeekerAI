@@ -37,24 +37,114 @@ document.addEventListener('DOMContentLoaded', function() {
             html = html.replace(/\n/g, '<br>');
         }
 
-        // Then, wrap citations in the generated HTML
-        // Regex to find patterns like (Author et al., YYYY, Chunk #N) or (Author et al., YYYY, Chunk #N, citing Other, YYYY)
-        // It captures:
-        // 1. The main citation key (e.g., "Author et al., YYYY, Chunk #N")
-        // 2. The optional "citing" part (e.g., ", citing Other, YYYY")
-        const citationRegex = /\(([A-Z][^;()]*?Chunk #\d+)((?:, citing [^;()]+(?:; [^;()]+)*)?)\)/g;
-        
-        html = html.replace(citationRegex, function(match, keyPart, citingPart) {
-            // match: The entire matched string, e.g., "(Author et al., YYYY, Chunk #N, citing Other, YYYY)"
-            // keyPart: The main citation key, e.g., "Author et al., YYYY, Chunk #N"
-            // citingPart: The citing information, e.g., ", citing Other, YYYY" (or empty if not present)
-            
-            if (!currentJobId) {
-                console.warn("currentJobId is not set while formatting citations. Citation tooltips may not work for:", match);
+        // Regex to find all parenthesized groups: (content)
+        const parenthesizedGroupRegex = /\(([^)]+)\)/g;
+
+        html = html.replace(parenthesizedGroupRegex, (fullMatch, innerContent) => {
+            // Only process as citation if it contains "Chunk #"
+            if (!innerContent.includes("Chunk #")) {
+                return fullMatch; // Return original text for non-citation parentheses
             }
-            const citationKeyForLookup = keyPart.trim();
             
-            return `<span class="citation" data-job-id="${currentJobId}" data-citation-key="${citationKeyForLookup}">${match}</span>`;
+            const currentJobIdForSpans = currentJobId || '';
+            if (!currentJobIdForSpans) { // Warn if job ID is missing
+                console.warn("currentJobId is not set. Citation tooltips may not work for group:", fullMatch);
+            }
+
+            const citationSegments = innerContent.split(';');
+            let processedSegmentsOutput = [];
+
+            // Regex to parse individual citation segments.
+            // Captures: 1. baseRef (e.g., "Author et al., YYYY")
+            //           2. chunksGroup (e.g., ", Chunk #1, Chunk #2") - requires at least one chunk.
+            //           3. citingInfo (e.g., ", citing Some Ref, YYYY") - optional.
+            const segmentRegex = /^\s*([A-Z][^,]+(?:,\s*(?!Chunk #\d|citing)[^,]+)*?,\s*\d{4})((?:,\s*Chunk #\d+)+)((?:,\s*citing\s*[^;)]+)?)?\s*$/;
+
+            for (const segment of citationSegments) {
+                const segmentTrimmed = segment.trim();
+                const segmentMatch = segmentTrimmed.match(segmentRegex);
+
+                if (segmentMatch) {
+                    let [, baseRef, chunksGroup, citingInfo] = segmentMatch;
+                    // Ensure citingInfo is a string (empty if not present or only whitespace)
+                    citingInfo = citingInfo ? citingInfo.trim() : "";
+
+                    let currentSegmentHtml = "";
+                    // Split chunksGroup by (Chunk #N) and filter out empty strings from the split.
+                    // Example: chunksGroup = ", Chunk #0, Chunk #5" -> chunkParts = [", ", "Chunk #0", ", ", "Chunk #5"]
+                    const chunkParts = chunksGroup.split(/(Chunk #\d+)/g).filter(part => part); 
+
+                    let isFirstChunkInSegment = true;
+                    // accumulatedTextForFirstChunkSpan will hold `baseRef` + any leading separators from chunksGroup before the first chunk.
+                    let accumulatedTextForFirstChunkSpan = baseRef; 
+                    
+                    let elementsToRender = []; // Stores objects representing parts of the citation (chunk or separator)
+
+                    for (const part of chunkParts) {
+                        if (part.startsWith("Chunk #")) { // This is a chunk name, e.g., "Chunk #0"
+                            const chunkName = part;
+                            const citationKeyForLookup = `${baseRef}, ${chunkName}`.trim();
+                            let displayText;
+
+                            if (isFirstChunkInSegment) {
+                                // Display text for the first chunk includes accumulated baseRef and leading separator(s) from chunksGroup.
+                                displayText = accumulatedTextForFirstChunkSpan + chunkName;
+                                accumulatedTextForFirstChunkSpan = ""; // Clear accumulator as it's now part of displayText
+                                isFirstChunkInSegment = false;
+                            } else {
+                                // Display text for subsequent chunks is just their name.
+                                displayText = chunkName;
+                            }
+                            elementsToRender.push({
+                                type: 'chunk',
+                                citationKey: citationKeyForLookup,
+                                text: displayText
+                            });
+                        } else { // This part is a separator from chunksGroup, e.g., ", "
+                            if (isFirstChunkInSegment) {
+                                // If before the first chunk, append to its accumulator.
+                                accumulatedTextForFirstChunkSpan += part;
+                            } else {
+                                // If it's a separator between chunks, store it as plain text.
+                                elementsToRender.push({ type: 'separator', text: part });
+                            }
+                        }
+                    }
+
+                    // Construct the HTML for the segment, attaching citingInfo to the last chunk span.
+                    for (let i = 0; i < elementsToRender.length; i++) {
+                        const el = elementsToRender[i];
+                        if (el.type === 'chunk') {
+                            let spanText = el.text;
+                            // Check if this is the last 'chunk' type element in elementsToRender
+                            let isLastChunkElement = true;
+                            for(let j = i + 1; j < elementsToRender.length; j++) {
+                                if (elementsToRender[j].type === 'chunk') {
+                                    isLastChunkElement = false;
+                                    break;
+                                }
+                            }
+                            // If this is the last chunk element and citingInfo exists, append it.
+                            if (isLastChunkElement && citingInfo) {
+                                spanText += citingInfo;
+                            }
+                            currentSegmentHtml += `<span class="citation" data-job-id="${currentJobIdForSpans}" data-citation-key="${el.citationKey}">${spanText}</span>`;
+                        } else if (el.type === 'separator') {
+                            currentSegmentHtml += el.text; // Add separator as plain text
+                        }
+                    }
+                    processedSegmentsOutput.push(currentSegmentHtml);
+
+                } else {
+                    // Segment didn't match the citation structure, add as plain text (HTML-escaped)
+                    processedSegmentsOutput.push(segment.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"));
+                }
+            }
+            
+            // Join processed segments with ';' and wrap in original parentheses.
+            // Then, wrap the entire reconstructed citation group in a span for hover styling,
+            // but without a data-citation-key so it doesn't trigger a tooltip itself.
+            return `<span class="citation" data-job-id="${currentJobIdForSpans}">(${processedSegmentsOutput.join(';')})</span>`;
         });
         return html;
     }
@@ -264,13 +354,20 @@ document.addEventListener('DOMContentLoaded', function() {
         if (el) {
             clearTimeout(hideTooltipTimeout); // Cancel any pending hide operations
 
-            const jobId = el.getAttribute('data-job-id');
             const citationKey = el.getAttribute('data-citation-key');
+            const jobId = el.getAttribute('data-job-id');
             
-            if (!jobId || !citationKey) {
-                console.warn("Missing job-id or citation-key on element:", el);
-                citationTooltip.innerText = 'Error: Missing citation data.';
-                citationTooltip.style.display = 'block'; // Show error in tooltip
+            // If there's no citationKey, this span is likely a wrapper for styling (the whole citation group).
+            // Do not attempt to show a tooltip for it. It will still get hover styling from CSS.
+            if (!citationKey) {
+                return; 
+            }
+
+            // If citationKey is present, but jobId is missing, it's an issue for fetching the chunk.
+            if (!jobId) {
+                console.warn("Missing job-id on citation element with key:", citationKey, el);
+                citationTooltip.innerText = 'Error: Missing job ID for citation.';
+                citationTooltip.style.display = 'block'; 
                 positionTooltip(el);
                 return;
             }
