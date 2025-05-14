@@ -12,6 +12,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const progressBar = document.getElementById('progress-bar');
     const newChatBtn = document.getElementById('new-chat-btn'); // Added
     // const historyItems = document.querySelectorAll('.history-item'); // Will be handled by updateHistoryList
+    const outlineContainer = document.getElementById('outline-container'); // Added for outline
     
     // Variables
     let currentJobId = null;
@@ -25,6 +26,11 @@ document.addEventListener('DOMContentLoaded', function() {
         if (typeof marked !== 'undefined' && typeof marked.parse === 'function') {
             try {
                 html = marked.parse(text);
+                // Add IDs to H4 tags that look like "Subquery X" for the outline
+                html = html.replace(/<h4(.*?)>(Subquery\s+\d+)<\/h4>/gi, function(match, p1, title) {
+                    const id = title.toLowerCase().replace(/\s+/g, '-');
+                    return `<h4 id="${id}"${p1}>${title}</h4>`;
+                });
             } catch (e) {
                 console.error("Error parsing markdown:", e);
                 // Fallback to plain text if markdown parsing fails
@@ -180,6 +186,8 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             resetForm(); // Reset the input form
             questionInput.value = ''; // Clear the question input field
+            if (outlineContainer) outlineContainer.innerHTML = ''; // Clear outline
+            updateOutline(null, []); // Explicitly clear outline with empty subqueries
             // Optionally, deselect any active history item visually if you implement such styling
         });
     }
@@ -238,9 +246,11 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(data => {
             if (data.status === 'success') {
                 if (chatContainer) chatContainer.innerHTML = '';
+                if (outlineContainer) outlineContainer.innerHTML = ''; // Clear outline before loading history
                 
                 addMessage('user', data.question);
-                addMessage('assistant', data.answer, data.timestamp); // formatAnswer will be called inside addMessage
+                // Pass subqueries to addMessage, which will then pass to updateOutline
+                addMessage('assistant', data.answer, data.timestamp, data.subqueries || []); 
                 
                 if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
                 
@@ -288,7 +298,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         // Assistant message already added? No, this is where it's first shown for a new query.
                         // If chatContainer already has messages (e.g. user query), this adds to it.
                         // If it's a fresh page load and job completes, this might be the first message.
-                        addMessage('assistant', resultData.answer, resultData.timestamp);
+                        addMessage('assistant', resultData.answer, resultData.timestamp, resultData.subqueries || []);
                         resetForm();
                         updateHistoryList(); // Refresh history list
                     } else {
@@ -316,14 +326,16 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // Add a message to the chat
-    function addMessage(sender, message, timestamp = null) {
+    function addMessage(sender, message, timestamp = null, subqueries = null) { // Added subqueries parameter
         if (!chatContainer) return;
         
         const messageDiv = document.createElement('div');
         messageDiv.classList.add(sender === 'user' ? 'user-message' : 'assistant-message', 'p-3', 'mb-3', 'rounded');
         
+        let formattedMessageContent = message;
         if (sender === 'assistant') {
-            messageDiv.innerHTML = formatAnswer(message); // formatAnswer handles markdown and citations
+            formattedMessageContent = formatAnswer(message); // formatAnswer handles markdown and citations
+            messageDiv.innerHTML = formattedMessageContent;
             
             if (timestamp) {
                 const timeDiv = document.createElement('div');
@@ -340,6 +352,11 @@ document.addEventListener('DOMContentLoaded', function() {
         
         chatContainer.appendChild(messageDiv);
         chatContainer.scrollTop = chatContainer.scrollHeight;
+
+        if (sender === 'assistant') {
+            // Pass both HTML content (for IDs) and subqueries list (for text)
+            updateOutline(formattedMessageContent, subqueries); 
+        }
     }
     
     // Create tooltip element for citation chunks
@@ -437,6 +454,97 @@ document.addEventListener('DOMContentLoaded', function() {
             citationTooltip.style.top = `${window.scrollY + rect.top - citationTooltip.offsetHeight - 5}px`;
         }
 
+    }
+    
+    // Function to update the outline panel
+    function updateOutline(answerHtml, subqueries = null) { // Added subqueries parameter
+        if (!outlineContainer) return;
+
+        outlineContainer.innerHTML = ''; // Clear previous outline
+
+        // If subqueries are provided and is an array with items, use them for the outline
+        if (subqueries && Array.isArray(subqueries) && subqueries.length > 0) {
+            const cardHeader = document.createElement('div');
+            cardHeader.className = 'card-header';
+            cardHeader.textContent = 'Outline';
+            outlineContainer.appendChild(cardHeader);
+
+            const list = document.createElement('ul');
+            list.className = 'list-group list-group-flush flex-grow-1'; // Bootstrap styling + flex grow
+            // Remove hardcoded maxHeight, controlled by CSS now
+            list.style.overflowY = 'auto';  // Make outline scrollable if too long
+
+
+            subqueries.forEach((subqueryText, index) => {
+                const listItem = document.createElement('li');
+                listItem.className = 'list-group-item';
+                
+                const link = document.createElement('a');
+                // Generate ID based on index (1-based for subquery numbers)
+                const targetId = `subquery-${index + 1}`; 
+                link.href = `#${targetId}`;
+                // Display format: "1. {subquery text}"
+                link.textContent = `${index + 1}. ${subqueryText}`; 
+                link.className = 'outline-link d-block'; // Removed text-truncate to allow wrapping
+                link.style.cursor = 'pointer';
+                link.style.whiteSpace = 'normal'; // Allow text to wrap
+                link.style.overflowWrap = 'break-word'; // Break long words if necessary
+
+
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const targetElement = document.getElementById(this.getAttribute('href').substring(1));
+                    if (targetElement) {
+                        targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                });
+
+                listItem.appendChild(link);
+                list.appendChild(listItem);
+            });
+            outlineContainer.appendChild(list);
+        } else if (answerHtml) { // Fallback or for messages without explicit subqueries (like initial greeting)
+            // This part tries to find H4s if no subqueries array is given.
+            // For the initial greeting, this will likely find nothing, which is fine.
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = answerHtml;
+            const headers = tempDiv.querySelectorAll('h4[id^="subquery-"]');
+            
+            if (headers.length > 0) {
+                const cardHeader = document.createElement('div');
+                cardHeader.className = 'card-header';
+                cardHeader.textContent = 'Outline';
+                outlineContainer.appendChild(cardHeader);
+
+                const list = document.createElement('ul');
+                list.className = 'list-group list-group-flush flex-grow-1';
+                // Remove hardcoded maxHeight, controlled by CSS now
+                list.style.overflowY = 'auto';
+
+                headers.forEach(header => {
+                    const listItem = document.createElement('li');
+                    listItem.className = 'list-group-item';
+                    
+                    const link = document.createElement('a');
+                    link.href = `#${header.id}`;
+                    link.textContent = header.textContent; // This would be "Subquery X"
+                    link.className = 'outline-link d-block text-truncate';
+                    link.style.cursor = 'pointer';
+                    link.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        const targetElement = document.getElementById(this.getAttribute('href').substring(1));
+                        if (targetElement) {
+                            targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }
+                    });
+
+                    listItem.appendChild(link);
+                    list.appendChild(listItem);
+                });
+                outlineContainer.appendChild(list);
+            }
+        }
+        // If neither subqueries nor headers are found, the outline remains empty.
     }
     
     // Fetch and update the chat history list

@@ -61,7 +61,21 @@ def process_research_question(job_id, question, subquestions_count=3):
 
         # Find the expected output file directly using job_id instead of finding latest
         output_file = os.path.join(OUTPUT_DIR, f"combined_answers_{job_id}.txt")
+        subqueries_file = os.path.join(OUTPUT_DIR, "query_specific", job_id, "subqueries.json")
         
+        subqueries_list = []
+        if os.path.exists(subqueries_file):
+            try:
+                with open(subqueries_file, 'r', encoding='utf-8') as f_sub:
+                    subqueries_data = json.load(f_sub)
+                    # Prefer 'subqueries' key, fallback to 'original_subqueries'
+                    if 'subqueries' in subqueries_data and isinstance(subqueries_data['subqueries'], list):
+                        subqueries_list = subqueries_data['subqueries']
+                    elif 'original_subqueries' in subqueries_data and isinstance(subqueries_data['original_subqueries'], list):
+                        subqueries_list = subqueries_data['original_subqueries']
+            except Exception as e_sub:
+                print(f"Error reading or parsing subqueries.json for job {job_id}: {e_sub}")
+
         if os.path.exists(output_file):
             with open(output_file, 'r', encoding='utf-8') as f:
                 answer = f.read()
@@ -71,7 +85,8 @@ def process_research_question(job_id, question, subquestions_count=3):
                 "question": question,
                 "answer": answer,
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "file_path": output_file
+                "file_path": output_file,
+                "subqueries": subqueries_list
             }
             
             # Update job status
@@ -79,24 +94,27 @@ def process_research_question(job_id, question, subquestions_count=3):
             processing_jobs[job_id]["output_file"] = output_file
         else:
             # Fall back to finding the latest file if the expected file doesn't exist
-            output_file = find_latest_output_file()
+            # This fallback might not have associated subqueries easily, handle gracefully
+            print(f"Warning: Expected output file combined_answers_{job_id}.txt not found. Attempting fallback.")
+            output_file = find_latest_output_file() # This is a generic fallback
             if output_file:
                 with open(output_file, 'r', encoding='utf-8') as f:
                     answer = f.read()
                 
-                # Store in chat history
+                # For fallback, subqueries might be harder to associate if job_id doesn't match file's implicit ID
+                # For simplicity, we might not have subqueries here or try to infer if possible
+                # For now, it will default to an empty list if subqueries_file for original job_id wasn't found
                 chat_history[job_id] = {
                     "question": question,
                     "answer": answer,
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "file_path": output_file
+                    "file_path": output_file,
+                    "subqueries": subqueries_list # This would be from the original job_id context
                 }
                 
-                # Update job status
                 processing_jobs[job_id]["status"] = "Completed"
                 processing_jobs[job_id]["output_file"] = output_file
-                # Log the mismatch for debugging
-                print(f"Warning: Expected output file {job_id}.txt not found, using latest: {os.path.basename(output_file)}")
+                print(f"Warning: Used fallback output file {os.path.basename(output_file)} for job {job_id}")
             else:
                 processing_jobs[job_id]["status"] = "Error"
                 processing_jobs[job_id]["error"] = "Output file not found"
@@ -235,11 +253,32 @@ def job_status(job_id):
 def get_result(job_id):
     """Get the result of a completed job"""
     if job_id in chat_history:
+        history_item = chat_history[job_id]
+        subqueries_list = history_item.get("subqueries", [])
+
+        # If subqueries are not in chat_history (e.g. older history items before this change),
+        # try to load them from the subqueries.json file directly.
+        if not subqueries_list:
+            subqueries_file = os.path.join(OUTPUT_DIR, "query_specific", job_id, "subqueries.json")
+            if os.path.exists(subqueries_file):
+                try:
+                    with open(subqueries_file, 'r', encoding='utf-8') as f_sub:
+                        subqueries_data = json.load(f_sub)
+                        if 'subqueries' in subqueries_data and isinstance(subqueries_data['subqueries'], list):
+                            subqueries_list = subqueries_data['subqueries']
+                        elif 'original_subqueries' in subqueries_data and isinstance(subqueries_data['original_subqueries'], list):
+                             subqueries_list = subqueries_data['original_subqueries']
+                        # Update chat_history entry if we just loaded them
+                        chat_history[job_id]["subqueries"] = subqueries_list
+                except Exception as e_sub:
+                    print(f"Error reading or parsing subqueries.json for job {job_id} during get_result: {e_sub}")
+        
         return jsonify({
             "status": "success",
-            "question": chat_history[job_id]["question"],
-            "answer": chat_history[job_id]["answer"],
-            "timestamp": chat_history[job_id]["timestamp"]
+            "question": history_item["question"],
+            "answer": history_item["answer"],
+            "timestamp": history_item["timestamp"],
+            "subqueries": subqueries_list
         })
     
     return jsonify({"status": "not_found"})
