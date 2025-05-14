@@ -127,7 +127,7 @@ python src/web_interface/app.py
 
 ```
 
-![image](https://github.com/user-attachments/assets/361a623b-049c-4673-8522-8e40e91ce9eb)
+![image](https://github.com/user-attachments/assets/91de3d8a-d4d2-4840-a32c-2b27b26fbebc)
 
 
 ## Disclaimer
