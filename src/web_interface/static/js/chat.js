@@ -163,6 +163,25 @@ document.addEventListener('DOMContentLoaded', function() {
             // but without a data-citation-key so it doesn't trigger a tooltip itself.
             return `<span class="citation" data-job-id="${currentJobIdForSpans}">(${processedSegmentsOutput.join(';')})</span>`;
         });
+
+        // Make "References Used:" section collapsible
+        // The regex looks for "**References Used:**" (already processed by markdown into HTML)
+        // followed by a newline, then captures everything until a line with "---", "#### Subquery", "## Refined Overall Goal", or end of string.
+        // We handle both raw markdown and HTML-processed versions
+        const referencesSectionRegex = /(<strong>References Used:<\/strong>|<p><strong>References Used:<\/strong><\/p>|\*\*References Used:\*\*\s*(?:<br\s*\/?>)?)\s*([\s\S]*?)(?=<hr\s*\/?>|<h4|<h2|$)/gi;
+
+        html = html.replace(referencesSectionRegex, (match, p1, referencesBlock) => {
+            // p1 is the "References Used:" header part
+            // referencesBlock is the actual list of references
+            
+            // Use a consistent summary text
+            const summaryText = "References Used:";
+            
+            // Return the references wrapped in collapsible elements
+            return `<details class="references-details"><summary class="references-summary">${summaryText}</summary><div class="references-content">${referencesBlock.trim()}</div></details>`;
+        });
+
+
         return html;
     }
 

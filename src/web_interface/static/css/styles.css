@@ -336,3 +336,48 @@ pre {
     background-color: #e6f0ff !important; /* Light blue highlight, !important to override potential other styles */
     transition: background-color 0.3s ease-out;
 }
+
+/* Styles for collapsible "References Used" section */
+.references-details {
+    margin-top: 1rem;
+    margin-bottom: 1rem;
+    border: 1px solid #eeeeee;
+    border-radius: 4px;
+    background-color: #f9f9f9;
+}
+
+.references-summary {
+    cursor: pointer;
+    padding: 0.75rem 1.25rem;
+    font-weight: bold;
+    background-color: #f5f5f5;
+    border-bottom: 1px solid #eeeeee;
+    list-style: none; /* Remove default marker */
+    display: block; /* Make it block to take full width */
+}
+
+.references-summary::-webkit-details-marker {
+    display: none; /* Hide default marker in WebKit browsers */
+}
+
+.references-summary::before {
+    content: '▶ '; /* Default state: collapsed */
+    margin-right: 0.5em;
+}
+
+.references-details[open] > .references-summary::before {
+    content: '▼ '; /* Open state */
+}
+
+.references-content {
+    padding: 0.75rem 1.25rem;
+}
+
+.references-content ul {
+    padding-left: 1.25rem; /* Indent list items if they are in a ul */
+    margin-bottom: 0;
+}
+
+.references-content p {
+    margin-bottom: 0.5rem;
+}
