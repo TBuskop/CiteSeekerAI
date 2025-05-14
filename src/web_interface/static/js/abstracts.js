@@ -5,12 +5,17 @@ document.addEventListener('DOMContentLoaded', function() {
     const statusText = document.getElementById('status-text');
     const progressBar = document.getElementById('progress-bar');
     const resultContainer = document.getElementById('result-container');
-    const resultContent = document.getElementById('result-content');    abstractSearchForm.addEventListener('submit', function(e) {
+    const resultContent = document.getElementById('result-content');
+    const searchQuery = document.getElementById('search-query');
+    const scopusSearchScope = document.getElementById('scopus-search-scope'); // Added
+    
+    abstractSearchForm.addEventListener('submit', function(e) {
         e.preventDefault();
         
-        const searchQuery = document.getElementById('search-query').value.trim();
+        const query = searchQuery.value.trim();
+        const selectedScope = scopusSearchScope.value; // Added
         
-        if (!searchQuery) {
+        if (!query) {
             alert('Please enter a search query');
             return;
         }
@@ -28,7 +33,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 'Content-Type': 'application/x-www-form-urlencoded',
             },
             body: new URLSearchParams({
-                'query': searchQuery
+                'query': query, // Ensure query is passed, not the element
+                'scopus_search_scope': selectedScope // Added
             })
         })
         .then(response => response.json())

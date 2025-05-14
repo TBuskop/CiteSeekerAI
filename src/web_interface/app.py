@@ -297,6 +297,7 @@ def abstract_search_page():
 def start_abstract_search():
     """Handle new abstract collection requests"""
     query = request.form.get('query', '').strip()
+    scopus_search_scope = request.form.get('scopus_search_scope', config.SCOPUS_SEARCH_SCOPE) # Added, with fallback to config
     
     if not query:
         return jsonify({"status": "error", "message": "Search query cannot be empty"})
@@ -306,7 +307,7 @@ def start_abstract_search():
     
     # Start processing in background
     processing_jobs[job_id] = {"status": "Starting", "progress": "Initializing..."}
-    threading.Thread(target=process_abstract_search, args=(job_id, query)).start()
+    threading.Thread(target=process_abstract_search, args=(job_id, query, scopus_search_scope)).start() # Pass scope
     
     return jsonify({
         "status": "success",
@@ -322,7 +323,7 @@ def abstract_job_status(job_id):
     
     return jsonify(processing_jobs[job_id])
 
-def process_abstract_search(job_id, query):
+def process_abstract_search(job_id, query, scopus_search_scope): # Added scopus_search_scope parameter
     """Process an abstract collection using the obtain_store_abstracts function"""
     try:
         # Update job status
@@ -334,13 +335,16 @@ def process_abstract_search(job_id, query):
         update_web_progress("Initializing abstract collection...")
         # Temporarily override the SCOPUS_SEARCH_STRING in config
         original_scopus_search_string = config.SCOPUS_SEARCH_STRING
-        config.SCOPUS_SEARCH_STRING = query
+        # The query from the form is now the primary search string for obtain_store_abstracts
+        # config.SCOPUS_SEARCH_STRING = query # This line might be redundant if query is passed directly
 
         # Run with callback to update progress
-        obtain_store_abstracts(query, progress_callback=update_web_progress)
+        obtain_store_abstracts(search_query=query, # Pass query from form
+                               scopus_search_scope=scopus_search_scope, # Pass selected scope
+                               progress_callback=update_web_progress)
 
-        # Restore original config
-        config.SCOPUS_SEARCH_STRING = original_scopus_search_string
+        # Restore original config if it was changed (though direct passing is preferred)
+        # config.SCOPUS_SEARCH_STRING = original_scopus_search_string
 
         # Finalize job status
         processing_jobs[job_id]["status"] = "Completed"

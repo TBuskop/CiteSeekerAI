@@ -86,13 +86,20 @@ def parse_arguments():
         type=int,
         help="End year for filtering results"
     )
+    parser.add_argument(
+        "--scopus-search-scope",
+        type=str,
+        default=None, # Default to None, will use config if not provided
+        help="Scopus search scope (e.g., ALL, TITLE_ABS_KEY)"
+    )
 
     return parser.parse_args()
 
 def run_scopus_search(query: str = None, headless: bool = False, 
                      year_from: Optional[int] = None, year_to: Optional[int] = None, 
                      download_dir: str = "data/downloads/csv",
-                     output_csv_path: Optional[Union[str, Path]] = None
+                     output_csv_path: Optional[Union[str, Path]] = None,
+                     scopus_search_scope: Optional[str] = None  # Added parameter
                      ) -> Tuple[bool, Optional[Path]]:
     """
     Run a search on Scopus and download results as CSV.
@@ -104,6 +111,7 @@ def run_scopus_search(query: str = None, headless: bool = False,
         year_to: End year for filtering results
         download_dir: Directory to save downloaded files (used if output_csv_path is None)
         output_csv_path: Specific path (including filename) to save the CSV. Overrides download_dir and generated filename.
+        scopus_search_scope: The scope for the Scopus search (e.g., "ALL", "TITLE_ABS_KEY"). Defaults to config if None.
         
     Returns:
         Tuple containing (success: bool, csv_path: Optional[Path])
@@ -163,7 +171,7 @@ def run_scopus_search(query: str = None, headless: bool = False,
             logger.info("Scopus scraper initialized successfully.")
             
             # Perform search
-            search_success = scraper.search(query)
+            search_success = scraper.search(query, search_scope_override=scopus_search_scope) # Pass scope
             if not search_success:
                 logger.error("Search failed. Check your query and try again.")
                 return False, None
@@ -217,7 +225,8 @@ if __name__ == "__main__":
         headless=args.headless,
         year_from=args.year_from,
         year_to=args.year_to,
-        download_dir=args.download_dir
+        download_dir=args.download_dir,
+        scopus_search_scope=args.scopus_search_scope # Pass from CLI args
     )
     
     if success and csv_file:

@@ -59,7 +59,7 @@ os.makedirs(os.path.dirname(RELEVANT_CHUNKS_DB_PATH), exist_ok=True) # Added for
 
 # --- Pipeline Execution ---
 
-def obtain_store_abstracts(search_query=None, progress_callback=None):
+def obtain_store_abstracts(search_query=None, scopus_search_scope=None, progress_callback=None): # Added scopus_search_scope
     # helper for UI progress and console
     def log_progress(msg):
         if progress_callback:
@@ -70,21 +70,30 @@ def obtain_store_abstracts(search_query=None, progress_callback=None):
     llm_client = llm_interface.initialize_clients() # Initialize LLM client
 
     # Use the passed question or fall back to config.QUERY
-    search_query = search_query if search_query is not None else config.SCOPUS_SEARCH_STRING
+    # The search_query parameter is now the primary Scopus search string from the UI
+    # search_query = search_query if search_query is not None else config.SCOPUS_SEARCH_STRING # This logic might change
 
     log_progress("--- Step 0: Generating Scopus Search String ---")
-    if MANUAL_SCOPUS_QUERY:
-        SCOPUS_QUERY = search_query # Use manual query if provided
-    else:
+    # If a direct Scopus search query is provided from the UI, we use that.
+    # The generate_scopus_search_string (which converts a research question to a Scopus query)
+    # might not be needed if the user provides a direct Scopus query.
+    # For now, we assume 'search_query' IS the Scopus query.
+    if search_query:
+        SCOPUS_QUERY = search_query
+        print(f"Using provided Scopus query: {SCOPUS_QUERY}")
+    elif MANUAL_SCOPUS_QUERY: # Fallback to config if no direct query and MANUAL_SCOPUS_QUERY is set
+        SCOPUS_QUERY = config.SCOPUS_SEARCH_STRING
+        print(f"Using manual Scopus query from config: {SCOPUS_QUERY}")
+    else: # Fallback to generating from INITIAL_RESEARCH_QUESTION if no direct query and not manual
         success, generated_query = generate_scopus_search_string(
-            query=search_query,
+            query=INITIAL_RESEARCH_QUESTION, # Generate based on the general research question from config
             save_to_file=SAVE_GENERATED_SEARCH_STRING
         )
         if success and generated_query:
             SCOPUS_QUERY = generated_query
             print(f"Using generated Scopus query: {SCOPUS_QUERY}")
         else:
-            SCOPUS_QUERY = DEFAULT_SCOPUS_QUERY
+            SCOPUS_QUERY = DEFAULT_SCOPUS_QUERY # Ultimate fallback
             print(f"Failed to generate search string. Using default Scopus query: {SCOPUS_QUERY}")
 
     # Define Scopus output path based on the final query
@@ -102,30 +111,24 @@ def obtain_store_abstracts(search_query=None, progress_callback=None):
     SCOPUS_OUTPUT_CSV_PATH = os.path.join(CSV_DIR, SCOPUS_OUTPUT_CSV_FILENAME)
 
     log_progress("--- Step 1: Running Scopus Search ---")
+    # Determine the search scope to use: passed argument or config default
+    final_scopus_search_scope = scopus_search_scope if scopus_search_scope else config.SCOPUS_SEARCH_SCOPE
+
     # Run the Scopus search using the determined query and output path
-    if MANUAL_SCOPUS_QUERY:
-       # check if file exists before running the search
-        if os.path.exists(SCOPUS_OUTPUT_CSV_PATH):
-            print(f"File {SCOPUS_OUTPUT_CSV_PATH} already exists. Skipping search.")
-            search_success = True
-            actual_csv_path = SCOPUS_OUTPUT_CSV_PATH # Use existing file path
-        else:
-            search_success, actual_csv_path = run_scopus_search(
-                query=SCOPUS_QUERY,
-                output_csv_path=SCOPUS_OUTPUT_CSV_PATH, # Pass the desired full path
-                headless=SCOPUS_HEADLESS_MODE,
-                year_from=SCOPUS_YEAR_FROM,
-                year_to=SCOPUS_YEAR_TO
-            )
-    else:
-        search_success, actual_csv_path = run_scopus_search(
-            query=SCOPUS_QUERY,
-            output_csv_path=SCOPUS_OUTPUT_CSV_PATH, # Pass the desired full path
-            headless=SCOPUS_HEADLESS_MODE,
-            year_from=SCOPUS_YEAR_FROM,
-            year_to=SCOPUS_YEAR_TO
-            # Credentials and institution are handled by run_scopus_search loading .env
-        )
+    # Always run search if initiated from UI, even if file exists, to reflect current parameters.
+    # Or, add more sophisticated logic to check if parameters match existing file.
+    # For simplicity, we'll run it.
+    search_success, actual_csv_path = run_scopus_search(
+        query=SCOPUS_QUERY,
+        output_csv_path=SCOPUS_OUTPUT_CSV_PATH,
+        headless=SCOPUS_HEADLESS_MODE,
+        year_from=SCOPUS_YEAR_FROM,
+        year_to=SCOPUS_YEAR_TO,
+        scopus_search_scope=final_scopus_search_scope # Pass the scope
+    )
+    # The original logic for MANUAL_SCOPUS_QUERY and checking file existence might need adjustment
+    # if the goal is to always re-run with UI parameters.
+    # The code below is simplified assuming a re-run.
 
     # Check if the search was successful and update the path variable
     if search_success and actual_csv_path:

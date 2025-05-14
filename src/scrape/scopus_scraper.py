@@ -130,13 +130,14 @@ class ScopusScraper:
             
         logger.info("Browser closed")
     
-    def search(self, query: str) -> bool:
+    def search(self, query: str, search_scope_override: Optional[str] = None) -> bool: # Added search_scope_override
         """
         Perform a search on Scopus. Assumes already logged in.
         Date filters should be applied separately using apply_date_filter.
         
         Args:
             query: Search query string
+            search_scope_override: If provided, overrides the SCOPUS_SEARCH_SCOPE from config.
             
         Returns:
             bool: True if search successful, False otherwise
@@ -144,6 +145,10 @@ class ScopusScraper:
         try:
             logger.info(f"Performing search with query: {query}")
             
+            # Determine the actual search scope to use
+            current_search_scope = search_scope_override if search_scope_override else SCOPUS_SEARCH_SCOPE
+            logger.info(f"Using Scopus search scope: {current_search_scope}")
+
             # Ensure we are on the search page
             if "search/form.uri" not in self.page.url:
                 logger.info("Not on search page, navigating...")
@@ -162,11 +167,11 @@ class ScopusScraper:
             # Select the search scope/field from the dropdown
             search_scope_selector = 'select[data-testid="select-field-select"]'
             if self.page.is_visible(search_scope_selector):
-                logger.info(f"Selecting search scope: {SCOPUS_SEARCH_SCOPE}")
+                logger.info(f"Selecting search scope: {current_search_scope}") # Use current_search_scope
                 try:
-                    self.page.select_option(search_scope_selector, SCOPUS_SEARCH_SCOPE)
+                    self.page.select_option(search_scope_selector, current_search_scope) # Use current_search_scope
                     time.sleep(0.5)  # Brief pause to let the UI update
-                    logger.info(f"Selected search scope: {SCOPUS_SEARCH_SCOPE}")
+                    logger.info(f"Selected search scope: {current_search_scope}") # Use current_search_scope
                 except Exception as e:
                     logger.warning(f"Failed to select search scope: {str(e)}")
                     self._save_screenshot("search_scope_error")
@@ -577,7 +582,8 @@ class ScopusScraper:
                     if not abstract_checked:
                         logger.warning("Could not check Abstract & keywords checkbox")
                         
-        
+
+
                     
                     # Finally click the Export/Submit button
                     submit_selectors = [
