@@ -63,6 +63,11 @@ body {
     min-height: 0; /* Allows columns to shrink */
 }
 
+/* Ensure cards in the side columns that are meant to grow equally do so */
+.col-md-3.d-flex.flex-column > .card.flex-grow-1 {
+    flex-basis: 0;
+}
+
 /* Card Layout */
 .card {
     margin-bottom: 1rem;
@@ -324,4 +329,10 @@ pre {
     white-space: pre-wrap;  /* Preserve whitespace and newlines from the chunk */
     max-height: 300px;      /* Max height before scrolling */
     overflow-y: auto;       /* Add scrollbar if content exceeds max-height */
+}
+
+/* Highlight for reference scrolled into view */
+.highlight-reference {
+    background-color: #e6f0ff !important; /* Light blue highlight, !important to override potential other styles */
+    transition: background-color 0.3s ease-out;
 }

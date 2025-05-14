@@ -13,6 +13,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const newChatBtn = document.getElementById('new-chat-btn'); // Added
     // const historyItems = document.querySelectorAll('.history-item'); // Will be handled by updateHistoryList
     const outlineContainer = document.getElementById('outline-container'); // Added for outline
+    const referencesListDiv = document.getElementById('references-list'); // Added for references panel
     
     // Variables
     let currentJobId = null;
@@ -61,65 +62,64 @@ document.addEventListener('DOMContentLoaded', function() {
             let processedSegmentsOutput = [];
 
             // Regex to parse individual citation segments.
-            // Captures: 1. baseRef (e.g., "Author et al., YYYY")
-            //           2. chunksGroup (e.g., ", Chunk #1, Chunk #2") - requires at least one chunk.
-            //           3. citingInfo (e.g., ", citing Some Ref, YYYY") - optional.
-            //           4. additionalInfo (e.g., ", Equation (15)") - optional.
-            const segmentRegex = /^\s*([A-Z][^,]+(?:,\s*(?!Chunk #\d|citing)[^,]+)*?,\s*\d{4})((?:,\s*Chunk #\d+)+)(,\s*citing\s*[^;)]+)?(.*)\s*$/;
+            // Captures: 1. preText (text before the chunk's specific base reference)
+            //           2. chunkBaseRef (Author, YYYY immediately preceding chunks)
+            //           3. chunksString (e.g., ", Chunk #1, Chunk #2")
+            //           4. postText (text after the chunks)
+            const segmentRegex = /^\s*(.*?)([A-Z][^,();]+(?:,\s*(?!Chunk #\d|citing)[^,();]+)*?,\s*\d{4})\s*((?:,\s*Chunk #\d+)+)(.*)\s*$/;
 
             for (const segment of citationSegments) {
                 const segmentTrimmed = segment.trim();
                 const segmentMatch = segmentTrimmed.match(segmentRegex);
 
                 if (segmentMatch) {
-                    let [, baseRef, chunksGroup, citingInfo, additionalInfo] = segmentMatch;
-                    // Ensure citingInfo is a string (empty if not present or only whitespace)
-                    citingInfo = citingInfo ? citingInfo.trim() : "";
-                    additionalInfo = additionalInfo ? additionalInfo.trim() : ""; // Trim and ensure string
+                    let [, preText, chunkBaseRef, chunksString, postText] = segmentMatch;
+                    preText = preText || ""; // Ensure string type
+                    postText = postText || ""; // Ensure string type
 
                     let currentSegmentHtml = "";
-                    // Split chunksGroup by (Chunk #N) and filter out empty strings from the split.
-                    // Example: chunksGroup = ", Chunk #0, Chunk #5" -> chunkParts = [", ", "Chunk #0", ", ", "Chunk #5"]
-                    const chunkParts = chunksGroup.split(/(Chunk #\d+)/g).filter(part => part); 
+                    // Split chunksString by (Chunk #N) and filter out empty strings from the split.
+                    const chunkParts = chunksString.split(/(Chunk #\d+)/g).filter(part => part); 
 
                     let isFirstChunkInSegment = true;
-                    // accumulatedTextForFirstChunkSpan will hold `baseRef` + any leading separators from chunksGroup before the first chunk.
-                    let accumulatedTextForFirstChunkSpan = baseRef; 
+                    // accumulatedTextForFirstChunkSpan will hold `preText` + `chunkBaseRef` + any leading separators from chunksString before the first chunk.
+                    let accumulatedTextForFirstChunkSpan = preText + chunkBaseRef; 
                     
                     let elementsToRender = []; // Stores objects representing parts of the citation (chunk or separator)
 
                     for (const part of chunkParts) {
                         if (part.startsWith("Chunk #")) { // This is a chunk name, e.g., "Chunk #0"
                             const chunkName = part;
-                            const citationKeyForLookup = `${baseRef}, ${chunkName}`.trim();
+                            const citationKeyForLookup = `${chunkBaseRef}, ${chunkName}`.trim();
                             let displayText;
 
                             if (isFirstChunkInSegment) {
-                                // Display text for the first chunk includes accumulated baseRef and leading separator(s) from chunksGroup.
+                                // Display text for the first chunk includes accumulated preText, chunkBaseRef and leading separator(s) from chunksString.
                                 displayText = accumulatedTextForFirstChunkSpan + chunkName;
                                 accumulatedTextForFirstChunkSpan = ""; // Clear accumulator as it's now part of displayText
                                 isFirstChunkInSegment = false;
                             } else {
-                                // Display text for subsequent chunks is just their name.
+                                // Display text for subsequent chunks is just their name (plus any preceding separator from chunkParts).
                                 displayText = chunkName;
                             }
                             elementsToRender.push({
                                 type: 'chunk',
                                 citationKey: citationKeyForLookup,
-                                text: displayText
+                                text: displayText // This text will be built up by combining with preceding separators if necessary during rendering
                             });
-                        } else { // This part is a separator from chunksGroup, e.g., ", "
+                        } else { // This part is a separator from chunksString, e.g., ", "
                             if (isFirstChunkInSegment) {
                                 // If before the first chunk, append to its accumulator.
                                 accumulatedTextForFirstChunkSpan += part;
                             } else {
                                 // If it's a separator between chunks, store it as plain text.
+                                // This will be combined with the *following* chunk's text or rendered standalone.
                                 elementsToRender.push({ type: 'separator', text: part });
                             }
                         }
                     }
 
-                    // Construct the HTML for the segment, attaching citingInfo and additionalInfo to the last chunk span.
+                    // Construct the HTML for the segment
                     for (let i = 0; i < elementsToRender.length; i++) {
                         const el = elementsToRender[i];
                         if (el.type === 'chunk') {
@@ -132,18 +132,21 @@ document.addEventListener('DOMContentLoaded', function() {
                                     break;
                                 }
                             }
-                            // If this is the last chunk element, append citingInfo and additionalInfo.
-                            if (isLastChunkElement) {
-                                if (citingInfo) {
-                                    spanText += citingInfo;
-                                }
-                                if (additionalInfo) {
-                                    // HTML-escape additionalInfo as it's free text
-                                    spanText += additionalInfo.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-                                }
+                            // If this is the last chunk element and postText exists, append it.
+                            if (isLastChunkElement && postText) {
+                                // HTML-escape postText as it's free text
+                                spanText += postText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
                             }
-                            currentSegmentHtml += `<span class="citation" data-job-id="${currentJobIdForSpans}" data-citation-key="${el.citationKey}">${spanText}</span>`;
+                            // scrollTargetKey should be the chunkBaseRef itself
+                            const scrollTargetKey = chunkBaseRef.trim(); 
+                            currentSegmentHtml += `<span class="citation" data-job-id="${currentJobIdForSpans}" data-citation-key="${el.citationKey}" data-scroll-target-key="${scrollTargetKey}">${spanText}</span>`;
                         } else if (el.type === 'separator') {
+                            // If a separator is followed by a chunk, its text is incorporated into the chunk's display text.
+                            // If it's at the end or between two separators (unlikely), render it.
+                            // The current logic for populating elementsToRender aims to attach separators to the displayText of chunks.
+                            // Let's refine how separators are handled in rendering if they are standalone.
+                            // For now, assuming separators are mostly consumed by chunks or are leading/trailing parts of chunk text.
+                            // If a separator element still exists here, it means it's likely a separator between chunks that was explicitly added.
                             currentSegmentHtml += el.text; // Add separator as plain text
                         }
                     }
@@ -197,6 +200,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (outlineContainer) outlineContainer.innerHTML = ''; // Clear outline
             updateOutline(null, []); // Explicitly clear outline with empty subqueries
             // Optionally, deselect any active history item visually if you implement such styling
+            updateReferencesPanel(null); // Clear references panel
         });
     }
 
@@ -259,6 +263,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 addMessage('user', data.question);
                 // Pass subqueries to addMessage, which will then pass to updateOutline
                 addMessage('assistant', data.answer, data.timestamp, data.subqueries || []); 
+                updateReferencesPanel(data.answer); // Update references panel
                 
                 if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
                 
@@ -307,6 +312,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         // If chatContainer already has messages (e.g. user query), this adds to it.
                         // If it's a fresh page load and job completes, this might be the first message.
                         addMessage('assistant', resultData.answer, resultData.timestamp, resultData.subqueries || []);
+                        updateReferencesPanel(resultData.answer); // Update references panel
                         resetForm();
                         updateHistoryList(); // Refresh history list
                     } else {
@@ -375,7 +381,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Event delegation for citation hover
     document.body.addEventListener('mouseover', function(e) {
-        const el = e.target.closest('.citation'); // Use closest to handle nested elements if any
+        const el = e.target.closest('.citation[data-citation-key]'); // Ensure it's a citation span that can have a tooltip
         if (el) {
             clearTimeout(hideTooltipTimeout); // Cancel any pending hide operations
 
@@ -428,7 +434,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     document.body.addEventListener('mouseout', function(e) {
-        const el = e.target.closest('.citation');
+        const el = e.target.closest('.citation[data-citation-key]');
         if (el) {
             // Delay hiding the tooltip, allowing mouse to move into the tooltip
             hideTooltipTimeout = setTimeout(() => {
@@ -555,6 +561,215 @@ document.addEventListener('DOMContentLoaded', function() {
         // If neither subqueries nor headers are found, the outline remains empty.
     }
     
+    // Function to update the references panel
+    function updateReferencesPanel(answerText) {
+        if (!referencesListDiv) return;
+
+        referencesListDiv.innerHTML = ''; // Clear previous references
+
+        if (!answerText) {
+            referencesListDiv.innerHTML = '<div class="text-center text-muted">No references to display.</div>';
+            return;
+        }
+
+        const allReferences = new Set();
+        const referencesSectionRegex = /\*\*References Used:\*\*\s*\n([\s\S]*?)(?=\n---\n|\n#### Subquery|\n## Refined Overall Goal|$)/g;
+        
+        let match;
+        while ((match = referencesSectionRegex.exec(answerText)) !== null) {
+            const referencesBlock = match[1];
+            const individualReferenceRegex = /-\s*(.+)/g;
+            let refMatch;
+            while ((refMatch = individualReferenceRegex.exec(referencesBlock)) !== null) {
+                allReferences.add(refMatch[1].trim());
+            }
+        }
+
+        if (allReferences.size === 0) {
+            referencesListDiv.innerHTML = '<div class="text-center text-muted">No references found in the text.</div>';
+            return;
+        }
+
+        const sortedReferences = Array.from(allReferences).sort((a, b) => {
+            return a.toLowerCase().localeCompare(b.toLowerCase());
+        });
+
+        const ul = document.createElement('ul');
+        ul.className = 'list-unstyled';
+
+        const refParseRegex = /^(.+?),\s*(.+?),\s*(\d{4}),\s*(.+?),\s*(https?:\/\/[^,]+)(?:,\s*(Cited by:\s*\d+))?$/;
+
+        function formatAuthors(authorsString) {
+            const authorList = authorsString.split(';').map(author => author.trim()).filter(author => author);
+            if (authorList.length === 0) return "";
+
+            const formattedAuthorList = authorList.map(authorStr => {
+                const parts = authorStr.split(' ');
+                if (parts.length > 1) {
+                    let initials = parts.pop(); // Last part is assumed initials
+                    const lastName = parts.join(' ');
+                    initials = initials.replace(/\.+$/, '') + '.';
+                    return `${lastName}, ${initials}`;
+                }
+                return authorStr; 
+            });
+
+            if (formattedAuthorList.length === 0) return "";
+            if (formattedAuthorList.length === 1) return formattedAuthorList[0];
+            
+            let result = formattedAuthorList.slice(0, -1).join(', ');
+            result += ` & ${formattedAuthorList.slice(-1)[0]}`;
+            return result;
+        }
+
+        function getInTextAuthorFormat(authorsString) { // authorsString is like "Shepherd T.G.;Sillmann J.;..." OR "FirstAuthor et al."
+            
+            const getMainNamePart = (fullAuthorName) => {
+                const nameParts = fullAuthorName.split(' ').map(p => p.trim()).filter(p => p.length > 0);
+                if (nameParts.length === 0) {
+                    return ""; // Handle empty or whitespace-only names
+                }
+                if (nameParts.length === 1) {
+                    return nameParts[0]; // Single word name, return as is
+                }
+
+                let lastNonInitialIndex = nameParts.length - 1;
+
+                // Iterate backwards from the second-to-last part up to the first part.
+                // We always keep nameParts[0] unless the name consists only of initials.
+                for (let i = nameParts.length - 1; i > 0; i--) {
+                    const part = nameParts[i];
+                    // An initial is typically short, all caps, possibly with dots.
+                    // Must contain at least one uppercase letter. Adjusted length to 7.
+                    const isInitial = part.length >= 1 && part.length <= 9 && /^[A-Z\.]+$/.test(part) && /[A-Z]/.test(part);
+
+                    if (isInitial) {
+                        lastNonInitialIndex = i - 1;
+                    } else {
+                        // Found a part that is not an initial, so this and all preceding parts form the name.
+                        break;
+                    }
+                }
+                // If all parts after the first are initials, lastNonInitialIndex will be 0.
+                // If the first part itself is also an initial (e.g. "X Y Z" where all are initials)
+                // we still return the first part based on this logic.
+                // Example: "X Y Z" -> lastNonInitialIndex = 0. Returns "X".
+                // Example: "Smith X Y Z" -> "Z" is initial, LNI=2. "Y" is initial, LNI=1. "X" is initial, LNI=0. Returns "Smith".
+                // (Correction for "Smith X Y Z": "X" is initial, LNI=0. "Smith" is not initial, loop breaks. LNI remains 0. Slice(0,1) is "Smith")
+                // The loop should check nameParts[i], if it's an initial, then the actual name ends at i-1.
+                // If nameParts[0] is "Smith", nameParts[1] is "X":
+                // i=1, part="X", isInitial=true. lastNonInitialIndex = 0. Loop ends. Slice(0,1) -> "Smith". Correct.
+
+                return nameParts.slice(0, lastNonInitialIndex + 1).join(' ');
+            };
+
+            // Normalize authorsString by removing any trailing period from "et al." if present
+            const normalizedAuthorsString = authorsString.replace(/\s+et al\.\s*$/, " et al.").trim();
+
+
+            // Check if authorsString itself is already in "et al." form
+            if (normalizedAuthorsString.includes(" et al.")) {
+                // Split by " et al." (case-insensitive for "et al", but standard is " et al.")
+                // The regex (?i) makes "et al." case-insensitive if needed, but usually it's consistent.
+                // For simplicity, assuming " et al." is the delimiter.
+                const parts = normalizedAuthorsString.split(/ et al\./i); // Split by " et al."
+                const firstAuthorFull = parts[0].trim();
+                const firstAuthorProcessed = getMainNamePart(firstAuthorFull);
+                return `${firstAuthorProcessed} et al.`;
+            }
+
+            // Original logic for semicolon-separated list
+            const authorList = normalizedAuthorsString.split(';').map(author => author.trim()).filter(Boolean);
+            if (authorList.length === 0) return "";
+
+            const firstAuthorNameProcessed = getMainNamePart(authorList[0]);
+
+            if (authorList.length === 1) return firstAuthorNameProcessed; 
+            
+            return `${firstAuthorNameProcessed} et al.`;
+        }
+
+        sortedReferences.forEach((refText, index) => {
+            const li = document.createElement('li');
+            li.className = 'mb-2 small';
+            li.id = `ref-li-${index}`; // Simple unique ID for the li
+
+            const refMatch = refText.match(refParseRegex);
+            if (refMatch) {
+                const [fullMatch, authors, title, year, source, url, citedBy] = refMatch;
+                
+                const formattedAuthorsAPA = formatAuthors(authors); // For display
+                const inTextAuthorComponent = getInTextAuthorFormat(authors); // For matching
+                // Ensure searchKey matches the standardized format from formatAnswer
+                const searchKey = `${inTextAuthorComponent}, ${year}`; 
+                li.setAttribute('data-reference-search-key', searchKey);
+
+                const formattedYear = `(${year})`;
+                const formattedSource = `<em>${source}</em>`;
+                
+                let displayUrl = url;
+                let clickableUrl = url;
+                if (url.includes("doi.org/")) {
+                    const doi = url.substring(url.indexOf("doi.org/") + "doi.org/".length);
+                    displayUrl = `https://doi.org/${doi}`;
+                    clickableUrl = displayUrl;
+                }
+
+                let fullReferenceHtml = `${formattedAuthorsAPA}. ${formattedYear}. ${title}. ${formattedSource}. <a href="${clickableUrl}" target="_blank">${displayUrl}</a>`;
+                
+                if (citedBy) {
+                    fullReferenceHtml += `. ${citedBy}`;
+                }
+                li.innerHTML = fullReferenceHtml;
+            } else {
+                li.textContent = refText; 
+                // Fallback: try to create a generic search key if possible, or leave it without one
+                // For simplicity, non-matching formats won't be scroll targets.
+            }
+            ul.appendChild(li);
+        });
+
+        referencesListDiv.appendChild(ul);
+    }
+
+    // Event listener for clicking on citations to scroll reference panel
+    document.body.addEventListener('click', function(e) {
+        const citationSpan = e.target.closest('.citation[data-scroll-target-key]');
+        if (citationSpan) {
+            e.preventDefault(); // Prevent any default link behavior if it were an <a>
+            const scrollTargetKey = citationSpan.getAttribute('data-scroll-target-key');
+            
+            if (scrollTargetKey && referencesListDiv) {
+                const referenceItems = referencesListDiv.querySelectorAll('li[data-reference-search-key]');
+                for (const itemLi of referenceItems) {
+                    // For debugging:
+                    // console.log("Clicked key:", scrollTargetKey, "List item key:", itemLi.getAttribute('data-reference-search-key'));
+                    if (itemLi.getAttribute('data-reference-search-key') === scrollTargetKey) {
+                        
+                        const currentlyHighlighted = referencesListDiv.querySelector('.highlight-reference');
+                        if (currentlyHighlighted) {
+                            currentlyHighlighted.classList.remove('highlight-reference');
+                        }
+
+                        // Scroll to the item
+                        referencesListDiv.scrollTo({ 
+                            top: itemLi.offsetTop - referencesListDiv.offsetTop, 
+                            behavior: 'smooth' 
+                        });
+                        
+                        // Highlight the new item
+                        itemLi.classList.add('highlight-reference');
+                        // Remove highlight after a delay (optional)
+                        // setTimeout(() => {
+                        //     itemLi.classList.remove('highlight-reference');
+                        // }, 2500); 
+                        break; 
+                    }
+                }
+            }
+        }
+    });
+
     // Fetch and update the chat history list
     function updateHistoryList() {
         fetch('/history_list') // Assuming you have or will create this endpoint
