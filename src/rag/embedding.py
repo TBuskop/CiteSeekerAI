@@ -3,10 +3,17 @@ import datetime
 import traceback
 from typing import List, Dict, Tuple, Any, Optional
 from tqdm import tqdm
+import os
+import sys
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 # --- Local Imports ---
-from rag.chroma_manager import _update_db_batch # Use the helper from chroma_manager
-from my_utils.llm_interface import get_embedding
+from src.rag.chroma_manager import _update_db_batch # Use the helper from chroma_manager
+from src.my_utils.llm_interface import get_embedding
 from config import EMBEDDING_MODEL, OUTPUT_EMBEDDING_DIMENSION
 # --- Add default values from config for fallback ---
 from config import DEFAULT_EMBED_BATCH_SIZE, DEFAULT_EMBED_DELAY
