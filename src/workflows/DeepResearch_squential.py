@@ -113,7 +113,16 @@ def process_subquery(query: str, query_index: int, progress_callback=None):
 
     # --- Step 4: Downloading Full Texts ---
     if relevant_doi_list:
-        log_progress_sub(f"Downloading full texts for {len(relevant_doi_list)} DOIs...")
+        # check the dois for which the full texts are already downloaded
+        existing_dois = set()
+        for filename in os.listdir(FULL_TEXT_DIR):
+            if filename.endswith(".txt"):
+                doi = filename[:-4]
+                doi_original = doi.replace("doi:", "").replace("_", "/")
+                # only add the doi if it is also in the relevant list
+                if doi_original in relevant_doi_list:
+                    existing_dois.add(doi_original)
+        log_progress_sub(f"Downloading full texts not yet in databse for {len(relevant_doi_list) - len(existing_dois)}/{len(relevant_doi_list)} DOIs...")
         download_dois(
             proposed_dois=relevant_doi_list,
             output_directory=FULL_TEXT_DIR
