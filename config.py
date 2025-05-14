@@ -17,7 +17,7 @@ load_dotenv(override=True)  # Force override of existing environment variables
 
 # --- Query ---
 QUERY = """
-    What are climate risk storylines and how can they inform climate adaptation plans?
+    What are climate risk storylines and probabilities?
 """
 QUERY_DECOMPOSITION_NR = 3  # Number of sub-queries to generate from the main query
 
@@ -39,7 +39,7 @@ USE_SCIHUB = False  # Use SciHub for collecting papers
 # --- Core Model Configuration ---
 # These are the primary models you'll interact with.
 CHAT_MODEL = "gemini-2.5-flash-preview-04-17" #"gemini-2.0-flash-lite", "gemini-2.5-pro-exp-03-25"  # Main model for chat and generation
-SUBQUERY_MODEL = "gemini-2.5-pro-exp-03-25" # Model for generating sub-queries (more powerful is better and relevant questions)
+SUBQUERY_MODEL = "gemini-2.5-pro-preview-05-06" # Model for generating sub-queries (more powerful is better and relevant questions)
 
 # ------------------------------------
 # --- Advanced Model Configuration ---
