@@ -74,7 +74,7 @@ def obtain_store_abstracts(search_query=None, progress_callback=None):
 
     log_progress("--- Step 0: Generating Scopus Search String ---")
     if MANUAL_SCOPUS_QUERY:
-        SCOPUS_QUERY = MANUAL_SCOPUS_QUERY # Use manual query if provided
+        SCOPUS_QUERY = search_query # Use manual query if provided
     else:
         success, generated_query = generate_scopus_search_string(
             query=search_query,
