@@ -7,12 +7,19 @@ import concurrent.futures
 import xml.etree.ElementTree as ET # <<< NEW: Import ElementTree
 from pathlib import Path # <<< NEW: Import Path
 from typing import List, Dict, Optional, Tuple # <<< NEW: Import typing hints
-
+import random # <<< NEW: Import random for header rotation
+import sys
 import httpx
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright, Cookie, TimeoutError as PlaywrightTimeoutError, Page  # Added Playwright TimeoutError import, Page, Download
 from playwright_stealth import stealth_sync
 import trafilatura
+
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 import config
 
@@ -56,6 +63,51 @@ def _url_needs_playwright(url: str) -> bool:
         except re.error:
             continue
     return False
+
+# <<< NEW: Define Rotating Headers >>>
+ROTATING_HEADERS_LIST: List[Dict[str, str]] = [
+    {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+        'Accept-Language': 'en-US,en;q=0.9,nl;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1', # Do Not Track Request Header
+        'Upgrade-Insecure-Requests': '1',
+        'Referer': 'https://www.google.com/'
+    },
+    {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-GB,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Upgrade-Insecure-Requests': '1',
+        'Referer': 'https://duckduckgo.com/'
+    },
+    {
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Upgrade-Insecure-Requests': '1',
+        'Referer': 'https://www.bing.com/'
+    },
+    {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'fr-FR,fr;q=0.8,en-US;q=0.5,en;q=0.3',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Upgrade-Insecure-Requests': '1',
+        'Referer': 'https://search.yahoo.com/'
+    }
+]
+
+# <<< NEW: Helper function to get random headers >>>
+def get_random_headers() -> Dict[str, str]:
+    """Returns a randomly selected header dictionary."""
+    return random.choice(ROTATING_HEADERS_LIST)
 
 # --- Helper function to fetch URL metadata via HEAD request ---
 def _get_url_metadata(url: str, headers: Dict[str, str]) -> Optional[Dict[str, str]]:
@@ -654,15 +706,7 @@ def fetch_article_from_url(url: str, doi: str, output_directory) -> Dict[str, st
         print("Error: fetch_article_from_url called with empty URL.")
         return {"text": "", "source": "error_empty_url"}
 
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'DNT': '1',
-        'Upgrade-Insecure-Requests': '1',
-        'Referer': 'https://www.google.com/'
-    }
+    headers = get_random_headers() # <<< CHANGED: Use random headers
 
     # 1. Get URL metadata (final URL, content type)
     metadata = _get_url_metadata(url, headers)
@@ -760,15 +804,7 @@ def resolve_doi(doi: str) -> Optional[str]:
     if not doi: return None
     doi_url = f"https://doi.org/{doi}"
 
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'DNT': '1',
-        'Upgrade-Insecure-Requests': '1',
-        'Referer': 'https://www.google.com/'
-    }
+    headers = get_random_headers() # <<< CHANGED: Use random headers
 
     try:
         print(f"Resolving DOI {doi} via {doi_url}...")
