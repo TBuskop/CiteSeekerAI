@@ -127,6 +127,9 @@ python src/web_interface/app.py
 
 ```
 
+![image](https://github.com/user-attachments/assets/361a623b-049c-4673-8522-8e40e91ce9eb)
+
+
 ## Disclaimer
 This project includes features for downloading and processing academic papers. Users are solely responsible for ensuring that their use of these features complies with all applicable laws, including copyright regulations, and the terms of service of any websites or APIs accessed. The authors of this project are not liable for any misuse or legal issues arising from the use of this software. Always respect publisher copyrights and terms of use.
 
