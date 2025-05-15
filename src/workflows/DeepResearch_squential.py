@@ -59,11 +59,11 @@ QUERY_RERANKER = config.RERANKER_MODEL
 QUERY_RERANK_CANDIDATES = config.DEFAULT_RERANK_CANDIDATE_COUNT
 
 # Output file/directory setup
-RUN_TIMESTAMP = time.strftime('%Y%m%d_%H%M%S')  # Default timestamp if no run_id provided
+# RUN_TIMESTAMP = time.strftime('%Y%m%d_%H%M%S')  # Default timestamp if no run_id provided # MODIFIED: Moved to function
 BASE_OUTPUT_DIR = os.path.join(_PROJECT_ROOT, "output")
-COMBINED_ANSWERS_OUTPUT_FILENAME = os.path.join(BASE_OUTPUT_DIR, f"combined_answers_{RUN_TIMESTAMP}.txt")
+# COMBINED_ANSWERS_OUTPUT_FILENAME = os.path.join(BASE_OUTPUT_DIR, f"combined_answers_{RUN_TIMESTAMP}.txt") # MODIFIED: Moved to function
 QUERY_SPECIFIC_OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, "query_specific")
-RUN_SPECIFIC_OUTPUT_DIR = os.path.join(QUERY_SPECIFIC_OUTPUT_DIR, RUN_TIMESTAMP)
+# RUN_SPECIFIC_OUTPUT_DIR = os.path.join(QUERY_SPECIFIC_OUTPUT_DIR, RUN_TIMESTAMP) # MODIFIED: Moved to function
 
 # --- Ensure Directories Exist ---
 os.makedirs(FULL_TEXT_DIR, exist_ok=True)
@@ -72,11 +72,11 @@ os.makedirs(os.path.dirname(CHUNK_DB_PATH), exist_ok=True)
 os.makedirs(os.path.dirname(RELEVANT_CHUNKS_DB_PATH), exist_ok=True)
 os.makedirs(BASE_OUTPUT_DIR, exist_ok=True)
 os.makedirs(QUERY_SPECIFIC_OUTPUT_DIR, exist_ok=True)
-os.makedirs(RUN_SPECIFIC_OUTPUT_DIR, exist_ok=True)
+# os.makedirs(RUN_SPECIFIC_OUTPUT_DIR, exist_ok=True) # MODIFIED: Moved to function
 
 
 # --- Define Worker Function for Processing Each Subquery ---
-def process_subquery(query: str, query_index: int, progress_callback=None):
+def process_subquery(query: str, query_index: int, progress_callback=None, run_specific_output_dir=None): # MODIFIED: Added run_specific_output_dir
     """
     Processes a single subquery through the pipeline steps:
     Find relevant DOIs -> Download papers -> Chunk papers -> Build relevant chunk DB -> Query relevant chunks.
@@ -84,6 +84,8 @@ def process_subquery(query: str, query_index: int, progress_callback=None):
     Args:
         query (str): The subquery string to process.
         query_index (int): The index of the subquery (0-based).
+        progress_callback (function): Callback for progress updates.
+        run_specific_output_dir (str): The output directory for this specific run.
 
     Returns:
         tuple: (query_index, original_query, final_answer_or_status)
@@ -98,7 +100,7 @@ def process_subquery(query: str, query_index: int, progress_callback=None):
 
     # --- Step 3: Finding Relevant DOIs from Abstracts ---
     log_progress_sub("Finding relevant DOIs from abstracts...")
-    relevant_abstracts_output_filename_i = os.path.join(RUN_SPECIFIC_OUTPUT_DIR, f"relevant_abstracts_{query_index+1}.txt")
+    relevant_abstracts_output_filename_i = os.path.join(run_specific_output_dir, f"relevant_abstracts_{query_index+1}.txt") # MODIFIED: Use passed run_specific_output_dir
 
     relevant_doi_list = find_relevant_dois_from_abstracts(
         initial_query=query,
@@ -163,7 +165,7 @@ def process_subquery(query: str, query_index: int, progress_callback=None):
 
     if relevant_doi_list and llm_interface.gemini_client:
         log_progress_sub("Querying the relevant chunks database...")
-        query_output_filename_i = os.path.join(RUN_SPECIFIC_OUTPUT_DIR, f"final_answer_{query_index+1}.txt")
+        query_output_filename_i = os.path.join(run_specific_output_dir, f"final_answer_{query_index+1}.txt") # MODIFIED: Use passed run_specific_output_dir
 
         query_config = {
             "mode": "query",
@@ -174,7 +176,7 @@ def process_subquery(query: str, query_index: int, progress_callback=None):
             "reranker": QUERY_RERANKER,
             "rerank_candidates": QUERY_RERANK_CANDIDATES,
             "output_filename": query_output_filename_i,
-            "output_dir": RUN_SPECIFIC_OUTPUT_DIR,
+            "output_dir": run_specific_output_dir, # MODIFIED: Use passed run_specific_output_dir
             "query_index": query_index,
             "subquery_model": config.SUBQUERY_MODEL,
             "answer_model": config.CHAT_MODEL,
@@ -213,15 +215,13 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None,
         progress_callback (function): Callback to report progress updates
         run_id (str): Optional ID to use for output files instead of generating a timestamp
     """
-    global RUN_TIMESTAMP, COMBINED_ANSWERS_OUTPUT_FILENAME, RUN_SPECIFIC_OUTPUT_DIR
-    
-    # Use the provided run_id if available (overrides the default timestamp)
-    if run_id:
-        RUN_TIMESTAMP = run_id
-        COMBINED_ANSWERS_OUTPUT_FILENAME = os.path.join(BASE_OUTPUT_DIR, f"combined_answers_{run_id}.txt")
-        RUN_SPECIFIC_OUTPUT_DIR = os.path.join(QUERY_SPECIFIC_OUTPUT_DIR, run_id)
-        # Ensure the directory exists with the new run_id
-        os.makedirs(RUN_SPECIFIC_OUTPUT_DIR, exist_ok=True)
+    # --- Initialize Run-Specific Variables ---
+    current_run_timestamp = run_id if run_id else time.strftime('%Y%m%d_%H%M%S')
+    combined_answers_output_filename = os.path.join(BASE_OUTPUT_DIR, f"combined_answers_{current_run_timestamp}.txt")
+    run_specific_output_dir = os.path.join(QUERY_SPECIFIC_OUTPUT_DIR, current_run_timestamp)
+
+    # Ensure the run-specific directory exists
+    os.makedirs(run_specific_output_dir, exist_ok=True)
     
     # Use the passed question or fall back to config.QUERY
     initial_research_question = question if question is not None else config.QUERY
@@ -234,7 +234,7 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None,
         query=initial_research_question,
         number_of_sub_queries=query_numbers,
         model=config.SUBQUERY_MODEL,
-        output_dir=RUN_SPECIFIC_OUTPUT_DIR
+        output_dir=run_specific_output_dir # MODIFIED: Use local run_specific_output_dir
     )
     if decomposed_queries:
         print(f"Overall Goal: {overall_goal}")
@@ -273,7 +273,7 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None,
                     previous_queries=previous_queries,
                     previous_answers=previous_answers,
                     model=config.SUBQUERY_MODEL,
-                    output_dir=RUN_SPECIFIC_OUTPUT_DIR,
+                    output_dir=run_specific_output_dir, # MODIFIED: Use local run_specific_output_dir
                     query_index=i
                 )
                 if refined_query and refined_query != original_subquery:
@@ -282,7 +282,7 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None,
                 else:
                      print(f"[Query {i+1}] Query refinement did not change the query or failed.")
 
-            result_tuple = process_subquery(current_query, i, progress_callback=progress_callback)
+            result_tuple = process_subquery(current_query, i, progress_callback=progress_callback, run_specific_output_dir=run_specific_output_dir) # MODIFIED: Pass run_specific_output_dir
             results.append(result_tuple)
             print(f"--- Completed Processing for Subquery {i + 1} ---")
 
@@ -294,9 +294,9 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None,
     results.sort(key=lambda x: x[0])
 
     # --- Write Combined Results ---
-    print(f"\n--- Writing Combined Answers to {COMBINED_ANSWERS_OUTPUT_FILENAME} ---")
+    print(f"\n--- Writing Combined Answers to {combined_answers_output_filename} ---") # MODIFIED: Use local combined_answers_output_filename
     try:
-        with open(COMBINED_ANSWERS_OUTPUT_FILENAME, "w", encoding="utf-8") as f:
+        with open(combined_answers_output_filename, "w", encoding="utf-8") as f: # MODIFIED: Use local combined_answers_output_filename
             f.write(f"## Original Research Question\n{initial_research_question}\n\n")
             f.write(f"## Refined Overall Goal\n{overall_goal}\n\n")
             f.write("### Decomposed Queries and Final Answers\n\n")
@@ -308,7 +308,7 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None,
                      f.write(f"**Refined Subquery:** {processed_query}\n\n")
                 f.write(f"**Final Answer:**\n{final_answer}\n\n")
                 f.write("---\n\n") # Add a horizontal rule for better separation
-        print(f"Combined answers successfully written to {COMBINED_ANSWERS_OUTPUT_FILENAME}")
+        print(f"Combined answers successfully written to {combined_answers_output_filename}") # MODIFIED: Use local combined_answers_output_filename
     except IOError as e:
         print(f"Error writing combined answers file: {e}")
 

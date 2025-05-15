@@ -27,6 +27,9 @@ from src.workflows.DeepResearch_squential import run_deep_research
 from src.workflows.obtain_store_abstracts import obtain_store_abstracts
 import config
 
+print("Loading packages and modules...")
+
+
 app = Flask(__name__, static_folder=os.path.join(_PROJECT_ROOT, "src", "web_interface", "static"), 
            template_folder=os.path.join(_PROJECT_ROOT, "src", "web_interface", "templates"))
 app.secret_key = "citeseekai_secret_key"
@@ -40,6 +43,7 @@ def basename_filter(path):
 processing_jobs = {}  # Store active processing jobs
 chat_history = OrderedDict()  # Store chat history
 OUTPUT_DIR = os.path.join(_PROJECT_ROOT, "output")
+
 
 def get_timestamp():
     """Generate a timestamp for job ID"""
@@ -424,6 +428,7 @@ def get_prompt_chunk():
     return jsonify({"status": "error", "message": "Chunk not found for the given citation key"}), 404
 
 if __name__ == '__main__':
+
     # change run path to current directory
     os.chdir(_PROJECT_ROOT)
     print("Starting CiteSeekerAI Web Interface...")
@@ -442,9 +447,10 @@ if __name__ == '__main__':
         sys.exit(1)
     
     # Load existing chat history
+
     print("Loading chat history...")
     load_chat_history()
-    
+
     # Start Flask server
     print("Starting Flask server...")
     print("Access the web interface at http://127.0.0.1:5000")
