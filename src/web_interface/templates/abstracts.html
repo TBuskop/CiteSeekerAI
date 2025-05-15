@@ -29,8 +29,36 @@
 
     <div class="container-fluid main-content-area">
         <div class="row flex-grow-1">
-            <!-- Middle Column: Form and Status -->
-            <div class="col-md-6 offset-md-3 d-flex flex-column">
+            <!-- Database Abstracts Column (Now First) -->
+            <div class="col-md-4 d-flex flex-column">
+                <div class="card flex-grow-1 compact-card mb-0"> 
+                    <div class="card-header py-1 d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Database Abstracts</h5>
+                        <span class="badge bg-secondary" id="abstract-count">0</span>
+                    </div>
+                    <div class="card-body p-0 flex-grow-1 d-flex flex-column">
+                        <div class="input-group input-group-sm p-2 mb-1">
+                            <input type="text" class="form-control form-control-sm" id="abstract-search" placeholder="Search titles & authors...">
+                            <button class="btn btn-outline-secondary btn-sm" type="button" id="abstract-search-btn">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-search" viewBox="0 0 16 16">
+                                    <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <div id="abstracts-list" class="abstracts-container flex-grow-1">
+                            <div class="text-center py-3">
+                                <div class="spinner-border spinner-border-sm text-secondary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <p class="text-muted small mt-2">Loading abstracts...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Middle Column: Collect Abstracts Form (Now Second) -->
+            <div class="col-md-5 d-flex flex-column">
                 <div class="card compact-card"> 
                     <div class="card-header py-1">
                         <h4 class="mb-0">Collect Abstracts</h4>
@@ -85,7 +113,7 @@
                 </div>
             </div>
 
-            <!-- Right Column: Results -->
+            <!-- Right Column: Results (Now Third) -->
             <div class="col-md-3 d-flex flex-column">
                 <div id="result-container" class="card d-none flex-grow-1 compact-card mb-0"> 
                     <div class="card-header py-1">

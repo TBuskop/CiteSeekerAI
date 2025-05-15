@@ -25,6 +25,8 @@ if _PROJECT_ROOT not in sys.path:
 # Import project modules
 from src.workflows.DeepResearch_squential import run_deep_research
 from src.workflows.obtain_store_abstracts import obtain_store_abstracts
+from src.rag.chroma_manager import get_chroma_collection
+
 import config
 
 print("Loading packages and modules...")
@@ -426,6 +428,120 @@ def get_prompt_chunk():
                 # Continue searching in the rest of the file or other files.
     
     return jsonify({"status": "error", "message": "Chunk not found for the given citation key"}), 404
+
+@app.route('/abstracts/list', methods=['GET'])
+def list_abstracts():
+    """API endpoint to list abstracts in the database"""
+    try:
+        search_term = request.args.get('search', '')
+        search_fields = request.args.get('search_fields', 'title,authors').split(',')
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 20))
+        
+        # Connect to ChromaDB
+        collection = get_chroma_collection(
+            db_path=os.path.join(_PROJECT_ROOT, "data", "databases", "abstract_chroma_db"),
+            collection_name="abstracts",
+            execution_mode="query"
+        )
+        
+        # Get total count
+        total_count = collection.count()
+        
+        # For consistent sorting, get ALL abstracts at once (with a reasonable limit)
+        # Use a hard limit of 5000 to prevent excessive memory usage for very large databases
+        fetch_limit = min(5000, total_count)
+        
+        # Get all abstracts at once - this way we can sort them all together
+        all_results = collection.get(
+            limit=fetch_limit,
+            include=["metadatas", "documents"]
+        )
+        
+        # Process all results into a list of abstract objects
+        all_abstracts = []
+        for i, doc_id in enumerate(all_results.get('ids', [])):
+            metadata = all_results['metadatas'][i] if all_results.get('metadatas') else {}
+            document = all_results['documents'][i] if all_results.get('documents') else ""
+            
+            # If searching, apply filters
+            if search_term:
+                search_term_lower = search_term.lower()
+                matches = False
+                
+                if 'title' in search_fields and metadata.get('title'):
+                    if search_term_lower in metadata.get('title', '').lower():
+                        matches = True
+                
+                if not matches and 'authors' in search_fields and metadata.get('authors'):
+                    if search_term_lower in metadata.get('authors', '').lower():
+                        matches = True
+                
+                if not matches:
+                    continue  # Skip this item if it doesn't match the search
+            
+            all_abstracts.append({
+                'id': doc_id,
+                'title': metadata.get('title', ''),
+                'authors': metadata.get('authors', ''),
+                'year': metadata.get('year', ''),
+                'source_title': metadata.get('source_title', ''),
+                'cited_by': metadata.get('cited_by', ''),
+                'doi': metadata.get('doi', ''),
+                'document': document
+            })
+        
+        # Define function to extract first author's last name for sorting
+        def get_first_author_last_name(abstract):
+            authors_string = abstract.get('authors', '')
+            if not authors_string or not isinstance(authors_string, str):
+                return 'zzzz'  # Sort items with no authors at the end
+                
+            # Handle case where authors_string already contains "et al."
+            if ' et al.' in authors_string:
+                # Extract the last name from "LastName et al."
+                return authors_string.split(' et al.')[0].strip().lower()
+                
+            # Split authors by comma if multiple authors exist
+            authors = authors_string.split(', ')
+            if not authors:
+                return 'zzzz'
+                
+            first_author = authors[0].strip()
+            
+            # Extract last name from the first author (everything before the first space)
+            last_name_match = first_author.split(' ')[0] if ' ' in first_author else first_author
+            return last_name_match.lower()
+        
+        # Sort ALL abstracts by first author's last name
+        all_abstracts.sort(key=get_first_author_last_name)
+        
+        # Manual pagination after sorting
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        paginated_abstracts = all_abstracts[start_idx:end_idx] if start_idx < len(all_abstracts) else []
+        has_more = end_idx < len(all_abstracts)
+        
+        # For search results, return filtered count; for general browsing, return total database count
+        displayed_total = len(all_abstracts) if search_term else total_count
+        
+        return jsonify({
+            'status': 'success',
+            'abstracts': paginated_abstracts,
+            'page': page,
+            'per_page': per_page,
+            'total': displayed_total,  # Show actual database total when not searching
+            'has_more': has_more
+        })
+        
+    except Exception as e:
+        app.logger.error(f"Error listing abstracts: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'status': 'error',
+            'message': f"Failed to retrieve abstracts: {str(e)}"
+        }), 500
 
 if __name__ == '__main__':
 
