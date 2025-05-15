@@ -14,6 +14,7 @@ body {
     display: flex;
     flex-direction: column;
     padding: 1rem;
+    padding-bottom: 0.5rem !important; /* Reduce bottom padding of body */
     box-sizing: border-box;
 }
 
@@ -49,6 +50,7 @@ body {
     flex-direction: column;
     min-height: 0; /* Allows flex children to shrink below their content size */
     overflow: hidden; /* Prevents scrollbars on the container */
+    max-height: calc(100vh - 70px); /* Reduced from 80px */
 }
 
 .main-content-area > .row {
@@ -70,7 +72,7 @@ body {
 
 /* Card Layout */
 .card {
-    margin-bottom: 1rem;
+    margin-bottom: 0.8rem; /* Reduced from 1rem to save vertical space */
 }
 
 .card.flex-grow-1 {
@@ -211,28 +213,180 @@ pre {
     margin-right: 0;
 }
 
-/* Responsive adjustments */
-@media (max-width: 768px) {
-    .chat-container {
-        min-height: 300px; /* Minimum height on mobile */
+/* Handle vertical space better on all screens */
+.main-content-area {
+    max-height: calc(100vh - 70px); /* Reduced from 80px */
+    overflow: hidden;
+}
+
+/* Create scrollable sections */
+.scrollable-content {
+    overflow-y: auto;
+    max-height: calc(100vh - 200px);
+}
+
+/* Reduce vertical spacing */
+.card-body {
+    padding: 0.8rem; /* Slightly reduced padding */
+}
+
+.alert {
+    padding: 0.75rem 1rem; /* Slightly reduced padding */
+    margin-bottom: 0.8rem;
+}
+
+.form-label {
+    margin-bottom: 0.3rem; /* Reduced space after labels */
+}
+
+.mb-3 {
+    margin-bottom: 0.8rem !important; /* Override Bootstrap's margin */
+}
+
+/* Compact styles for Abstracts page */
+.compact-card {
+    margin-bottom: 0.4rem;
+}
+
+.compact-card .card-header {
+    padding: 0.4rem 0.6rem;
+}
+
+.compact-body {
+    padding: 0.5rem !important;
+    overflow-y: auto;
+    max-height: calc(100vh - 160px);
+}
+
+.compact-alert {
+    padding: 0.4rem 0.6rem !important;
+    margin-bottom: 0.4rem;
+}
+
+.compact-form label {
+    margin-bottom: 0.1rem;
+}
+
+.compact-form .mb-1 {
+    margin-bottom: 0.25rem !important;
+}
+
+.compact-form .form-text {
+    margin-top: 0.15rem !important;
+    font-size: 0.7rem !important;
+    line-height: 1.2;
+}
+
+.compact-form .form-control,
+.compact-form .form-select {
+    padding: 0.25rem 0.5rem;
+}
+
+.compact-form .btn {
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+}
+
+/* Optimized results section */
+#result-content .alert {
+    padding: 0.3rem 0.5rem !important;
+    margin-bottom: 0.3rem !important;
+}
+
+#result-content p {
+    margin-bottom: 0.3rem;
+}
+
+#result-content ol, 
+#result-content ul {
+    padding-left: 1.25rem;
+    margin-bottom: 0.3rem;
+}
+
+#result-content li {
+    margin-bottom: 0.2rem;
+}
+
+#result-content .alert-success {
+    padding: 0.3rem 0.5rem !important;
+}
+
+#result-content h5 {
+    font-size: 1rem;
+    margin-bottom: 0.3rem;
+}
+
+/* Responsive adjustments - updated to cover laptops too */
+@media (max-height: 800px), (max-width: 768px) {
+    .alert {
+        padding: 0.5rem 0.75rem;
+        margin-bottom: 0.5rem;
     }
     
-    .user-message, 
-    .assistant-message {
-        max-width: 90%;
+    .form-text {
+        font-size: 0.8rem;
+        margin-top: 0.25rem !important;
     }
-
-    .main-content-area > .row {
-        flex-direction: column;
+    
+    .card-body {
+        padding: 0.6rem;
     }
-
-    .col-md-3, .col-md-6 {
-        width: 100%;
-        margin-bottom: 1rem;
+    
+    .card-header {
+        padding: 0.6rem 0.8rem;
     }
-
-    .card.flex-grow-1 {
-        min-height: 300px; /* Set a minimum height for cards on mobile */
+    
+    h4, .h4 {
+        font-size: 1.3rem;
+    }
+    
+    h5, .h5 {
+        font-size: 1.1rem;
+    }
+    
+    .form-control {
+        padding: 0.3rem 0.5rem;
+    }
+    
+    #search-query {
+        min-height: 60px !important;
+        max-height: 120px !important;
+    }
+    
+    body {
+        padding-bottom: 0.25rem !important; /* Further reduce on smaller screens */
+    }
+    
+    .main-content-area {
+        max-height: calc(100vh - 60px); /* Further reduced for small screens */
+    }
+    
+    .mb-3, .mb-2 {
+        margin-bottom: 0.4rem !important;
+    }
+    
+    .card:last-child,
+    .alert:last-child,
+    #question-form {
+        margin-bottom: 0.25rem !important;
+    }
+    
+    .compact-body {
+        max-height: calc(100vh - 140px);
+        padding: 0.3rem !important;
+    }
+    
+    .compact-card .card-header {
+        padding: 0.3rem 0.5rem;
+    }
+    
+    .compact-alert {
+        padding: 0.3rem 0.5rem !important;
+    }
+    
+    #search-query {
+        min-height: 50px !important;
+        max-height: 80px !important;
     }
 }
 
@@ -380,4 +534,9 @@ pre {
 
 .references-content p {
     margin-bottom: 0.5rem;
+}
+
+.doi_url{
+    color: #6da2df; /* Bootstrap primary blue for links */
+    text-decoration: none;
 }

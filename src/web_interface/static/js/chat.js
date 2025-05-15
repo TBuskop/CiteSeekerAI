@@ -734,7 +734,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     clickableUrl = displayUrl;
                 }
 
-                let fullReferenceHtml = `${formattedAuthorsAPA}. ${formattedYear}. ${title}. ${formattedSource}. <a href="${clickableUrl}" target="_blank">${displayUrl}</a>`;
+                let fullReferenceHtml = `${formattedAuthorsAPA}. ${formattedYear}. ${title}. ${formattedSource}. <a class="doi_url" href="${clickableUrl}" target="_blank">${displayUrl}</a>`;
                 
                 if (citedBy) {
                     fullReferenceHtml += `. ${citedBy}`;

@@ -96,29 +96,32 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Show result container
         resultContainer.classList.remove('d-none');
-          // Populate results
+        
+        // Always scroll to results, not just on mobile
+        resultContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        
+        // Populate results
         let resultHtml = '';
         
         if (data.file_path) {
-            resultHtml += `<p>Search completed successfully! The abstracts have been stored in the database.</p>`;
-            resultHtml += `<p>File saved: ${data.file_path}</p>`;
+            resultHtml += `<p class="mb-1"><strong>Success!</strong> Abstracts stored in database.</p>`;
+            resultHtml += `<p class="mb-1 text-muted small">File: ${data.file_path}</p>`;
         }
         
         if (data.count) {
-            resultHtml += `<p><strong>${data.count}</strong> abstracts were found and indexed.</p>`;
+            resultHtml += `<p class="mb-1"><strong>${data.count}</strong> abstracts indexed.</p>`;
         } else {
-            resultHtml += `<p>Abstracts have been successfully stored in the database.</p>`;
+            resultHtml += `<p class="mb-1">Abstracts successfully stored.</p>`;
         }
         
         resultHtml += `
-            <div class="alert alert-success mt-3">
-                <h5>Next Steps:</h5>
-                <ol>
-                    <li>Return to the <a href="/" class="alert-link">Home page</a></li>
-                    <li>Enter a research question related to the abstracts you just collected</li>
-                    <li>CiteSeekerAI will analyze these abstracts to provide a comprehensive answer</li>
+            <div class="alert alert-success mt-2 py-1 px-2">
+                <h6 class="mb-1 fw-bold">Next Steps:</h6>
+                <ol class="mb-1 ps-3 small">
+                    <li>Return to <a href="/" class="alert-link">Home</a></li>
+                    <li>Enter a research question</li>
+                    <li>CiteSeekerAI will analyze these abstracts</li>
                 </ol>
-                <p class="mb-0"><small>The abstracts are now available in the database for all future research questions as well.</small></p>
             </div>
         `;
         

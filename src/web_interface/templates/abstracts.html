@@ -29,58 +29,57 @@
 
     <div class="container-fluid main-content-area">
         <div class="row flex-grow-1">
-            <!-- Leftmost column removed -->
-
-            <!-- Middle Column: Form and Status - now offset to appear in the middle -->
+            <!-- Middle Column: Form and Status -->
             <div class="col-md-6 offset-md-3 d-flex flex-column">
-                <div class="card mb-3"> 
-                    <div class="card-header">
+                <div class="card compact-card"> 
+                    <div class="card-header py-1">
                         <h4 class="mb-0">Collect Abstracts</h4>
                     </div>
-                    <div class="card-body"> 
-                        <div class="alert alert-info mb-3">
-                            <h5>About Collect Abstracts</h5>
-                            <p class="mb-2">
-                                Enter a Scopus search string to collect academic abstracts. The system will search Scopus, download matching abstracts,
-                                and store them in the database for analysis with CiteSeekerAI.
-                            </p>
-                            <p class="mb-0"><small>This step must be performed before asking research questions about a new topic.</small></p>
+                    <div class="card-body compact-body p-2"> 
+                        <div class="alert alert-info compact-alert py-1 px-2 mb-1">
+                            <div class="d-flex">
+                                <div class="flex-shrink-0 me-2">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-info-circle mt-1" viewBox="0 0 16 16">
+                                        <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+                                        <path d="m8.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 1.178-.252 1.465-.598l.088-.416c-.2.176-.492.246-.686.246-.275 0-.375-.193-.304-.533L8.93 6.588zM9 4.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
+                                    </svg>
+                                </div>
+                                <div class="small">
+                                    Enter a Scopus search string to collect academic abstracts. The system will search Scopus and store matching abstracts for analysis.
+                                </div>
+                            </div>
                         </div>
                         
-                        <form id="abstract-search-form"> 
-                            <div class="mb-3">
-                                <label for="search-query" class="form-label">Scopus Search String</label>
-                                <textarea id="search-query" class="form-control" style="min-height: 100px; max-height: 200px;" placeholder='Enter your Scopus search string, e.g., ("climate change") AND adaptation...' required></textarea>
-                                <div class="form-text mt-2">
-                                    <strong>Examples:</strong><br>
-                                    • <code>("water scarcity") AND (agriculture OR farming) AND climate</code><br>
-                                    • <code>("food security") AND "changing climate" AND NOT disease</code><br>
-                                    Use quotes for phrases, AND/OR/NOT operators, and parentheses for complex queries.
+                        <form id="abstract-search-form" class="compact-form"> 
+                            <div class="mb-1">
+                                <label for="search-query" class="form-label small mb-1 fw-bold">Scopus Search String</label>
+                                <textarea id="search-query" class="form-control form-control-sm" style="min-height: 60px; max-height: 100px;" placeholder='e.g., ("climate change") AND adaptation...' required></textarea>
+                                <div class="form-text mt-1 small">
+                                    <span class="text-muted">Examples:</span>
+                                    <code class="d-block text-muted small">("water scarcity") AND climate</code>
+                                    <code class="d-block text-muted small">TITLE-ABS("food security") AND NOT disease</code>
                                 </div>
                             </div>
 
-                            <div class="mb-3">
-                                <label for="scopus-search-scope" class="form-label">Scopus Search Scope</label>
-                                <select id="scopus-search-scope" class="form-select">
-                                    <option value="TITLE_ABS_KEY" selected>TITLE-ABS-KEY (Search in Title, Abstract, Keywords)</option>
-                                    <option value="ALL">ALL (Search all fields)</option>
+                            <div class="mb-1">
+                                <label for="scopus-search-scope" class="form-label small mb-1 fw-bold">Search Scope</label>
+                                <select id="scopus-search-scope" class="form-select form-select-sm">
+                                    <option value="TITLE_ABS_KEY" selected>Title, Abstract & Keywords</option>
+                                    <option value="ALL">All Fields</option>
                                 </select>
-                                <div class="form-text mt-1">
-                                    Select where Scopus should look for your search terms. "ALL" is broader and includes search of keywords in cited paper titles, "TITLE-ABS-KEY" is more focused to the paper itself.
-                                </div>
                             </div>
                             
-                            <div class="d-grid mt-3">
-                                <button type="submit" class="btn btn-primary" id="submit-btn">Start Collect Abstracts</button>
+                            <div class="d-grid mt-2">
+                                <button type="submit" class="btn btn-primary btn-sm py-1" id="submit-btn">Start Collection</button>
                             </div>
                         </form>
                     </div>
                 </div>
                 
-                <div id="status-container" class="alert alert-info d-none mb-3 flex-shrink-0">
-                    <h5 id="status-header">Processing your search request...</h5>
-                    <div id="status-text" class="mb-2"></div>
-                    <div class="progress mt-2">
+                <div id="status-container" class="alert alert-info compact-alert d-none py-2 px-2 mb-1">
+                    <h6 id="status-header" class="mb-1 fw-bold">Processing your search request...</h6>
+                    <div id="status-text" class="small mb-1"></div>
+                    <div class="progress mt-1" style="height: 10px;">
                         <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
                     </div>
                 </div>
@@ -88,12 +87,12 @@
 
             <!-- Right Column: Results -->
             <div class="col-md-3 d-flex flex-column">
-                <div id="result-container" class="card d-none flex-grow-1"> 
-                    <div class="card-header">
-                        <h4 class="mb-0">Search Results</h4>
+                <div id="result-container" class="card d-none flex-grow-1 compact-card mb-0"> 
+                    <div class="card-header py-1">
+                        <h5 class="mb-0">Search Results</h5>
                     </div>
-                    <div class="card-body flex-grow-1" style="overflow-y: auto;"> 
-                        <div id="result-content"></div>
+                    <div class="card-body compact-body p-2"> 
+                        <div id="result-content" class="small"></div>
                     </div>
                 </div>
             </div>
