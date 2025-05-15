@@ -123,42 +123,102 @@ def run_hype_index(db_path: str, source_collection_name: str, hype_collection_na
         abstracts_list = [{'id': aid, 'abstract': txt} for aid, txt in zip(batch_ids, batch_texts)]
         prompt = SYSTEM_PROMPT + "\n\nProvide output as JSON array where each element has 'id' and 'questions' list.\n"
         prompt += f"Input abstracts: {json.dumps(abstracts_list)}"
-        response = generate_llm_response(prompt, max_tokens=3048, temperature=0, model=model).strip()
-        # remove markdown wrappers
-        for wrapper in ("```json\n", "\n```"):
-            if response.startswith(wrapper): response = response[len(wrapper):]
-            if response.endswith(wrapper): response = response[:-len(wrapper)]
+        
+        response_text = generate_llm_response(prompt, max_tokens=4096, temperature=0, model=model).strip() # Increased max_tokens
+        
+        # More robust markdown wrapper removal
+        cleaned_response = response_text
+        if cleaned_response.startswith("```json"):
+            cleaned_response = cleaned_response[len("```json"):]
+
+        elif cleaned_response.startswith("```"): # General case if ```json was not specific enough
+            cleaned_response = cleaned_response[len("```"):]
+
+        if cleaned_response.endswith("```"):
+            cleaned_response = cleaned_response[:-len("```")]
+        cleaned_response = cleaned_response.strip()
+
         try:
-            batch_output = json.loads(response)
-        except Exception:
-            print(f"HyPE: Failed to parse JSON for batch {batch_number}.")
+            raw_batch_output_from_llm = json.loads(cleaned_response)
+        except json.JSONDecodeError as e:
+            print(f"HyPE: Failed to parse JSON for batch {batch_number}. Error: {e}. Response snippet: '{cleaned_response[:500]}...'")
             return
-        ids_, mds, docs = [], [], []
-        for item in batch_output:
-            aid = item.get('id')
-            qs = item.get('questions', [])
+
+        if not isinstance(raw_batch_output_from_llm, list):
+            print(f"HyPE: LLM output for batch {batch_number} is not a list as expected. Type: {type(raw_batch_output_from_llm)}. Output snippet: {str(raw_batch_output_from_llm)[:500]}")
+            return
+
+        valid_items_for_processing = []
+        processed_input_aids_in_llm_response = set()
+
+        for item_from_llm in raw_batch_output_from_llm:
+            if not isinstance(item_from_llm, dict):
+                print(f"HyPE: Warning (Batch {batch_number}): Item in LLM response is not a dictionary. Item: '{str(item_from_llm)[:200]}'. Skipping this item.")
+                continue
+
+            aid = item_from_llm.get('id')
+            questions = item_from_llm.get('questions')
+
+            if not aid:
+                print(f"HyPE: Warning (Batch {batch_number}): Item in LLM response is missing 'id'. Item: '{str(item_from_llm)[:200]}'. Skipping this item.")
+                continue
+            
+            if aid not in batch_ids: 
+                print(f"HyPE: Warning (Batch {batch_number}): LLM returned id '{aid}' which was not in the original input batch_ids. Skipping this item.")
+                continue
+
+            if not isinstance(questions, list):
+                print(f"HyPE: Warning (Batch {batch_number}): 'questions' for id '{aid}' is not a list or is missing. Type: {type(questions)}. Item: '{str(item_from_llm)[:200]}'. Skipping this item.")
+                continue
+            
+            if not all(isinstance(q, str) for q in questions):
+                print(f"HyPE: Warning (Batch {batch_number}): Not all questions for id '{aid}' are strings. Questions: {questions}. Skipping this item.")
+                continue
+
+            if aid in processed_input_aids_in_llm_response:
+                print(f"HyPE: Warning (Batch {batch_number}): Duplicate aid '{aid}' encountered in LLM's response for this batch. Processing first instance only.")
+                continue 
+            
+            processed_input_aids_in_llm_response.add(aid)
+            valid_items_for_processing.append(item_from_llm)
+        
+        if len(processed_input_aids_in_llm_response) < len(batch_ids):
+            missing_ids_from_response = set(batch_ids) - processed_input_aids_in_llm_response
+            print(f"HyPE: Info (Batch {batch_number}): LLM response did not cover all {len(batch_ids)} input IDs. Missing {len(missing_ids_from_response)} IDs: {list(missing_ids_from_response)[:5]}" + 
+                  (f"... and {len(missing_ids_from_response) - 5} more" if len(missing_ids_from_response) > 5 else ""))
+
+        ids_to_upsert, metadatas_to_upsert, documents_to_upsert = [], [], []
+        for item in valid_items_for_processing:
+            aid = item['id'] 
+            qs = item['questions'] 
+
             doc_result = source_col.get(ids=[aid], include=['documents'])
             docs_list = doc_result.get('documents', [])
             if not docs_list:
-                print(f"HyPE: Warning: No document found for id {aid} in batch {batch_number}. Skipping.")
+                print(f"HyPE: Warning (Batch {batch_number}): No source document found for id '{aid}' in source collection. Skipping questions for this id.")
                 continue
-            text = docs_list[0]
-            for idx_q, question in enumerate(qs):
-                ids_.append(f"{aid}_hq{idx_q}")
-                mds.append({'original_chunk_id': aid, 'question': question, 'has_embedding': False})
-                docs.append(text)
-        if ids_:
-            # detect duplicate question IDs
-            unique_ids = set(ids_)
-            if len(ids_) != len(unique_ids):
-                # find duplicates
-                dup_ids = sorted({i for i in ids_ if ids_.count(i) > 1})
-                print(f"HyPE: Error: Expected IDs to be unique but found {len(dup_ids)} duplicate IDs: {', '.join(dup_ids)} in batch {batch_number}/{num_batches}. Skipping upsert.")
-                return
-            hype_col.upsert(ids=ids_, metadatas=mds, documents=docs)
-            print(f"HyPE: Upserted {len(ids_)} questions for batch {batch_number}/{num_batches}.")
+            original_text = docs_list[0]
+
+            for idx_q, question_text in enumerate(qs):
+                generated_hype_id = f"{aid}_hq{idx_q}"
+                ids_to_upsert.append(generated_hype_id)
+                metadatas_to_upsert.append({'original_chunk_id': aid, 'question': question_text, 'has_embedding': False})
+                documents_to_upsert.append(original_text)
+
+        if ids_to_upsert:
+            unique_generated_ids = set(ids_to_upsert)
+            if len(ids_to_upsert) != len(unique_generated_ids):
+                from collections import Counter 
+                id_counts = Counter(ids_to_upsert)
+                actual_dup_ids = [item_id for item_id, count in id_counts.items() if count > 1]
+                print(f"HyPE: Error (Batch {batch_number}): Internal error - generated duplicate HyPE IDs before upsert despite filtering. Duplicates: {', '.join(actual_dup_ids[:10])}" + 
+                      (f"... and {len(actual_dup_ids) - 10} more" if len(actual_dup_ids) > 10 else "") + ". Skipping upsert.")
+                return 
+            
+            hype_col.upsert(ids=ids_to_upsert, metadatas=metadatas_to_upsert, documents=documents_to_upsert)
+            print(f"HyPE: Upserted {len(ids_to_upsert)} questions for batch {batch_number}/{num_batches}.")
         else:
-            print(f"HyPE: No new questions for batch {batch_number}/{num_batches}.")
+            print(f"HyPE: No new valid questions to upsert for batch {batch_number}/{num_batches}.")
 
     # generate questions in parallel per batch
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
