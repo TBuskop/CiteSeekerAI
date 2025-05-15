@@ -72,7 +72,7 @@ playwright install
  ```
  
 3.  **Environment Variables:**
-    Create a `.env` file in the project root directory and add the api key (you can also rename `.env.example` to .env)
+    Create a `.env` file (or rename `.env.example` to .env) in the project root directory and add the [api key](https://ai.google.dev/gemini-api/docs/api-key). Be sure to setup the billing information.
 
 ```env
 
@@ -126,6 +126,8 @@ Or run
 python src/web_interface/app.py
 
 ```
+
+Once opened collect abstracts first before asking a question.
 
 ![image](https://github.com/user-attachments/assets/9b98de2d-55c0-42a8-a75e-c440c1d24c64)
 
