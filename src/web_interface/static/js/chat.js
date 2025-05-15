@@ -575,9 +575,27 @@ document.addEventListener('DOMContentLoaded', function() {
                     list.appendChild(listItem);
                 });
                 outlineContainer.appendChild(list);
+            } else {
+                // Add "No outline" message when no headers are found
+                addEmptyOutlineMessage();
             }
+        } else {
+            // Add "No outline" message when no content is provided
+            addEmptyOutlineMessage();
         }
-        // If neither subqueries nor headers are found, the outline remains empty.
+        
+        // Helper function to add the empty outline message
+        function addEmptyOutlineMessage() {
+            const cardHeader = document.createElement('div');
+            cardHeader.className = 'card-header';
+            cardHeader.textContent = 'Outline';
+            outlineContainer.appendChild(cardHeader);
+            
+            const emptyMessage = document.createElement('div');
+            emptyMessage.className = 'card-body p-3 text-center text-muted';
+            emptyMessage.textContent = 'No outline to display.';
+            outlineContainer.appendChild(emptyMessage);
+        }
     }
     
     // Function to update the references panel
