@@ -15,6 +15,7 @@ dependencies:
   - pandas
   - pdfminer.six
   - python-dotenv
+  - sentence-transformers
   - tqdm
   - pip
   - pip:
