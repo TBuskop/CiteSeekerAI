@@ -75,7 +75,7 @@ HYPE_MODEL = "gemini-2.0-flash-lite" # cheap model for HyPE question generation
 
 # --- Re-ranker Configuration ---
 # For refining search results after initial retrieval.
-RERANKER_MODEL = 'cross-encoder/ms-marco-MiniLM-L-12-v2' # Model for re-ranking
+RERANKER_MODEL = 'cross-encoder/ms-marco-MiniLM-L6-v2' # Model for re-ranking
 DEFAULT_RERANK_CANDIDATE_COUNT = 100 # Number of candidates to re-rank
 
 # --- Other Defaults & ChromaDB Settings ---
