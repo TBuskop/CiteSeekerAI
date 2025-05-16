@@ -429,6 +429,35 @@ def get_prompt_chunk():
     
     return jsonify({"status": "error", "message": "Chunk not found for the given citation key"}), 404
 
+# Helper function to create a sort key (primary: author, secondary: year desc, tertiary: title asc)
+def get_abstract_sort_key(abstract_metadata_dict):
+    authors_string = abstract_metadata_dict.get('authors', '')
+    year_val = abstract_metadata_dict.get('year', '0') # Default to '0' string
+    title = abstract_metadata_dict.get('title', '').lower()
+
+    first_author_lastname = 'zzzz'  # Default for no authors or errors, sorts them last
+    if authors_string and isinstance(authors_string, str):
+        # Handle case where authors_string already contains "et al."
+        if ' et al.' in authors_string:
+            first_author_lastname = authors_string.split(' et al.')[0].strip().lower()
+        else:
+            # Split authors by comma if multiple authors exist
+            authors_list = authors_string.split(', ')
+            if authors_list and authors_list[0].strip(): # Ensure first author is not empty
+                first_author = authors_list[0].strip()
+                # Extract last name from the first author (everything before the first space)
+                name_parts = first_author.split(' ')
+                if name_parts and name_parts[0].strip():
+                    first_author_lastname = name_parts[0].lower()
+    
+    try:
+        # Ensure year_val is treated as a string before int conversion if it might be numeric type already
+        year_int = int(str(year_val))
+    except (ValueError, TypeError):
+        year_int = 0 # Default for non-integer or missing years
+
+    return (first_author_lastname, -year_int, title)
+
 @app.route('/abstracts/list', methods=['GET'])
 def list_abstracts():
     """API endpoint to list abstracts in the database"""
@@ -438,99 +467,101 @@ def list_abstracts():
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 20))
         
-        # Connect to ChromaDB
         collection = get_chroma_collection(
             db_path=os.path.join(_PROJECT_ROOT, "data", "databases", "abstract_chroma_db"),
             collection_name="abstracts",
-            execution_mode="query"
+            execution_mode="query" 
         )
-        
-        # Get total count
-        total_count = collection.count()
-        
-        # For consistent sorting, get ALL abstracts at once (with a reasonable limit)
-        # Use a hard limit of 5000 to prevent excessive memory usage for very large databases
-        fetch_limit = min(5000, total_count)
-        
-        # Get all abstracts at once - this way we can sort them all together
-        all_results = collection.get(
-            limit=fetch_limit,
-            include=["metadatas", "documents"]
+
+        total_db_count = collection.count()
+        sortable_items = [] # This list will hold items to be sorted.
+
+        # Fetch all IDs and metadatas needed for sorting and filtering.
+        # This ensures we operate on the entire dataset for these operations.
+        # We only fetch 'metadatas' here to keep it lighter; 'documents' are fetched for the page later.
+        all_metadata_results = collection.get(
+            limit=total_db_count, # Fetch all
+            include=["metadatas"] 
         )
+
+        if all_metadata_results.get('ids'):
+            for i, doc_id in enumerate(all_metadata_results['ids']):
+                metadata = all_metadata_results['metadatas'][i]
+                
+                item_data_for_sort_and_filter = {
+                    'id': doc_id,
+                    'authors': metadata.get('authors', ''),
+                    'year': metadata.get('year', ''),
+                    'title': metadata.get('title', '')
+                }
+
+                if search_term:
+                    # Apply search filter if a search term is provided
+                    search_term_lower = search_term.lower()
+                    matches = False
+                    if 'title' in search_fields and item_data_for_sort_and_filter.get('title'):
+                        if search_term_lower in item_data_for_sort_and_filter['title'].lower():
+                            matches = True
+                    
+                    if not matches and 'authors' in search_fields and item_data_for_sort_and_filter.get('authors'):
+                        if search_term_lower in item_data_for_sort_and_filter['authors'].lower():
+                            matches = True
+                    
+                    if matches:
+                        sortable_items.append(item_data_for_sort_and_filter)
+                else:
+                    # No search term, so all items are candidates for sorting and pagination
+                    sortable_items.append(item_data_for_sort_and_filter)
         
-        # Process all results into a list of abstract objects
-        all_abstracts = []
-        for i, doc_id in enumerate(all_results.get('ids', [])):
-            metadata = all_results['metadatas'][i] if all_results.get('metadatas') else {}
-            document = all_results['documents'][i] if all_results.get('documents') else ""
-            
-            # If searching, apply filters
-            if search_term:
-                search_term_lower = search_term.lower()
-                matches = False
-                
-                if 'title' in search_fields and metadata.get('title'):
-                    if search_term_lower in metadata.get('title', '').lower():
-                        matches = True
-                
-                if not matches and 'authors' in search_fields and metadata.get('authors'):
-                    if search_term_lower in metadata.get('authors', '').lower():
-                        matches = True
-                
-                if not matches:
-                    continue  # Skip this item if it doesn't match the search
-            
-            all_abstracts.append({
-                'id': doc_id,
-                'title': metadata.get('title', ''),
-                'authors': metadata.get('authors', ''),
-                'year': metadata.get('year', ''),
-                'source_title': metadata.get('source_title', ''),
-                'cited_by': metadata.get('cited_by', ''),
-                'doi': metadata.get('doi', ''),
-                'document': document
-            })
+        # Sort the (potentially filtered) list of items
+        sortable_items.sort(key=get_abstract_sort_key)
         
-        # Define function to extract first author's last name for sorting
-        def get_first_author_last_name(abstract):
-            authors_string = abstract.get('authors', '')
-            if not authors_string or not isinstance(authors_string, str):
-                return 'zzzz'  # Sort items with no authors at the end
-                
-            # Handle case where authors_string already contains "et al."
-            if ' et al.' in authors_string:
-                # Extract the last name from "LastName et al."
-                return authors_string.split(' et al.')[0].strip().lower()
-                
-            # Split authors by comma if multiple authors exist
-            authors = authors_string.split(', ')
-            if not authors:
-                return 'zzzz'
-                
-            first_author = authors[0].strip()
-            
-            # Extract last name from the first author (everything before the first space)
-            last_name_match = first_author.split(' ')[0] if ' ' in first_author else first_author
-            return last_name_match.lower()
-        
-        # Sort ALL abstracts by first author's last name
-        all_abstracts.sort(key=get_first_author_last_name)
-        
-        # Manual pagination after sorting
+        # Determine the total count for pagination display
+        # If searching, it's the number of matched items. Otherwise, it's the total in DB.
+        total_items_for_pagination = len(sortable_items) if search_term else total_db_count
+
+        # Paginate the sorted list of items
         start_idx = (page - 1) * per_page
         end_idx = start_idx + per_page
-        paginated_abstracts = all_abstracts[start_idx:end_idx] if start_idx < len(all_abstracts) else []
-        has_more = end_idx < len(all_abstracts)
         
-        # For search results, return filtered count; for general browsing, return total database count
-        displayed_total = len(all_abstracts) if search_term else total_count
+        ids_for_page = [item['id'] for item in sortable_items[start_idx:end_idx]]
+        
+        paginated_abstracts_data = []
+        if ids_for_page:
+            # Fetch full data (including documents) only for the IDs on the current page
+            page_full_data_results = collection.get(ids=ids_for_page, include=["metadatas", "documents"])
+            
+            id_to_full_data_map = {}
+            if page_full_data_results.get('ids'):
+                for i, doc_id in enumerate(page_full_data_results['ids']):
+                    id_to_full_data_map[doc_id] = {
+                        'metadata': page_full_data_results['metadatas'][i],
+                        'document': page_full_data_results['documents'][i]
+                    }
+
+            for item_id in ids_for_page: 
+                if item_id in id_to_full_data_map:
+                    full_data = id_to_full_data_map[item_id]
+                    metadata = full_data['metadata']
+                    paginated_abstracts_data.append({
+                        'id': item_id,
+                        'title': metadata.get('title', ''),
+                        'authors': metadata.get('authors', ''),
+                        'year': metadata.get('year', ''),
+                        'source_title': metadata.get('source_title', ''),
+                        'cited_by': metadata.get('cited_by', ''),
+                        'doi': metadata.get('doi', ''),
+                        'document': full_data['document']
+                    })
+        
+        has_more = end_idx < len(sortable_items)
         
         return jsonify({
             'status': 'success',
-            'abstracts': paginated_abstracts,
+            'abstracts': paginated_abstracts_data,
             'page': page,
             'per_page': per_page,
-            'total': displayed_total,  # Show actual database total when not searching
+            'total': total_items_for_pagination, 
             'has_more': has_more
         })
         
