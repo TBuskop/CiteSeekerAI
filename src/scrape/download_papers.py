@@ -303,6 +303,14 @@ def fetch_with_playwright(url: str) -> str:
     context = None
     page: Optional[Page] = None # <<< NEW: Type hint for page
 
+    # <<< NEW: Get random headers for this session >>>
+    random_headers = get_random_headers()
+    user_agent_to_use = random_headers.get('User-Agent', # Default if not found
+                                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                         "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                         "Chrome/124.0.0.0 Safari/537.36")
+
+
     try:
         with sync_playwright() as p:
             # ───────────────────────────────────────────────────────────────
@@ -345,11 +353,7 @@ def fetch_with_playwright(url: str) -> str:
             # ───────────────────────────────────────────────────────────────
             print("Creating browser context...")
             context = browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36" # Updated User-Agent
-                ),
+                user_agent=user_agent_to_use, # <<< CHANGED: Use selected User-Agent
                 locale="nl-NL",
                 timezone_id="Europe/Amsterdam",
                 viewport={"width": 1280, "height": 800},
@@ -378,7 +382,21 @@ def fetch_with_playwright(url: str) -> str:
             # ───────────────────────────────────────────────────────────────
             page = context.new_page()
             print("Applying stealth...")
+
+            # <<< NEW: Set extra HTTP headers for the page >>>
+            # Remove User-Agent from random_headers if it's there, as it's set at context level
+            # and Playwright might warn or error if set in both places.
+            # However, Playwright's set_extra_http_headers typically overrides or adds,
+            # and User-Agent is special. It's safer to let context handle UA.
+            # For other headers, this is the place.
+            headers_for_page = {k: v for k, v in random_headers.items() if k.lower() != 'user-agent'}
+            if headers_for_page:
+                print(f"Setting extra HTTP headers for the page: {list(headers_for_page.keys())}")
+                page.set_extra_http_headers(headers_for_page)
+
             stealth_sync(page)
+
+
 
             # Pick the right body selector and adjust URL if needed
             effective_url = url # Start with the original URL
@@ -426,6 +444,9 @@ def fetch_with_playwright(url: str) -> str:
             except Exception as e: # Catch other potential errors during wait
                 print(f"An error occurred while waiting for network idle: {e}. Proceeding.")
 
+            # reload the page to ensure all content is loaded
+            print("Reloading page, to overcome any potential lazy loading issues...")
+            page.reload(timeout=60000, wait_until="domcontentloaded")
             # An additional short, fixed wait can sometimes be beneficial,
             # especially if running non-headless to allow for any final rendering or manual checks/CAPTCHAs.
             final_wait_duration = 5 if not headless else 2
@@ -728,7 +749,7 @@ def _extract_text_from_html(html_str: str, url: str, source_method: str) -> Dict
     """Extracts text from HTML using Trafilatura and performs basic validation."""
     if not html_str:
         print(f"No HTML content to extract for {url}. Source method: {source_method}")
-        return {"text": "", "source": f"{source_method}_fetch_failed"} # Already failed
+        return {"text": "", "source": f"{source_method}_error_empty_html"} # Already failed
 
     try:
         article_text = trafilatura.extract(
