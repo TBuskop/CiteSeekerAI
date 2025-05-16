@@ -92,7 +92,7 @@ def process_subquery(query: str, query_index: int, progress_callback=None, run_s
     """
     # helper to report subquery progress
     def log_progress_sub(msg):
-        tag = f"[Subquery {query_index+1}]"
+        tag = f""
         if progress_callback:
             progress_callback(f"{tag} {msg}")
         print(f"{tag} {msg}")
@@ -227,44 +227,55 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None,
     initial_research_question = question if question is not None else config.QUERY
     query_numbers = query_numbers if query_numbers is not None else config.QUERY_DECOMPOSITION_NR
 
+    def log_progress_main(payload_type, data=None, message=None):
+        if progress_callback:
+            payload = {"type": payload_type}
+            if data:
+                payload["data"] = data
+            if message:
+                payload["message"] = message
+            progress_callback(payload)
+        if message: # also print simple messages
+            print(message)
 
     # --- Step 1: Decompose Initial Research Question ---
-    print("\n--- Step 1: Decomposing Research Question ---")
+    log_progress_main("status_update", message="\n--- Step 1: Decomposing Research Question ---")
     decomposed_queries, overall_goal = query_decomposition(
         query=initial_research_question,
         number_of_sub_queries=query_numbers,
         model=config.SUBQUERY_MODEL,
-        output_dir=run_specific_output_dir # MODIFIED: Use local run_specific_output_dir
+        output_dir=run_specific_output_dir
     )
     if decomposed_queries:
+        log_progress_main("initial_info", data={"overall_goal": overall_goal, "decomposed_queries": decomposed_queries, "initial_research_question": initial_research_question})
         print(f"Overall Goal: {overall_goal}")
         print("Decomposed queries:")
         for i, query in enumerate(decomposed_queries):
             print(f"  Subquery {i+1}: {query}")
     else:
-        print("Failed to decompose the query. Exiting.")
+        log_progress_main("status_update", message="Failed to decompose the query. Exiting.")
         sys.exit(1)
 
     # --- Initialize LLM Clients ---
-    print("\n--- Initializing LLM Clients ---")
+    log_progress_main("status_update", message="\n--- Initializing LLM Clients ---")
     try:
         llm_interface.initialize_clients()
         if not llm_interface.gemini_client:
-            print("Warning: Gemini client initialization might have failed. Check API keys/config.")
+            log_progress_main("status_update", message="Warning: Gemini client initialization might have failed. Check API keys/config.")
     except Exception as init_err:
-        print(f"Error initializing LLM clients: {init_err}. Final query step might fail.")
+        log_progress_main("status_update", message=f"Error initializing LLM clients: {init_err}. Final query step might fail.")
 
     # --- Execute Subqueries Sequentially ---
-    print(f"\n--- Starting Sequential Processing for {len(decomposed_queries)} Subqueries ---")
+    log_progress_main("status_update", message=f"\n--- Starting Sequential Processing for {len(decomposed_queries)} Subqueries ---")
     results = []
 
     for i, original_subquery in enumerate(decomposed_queries):
-        print(f"\n--- Processing Subquery {i + 1} of {len(decomposed_queries)} ---")
+        log_progress_main("status_update", message=f"\n--- Processing Subquery {i + 1} of {len(decomposed_queries)} ---")
         current_query = original_subquery
 
         try:
             if i > 0 and results:
-                print(f"[Query {i+1}] Refining query based on previous results...")
+                log_progress_main("status_update", message=f"[Query {i+1}] Refining query based on previous results...")
                 previous_queries = [res[1] for res in results]
                 previous_answers = [res[2] for res in results]
                 refined_query = follow_up_query_refinement(
@@ -273,30 +284,56 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None,
                     previous_queries=previous_queries,
                     previous_answers=previous_answers,
                     model=config.SUBQUERY_MODEL,
-                    output_dir=run_specific_output_dir, # MODIFIED: Use local run_specific_output_dir
+                    output_dir=run_specific_output_dir,
                     query_index=i
                 )
                 if refined_query and refined_query != original_subquery:
-                     print(f"[Query {i+1}] Refined query: '{refined_query}'")
+                     log_progress_main("status_update", message=f"[Query {i+1}] Refined query: '{refined_query}'")
                      current_query = refined_query
                 else:
-                     print(f"[Query {i+1}] Query refinement did not change the query or failed.")
+                     log_progress_main("status_update", message=f"[Query {i+1}] Query refinement did not change the query or failed.")
+            
+            # Pass the main log_progress_main to process_subquery if its internal logs should also go through the structured callback
+            # For now, process_subquery uses its own print and a simpler progress_callback for its internal steps.
+            # If process_subquery's callback needs to be structured, it would also need to adopt the dict payload.
+            # For this change, we focus on reporting the *result* of process_subquery.
+            
+            # Simplified callback for process_subquery's internal steps, distinct from main progress
+            def subquery_step_callback(msg):
+                log_progress_main("status_update", message=f"[Subquery {i+1} Step] {msg}")
 
-            result_tuple = process_subquery(current_query, i, progress_callback=progress_callback, run_specific_output_dir=run_specific_output_dir) # MODIFIED: Pass run_specific_output_dir
+            result_tuple = process_subquery(current_query, i, progress_callback=subquery_step_callback, run_specific_output_dir=run_specific_output_dir)
             results.append(result_tuple)
-            print(f"--- Completed Processing for Subquery {i + 1} ---")
+            
+            # Send structured update for this subquery's result
+            log_progress_main("subquery_result", data={
+                "index": i,
+                "original_query": original_subquery,
+                "processed_query": current_query,
+                "answer": result_tuple[2]
+            })
+            log_progress_main("status_update", message=f"--- Completed Processing for Subquery {i + 1} ---")
 
         except Exception as exc:
             error_msg = f"Subquery {i + 1} ('{current_query}') generated an unhandled exception: {exc}"
-            print(f"--- {error_msg} ---")
+            log_progress_main("status_update", message=f"--- {error_msg} ---")
             results.append((i, current_query, f"Failed with exception: {exc}"))
+            # Optionally send this error as a subquery_result too, so UI knows it failed
+            log_progress_main("subquery_result", data={
+                "index": i,
+                "original_query": original_subquery,
+                "processed_query": current_query,
+                "answer": f"Failed with exception: {exc}",
+                "is_error": True
+            })
+
 
     results.sort(key=lambda x: x[0])
 
     # --- Write Combined Results ---
-    print(f"\n--- Writing Combined Answers to {combined_answers_output_filename} ---") # MODIFIED: Use local combined_answers_output_filename
+    log_progress_main("status_update", message=f"\n--- Writing Combined Answers to {combined_answers_output_filename} ---")
     try:
-        with open(combined_answers_output_filename, "w", encoding="utf-8") as f: # MODIFIED: Use local combined_answers_output_filename
+        with open(combined_answers_output_filename, "w", encoding="utf-8") as f:
             f.write(f"## Original Research Question\n{initial_research_question}\n\n")
             f.write(f"## Refined Overall Goal\n{overall_goal}\n\n")
             f.write("### Decomposed Queries and Final Answers\n\n")
@@ -307,12 +344,12 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None,
                 if processed_query != original_query_text:
                      f.write(f"**Refined Subquery:** {processed_query}\n\n")
                 f.write(f"**Final Answer:**\n{final_answer}\n\n")
-                f.write("---\n\n") # Add a horizontal rule for better separation
-        print(f"Combined answers successfully written to {combined_answers_output_filename}") # MODIFIED: Use local combined_answers_output_filename
+                f.write("---\n\n")
+        log_progress_main("status_update", message=f"Combined answers successfully written to {combined_answers_output_filename}")
     except IOError as e:
-        print(f"Error writing combined answers file: {e}")
+        log_progress_main("status_update", message=f"Error writing combined answers file: {e}")
 
-    print("\n--- DeepResearch Sequential Pipeline Finished ---")
+    log_progress_main("status_update", message="\n--- DeepResearch Sequential Pipeline Finished ---")
 
 
 if __name__ == "__main__":

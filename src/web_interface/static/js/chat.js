@@ -19,6 +19,140 @@ document.addEventListener('DOMContentLoaded', function() {
     let currentJobId = null;
     let statusCheckInterval = null;
     let hideTooltipTimeout = null; // Variable to manage tooltip hide delay
+    let currentJobState = {}; // To store state per job (displayed subqueries, etc.)
+
+    // Group reference processing functions into an object
+    const referenceProcessor = {
+        formatAuthors: function(authorsString) {
+            const authorList = authorsString.split(';').map(author => author.trim()).filter(author => author);
+            if (authorList.length === 0) return "";
+
+            const formattedAuthorList = authorList.map(authorStr => {
+                const parts = authorStr.split(' ');
+                if (parts.length > 1) {
+                    let initials = parts.pop(); // Last part is assumed initials
+                    const lastName = parts.join(' ');
+                    initials = initials.replace(/\.+$/, '') + '.';
+                    return `${lastName}, ${initials}`;
+                }
+                return authorStr; 
+            });
+
+            if (formattedAuthorList.length === 0) return "";
+            if (formattedAuthorList.length === 1) return formattedAuthorList[0];
+            
+            let result = formattedAuthorList.slice(0, -1).join(', ');
+            result += ` & ${formattedAuthorList.slice(-1)[0]}`;
+            return result;
+        },
+
+        getInTextAuthorFormat: function(authorsString) { // authorsString is like "Shepherd T.G.;Sillmann J.;..." OR "FirstAuthor et al."
+            const getMainNamePart = (fullAuthorName) => {
+                const nameParts = fullAuthorName.split(' ').map(p => p.trim()).filter(p => p.length > 0);
+                if (nameParts.length === 0) {
+                    return ""; // Handle empty or whitespace-only names
+                }
+                if (nameParts.length === 1) {
+                    return nameParts[0]; // Single word name, return as is
+                }
+
+                let lastNonInitialIndex = nameParts.length - 1;
+
+                // Iterate backwards from the second-to-last part up to the first part.
+                // We always keep nameParts[0] unless the name consists only of initials.
+                for (let i = nameParts.length - 1; i > 0; i--) {
+                    const part = nameParts[i];
+                    // An initial is typically short, all caps, possibly with dots.
+                    // Must contain at least one uppercase letter. Adjusted length to 7.
+                    const isInitial = part.length >= 1 && part.length <= 9 && /^[A-Z\.]+$/.test(part) && /[A-Z]/.test(part);
+
+                    if (isInitial) {
+                        lastNonInitialIndex = i - 1;
+                    } else {
+                        // Found a part that is not an initial, so this and all preceding parts form the name.
+                        break;
+                    }
+                }
+                // If all parts after the first are initials, lastNonInitialIndex will be 0.
+                // If the first part itself is also an initial (e.g. "X Y Z" where all are initials)
+                // we still return the first part based on this logic.
+                // Example: "X Y Z" -> lastNonInitialIndex = 0. Returns "X".
+                // Example: "Smith X Y Z" -> "Z" is initial, LNI=2. "Y" is initial, LNI=1. "X" is initial, LNI=0. Returns "Smith".
+                // (Correction for "Smith X Y Z": "X" is initial, LNI=0. "Smith" is not initial, loop breaks. LNI remains 0. Slice(0,1) is "Smith")
+                // The loop should check nameParts[i], if it's an initial, then the actual name ends at i-1.
+                // If nameParts[0] is "Smith", nameParts[1] is "X":
+                // i=1, part="X", isInitial=true. lastNonInitialIndex = 0. Loop ends. Slice(0,1) -> "Smith". Correct.
+
+                return nameParts.slice(0, lastNonInitialIndex + 1).join(' ');
+            };
+
+            // Normalize authorsString by removing any trailing period from "et al." if present
+            const normalizedAuthorsString = authorsString.replace(/\s+et al\.\s*$/, " et al.").trim();
+
+
+            // Check if authorsString itself is already in "et al." form
+            if (normalizedAuthorsString.includes(" et al.")) {
+                // Split by " et al." (case-insensitive for "et al", but standard is " et al.")
+                // The regex (?i) makes "et al." case-insensitive if needed, but usually it's consistent.
+                // For simplicity, assuming " et al." is the delimiter.
+                const parts = normalizedAuthorsString.split(/ et al\./i); // Split by " et al."
+                const firstAuthorFull = parts[0].trim();
+                const firstAuthorProcessed = getMainNamePart(firstAuthorFull);
+                return `${firstAuthorProcessed} et al.`;
+            }
+
+            // Original logic for semicolon-separated list
+            const authorList = normalizedAuthorsString.split(';').map(author => author.trim()).filter(Boolean);
+            if (authorList.length === 0) return "";
+
+            const firstAuthorNameProcessed = getMainNamePart(authorList[0]);
+
+             
+            
+            return `${firstAuthorNameProcessed} et al.`;
+        },
+
+        createReferenceListItem: function(refText) {
+            const refParseRegex = /^(.+?),\s*(.+?),\s*(\d{4}),\s*(.+?),\s*(https?:\/\/[^,]+)(?:,\s*(Cited by:\s*\d+))?$/;
+            const index = Math.random().toString(36).substring(2, 15); // Generate unique ID
+            
+            const li = document.createElement('li');
+            li.className = 'mb-2 small';
+            li.id = `ref-li-${index}`;
+            
+            const refMatch = refText.match(refParseRegex);
+            if (refMatch) {
+                const [fullMatch, authors, title, year, source, url, citedBy] = refMatch;
+                
+                const formattedAuthorsAPA = referenceProcessor.formatAuthors(authors);
+                const inTextAuthorComponent = referenceProcessor.getInTextAuthorFormat(authors);
+                const searchKey = `${inTextAuthorComponent}, ${year}`;
+                li.setAttribute('data-reference-search-key', searchKey);
+                
+                const formattedYear = `(${year})`;
+                const formattedSource = `<em>${source}</em>`;
+                
+                let displayUrl = url;
+                let clickableUrl = url;
+                if (url.includes("doi.org/")) {
+                    const doi = url.substring(url.indexOf("doi.org/") + "doi.org/".length);
+                    displayUrl = `https://doi.org/${doi}`;
+                    clickableUrl = displayUrl;
+                }
+                
+                let fullReferenceHtml = `${formattedAuthorsAPA}. ${formattedYear}. ${title}. ${formattedSource}. <a class="doi_url" href="${clickableUrl}" target="_blank">${displayUrl}</a>`;
+                
+                if (citedBy) {
+                    fullReferenceHtml += `. ${citedBy}`;
+                }
+                li.innerHTML = fullReferenceHtml;
+            } else {
+                li.textContent = refText;
+            }
+            
+            return li;
+        }
+    };
 
     // Function to format answer content (Markdown and Citations)
     function formatAnswer(text) {
@@ -209,6 +343,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 addMessage('assistant', "Hello! I'm CiteSeekerAI, your research assistant. Ask me a research question, and I'll analyze academic literature to provide you with a comprehensive answer.\n\nFor example: \"What is the difference between water scarcity and water security?\"");
             }
             currentJobId = null; // Reset current job ID
+            currentJobState = {}; // Reset job state
             if (statusContainer) statusContainer.classList.add('d-none'); // Hide status
             if (progressBar) {
                 progressBar.style.width = '0%'; // Reset progress bar
@@ -249,13 +384,21 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(data => {
                 if (data.status === 'success') {
                     currentJobId = data.job_id; // Set currentJobId for this new conversation
+                    currentJobState = { // Initialize state for the new job
+                        initialInfoDisplayed: false,
+                        displayedSubqueryCount: 0,
+                        userQuestion: question, // Store user question for context if needed
+                        finalAnswerDisplayed: false,
+                        answeredSubqueries: [] // Track which subqueries have been answered
+                    };
                     statusContainer.classList.remove('d-none');
                     statusText.textContent = data.message;
                     progressBar.style.width = '0%';
+                    progressBar.classList.remove('bg-danger');
                     
-                    checkStatus();
+                    checkStatus(); // Initial check
                     if (statusCheckInterval) clearInterval(statusCheckInterval);
-                    statusCheckInterval = setInterval(checkStatus, 3000); // Check more frequently initially
+                    statusCheckInterval = setInterval(checkStatus, 3000);
                 } else {
                     addMessage('assistant', `Error: ${data.message}`);
                     resetForm();
@@ -272,6 +415,11 @@ document.addEventListener('DOMContentLoaded', function() {
     // Show a result from history
     function showHistoryResult(jobId) {
         currentJobId = jobId; // Set currentJobId for this historical conversation
+        currentJobState = { // Reset state for history view
+            initialInfoDisplayed: true, // Assume all info is part of the final answer
+            displayedSubqueryCount: 0, // Will be set by the number of subqueries in the result
+            finalAnswerDisplayed: true
+        }; 
         fetch(`/result/${jobId}`)
         .then(response => response.json())
         .then(data => {
@@ -307,54 +455,126 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(data => {
             if (data.status === 'not_found') {
                 clearInterval(statusCheckInterval);
-                statusText.textContent = "Job not found or expired.";
+                statusCheckInterval = null;
+                statusText.textContent = data.progress_message || "Job not found or expired.";
                 progressBar.style.width = '0%';
-                // Potentially hide status container or show error more permanently
                 return;
             }
 
-            statusText.textContent = data.progress || data.status;
-            // Example: Update progress bar based on fine-grained steps if available
-            // For now, simple 50% for processing, 100% for completed
-            if (data.status === 'Processing') {
-                progressBar.style.width = '50%'; // Or more granular if progress provides percentage
-            } else if (data.status === 'Completed') {
-                clearInterval(statusCheckInterval);
-                progressBar.style.width = '100%';
-                statusContainer.classList.add('d-none'); // Hide after a short delay?
+            statusText.textContent = data.progress_message || data.progress || data.status;
+
+            // Display initial information (overall goal, decomposed queries)
+            if (data.overall_goal && data.decomposed_queries && data.decomposed_queries.length > 0 && !currentJobState.initialInfoDisplayed) {
+                let initialMessage = `**Initial Research Question:** ${data.initial_research_question || currentJobState.userQuestion}\n\n`;
+                initialMessage += `**Overall Goal:** ${data.overall_goal}\n\n`;
+                initialMessage += `**Decomposed Queries:**\n`;
+                data.decomposed_queries.forEach((sq, index) => {
+                    initialMessage += `${index + 1}. ${sq}\n`;
+                });
+                addMessage('assistant', initialMessage);
                 
+                // Initialize outline with header only, no items yet since no answers
+                initializeEmptyOutline();
+                
+                currentJobState.initialInfoDisplayed = true;
+                currentJobState.decomposedQueries = data.decomposed_queries;
+            }
+
+            // Display new subquery results as they are completed
+            if (data.subquery_results_stream && data.subquery_results_stream.length > currentJobState.displayedSubqueryCount) {
+                const newResults = data.subquery_results_stream.slice(currentJobState.displayedSubqueryCount);
+                newResults.forEach(result => {
+                    let subqueryMessage = `### Subquery ${result.index + 1}\n\n`;
+                    
+                    if (result.original_query && result.processed_query && result.original_query !== result.processed_query) {
+                        subqueryMessage += `**Original Query:** ${result.original_query}\n\n`;
+                        subqueryMessage += `**Refined Query:** ${result.processed_query}\n\n`;
+                    } else {
+                        subqueryMessage += `**Query:** ${result.original_query || result.processed_query}\n\n`;
+                    }
+                    
+                    subqueryMessage += `**Answer:**\n\n${result.answer}`;
+                    
+                    // Add an ID that the outline can link to
+                    const subqueryDiv = document.createElement('div');
+                    subqueryDiv.id = `subquery-${result.index + 1}`;
+                    subqueryDiv.className = 'assistant-message p-3 mb-3 rounded';
+                    subqueryDiv.innerHTML = formatAnswer(subqueryMessage);
+                    chatContainer.appendChild(subqueryDiv);
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                    
+                    // Add this subquery to the list of answered subqueries
+                    if (!currentJobState.answeredSubqueries.includes(result.index)) {
+                        currentJobState.answeredSubqueries.push(result.index);
+                        
+                        // Now update the outline with just this subquery since it's answered
+                        addSubqueryToOutline(result.index, result.original_query || result.processed_query);
+                    }
+                    
+                    // Update references panel with each new subquery result
+                    updateReferencesFromSubquery(result.answer);
+                });
+                
+                currentJobState.displayedSubqueryCount = data.subquery_results_stream.length;
+            }
+            
+            // Update progress bar
+            if (data.status === 'Processing' || data.status === 'Starting') {
+                if (data.decomposed_queries && data.decomposed_queries.length > 0 && data.subquery_results_stream) {
+                    const progressPercentage = (data.subquery_results_stream.length / data.decomposed_queries.length) * 100;
+                    progressBar.style.width = `${Math.min(progressPercentage, 95)}%`; // Cap at 95% until "Completed"
+                } else if (data.status === 'Starting') {
+                    progressBar.style.width = '5%';
+                } else {
+                    progressBar.style.width = currentJobState.initialInfoDisplayed ? '15%' : '10%';
+                }
+                progressBar.classList.remove('bg-danger');
+            } else if (data.status === 'Completed' && !currentJobState.finalAnswerDisplayed) {
+                clearInterval(statusCheckInterval);
+                statusCheckInterval = null;
+                progressBar.style.width = '100%';
+                progressBar.classList.remove('bg-danger');
+                
+                // Fetch and display the final combined answer
                 fetch(`/result/${currentJobId}`)
                 .then(response => response.json())
-                .then(resultData => {
+                .then(resultData => { // Added parentheses around resultData
                     if (resultData.status === 'success') {
-                        // Assistant message already added? No, this is where it's first shown for a new query.
-                        // If chatContainer already has messages (e.g. user query), this adds to it.
-                        // If it's a fresh page load and job completes, this might be the first message.
-                        addMessage('assistant', resultData.answer, resultData.timestamp, resultData.subqueries || []);
-                        updateReferencesPanel(resultData.answer); // Update references panel
+                        // Display a clear "Final Combined Answer" header
+                        addMessage('assistant', "## Final Combined Answer\n\n" + resultData.answer, resultData.timestamp, resultData.subqueries || []);
+                        updateReferencesPanel(resultData.answer);
                         resetForm();
-                        updateHistoryList(); // Refresh history list
+                        updateHistoryList();
+                        currentJobState.finalAnswerDisplayed = true;
                     } else {
-                        addMessage('assistant', `Error retrieving result: ${resultData.message || 'Unknown error'}`);
+                        addMessage('assistant', `Error retrieving final result: ${resultData.message || 'Unknown error'}`);
                         resetForm();
                     }
+                })
+                .finally(() => {
+                    // Hide status container after a short delay
+                    setTimeout(() => {
+                        if (statusContainer && data.status === 'Completed') {
+                            statusContainer.classList.add('d-none');
+                        }
+                    }, 2000);
                 });
             } else if (data.status === 'Error') {
                 clearInterval(statusCheckInterval);
-                progressBar.style.width = '100%'; // Show completion of attempt
-                progressBar.classList.add('bg-danger'); // Indicate error
-                statusText.textContent = `Error: ${data.error || 'Unknown error'}`;
-                // Do not hide statusContainer immediately on error, let user see it.
+                statusCheckInterval = null;
+                progressBar.style.width = '100%';
+                progressBar.classList.add('bg-danger');
+                statusText.textContent = `Error: ${data.error || data.progress_message || 'Unknown error'}`;
                 resetForm();
-            } else if (data.status === 'Starting') {
-                 progressBar.style.width = '10%';
             }
         })
         .catch(error => {
             console.error('Error checking status:', error);
-            clearInterval(statusCheckInterval);
+            if (statusCheckInterval) {
+                clearInterval(statusCheckInterval);
+                statusCheckInterval = null;
+            }
             statusText.textContent = "Error checking status. Please try again.";
-            // resetForm(); // Optional: reset form on status check error
         });
     }
     
@@ -489,80 +709,180 @@ document.addEventListener('DOMContentLoaded', function() {
 
     }
     
-    // Function to update the outline panel
-    function updateOutline(answerHtml, subqueries = null) { // Added subqueries parameter
+    // Helper function to initialize empty outline with just the header
+    function initializeEmptyOutline() {
         if (!outlineContainer) return;
-
+        
         outlineContainer.innerHTML = ''; // Clear previous outline
-
-        // If subqueries are provided and is an array with items, use them for the outline
-        if (subqueries && Array.isArray(subqueries) && subqueries.length > 0) {
-            const cardHeader = document.createElement('div');
-            cardHeader.className = 'card-header';
-            cardHeader.textContent = 'Outline';
-            outlineContainer.appendChild(cardHeader);
-
-            const list = document.createElement('ul');
-            list.className = 'list-group list-group-flush flex-grow-1'; // Bootstrap styling + flex grow
-            // Remove hardcoded maxHeight, controlled by CSS now
-            list.style.overflowY = 'auto';  // Make outline scrollable if too long
-
-
-            subqueries.forEach((subqueryText, index) => {
-                const listItem = document.createElement('li');
-                listItem.className = 'list-group-item';
-                
-                const link = document.createElement('a');
-                // Generate ID based on index (1-based for subquery numbers)
-                const targetId = `subquery-${index + 1}`; 
-                link.href = `#${targetId}`;
-                // Display format: "1. {subquery text}"
-                link.textContent = `${index + 1}. ${subqueryText}`; 
-                link.className = 'outline-link d-block'; // Removed text-truncate to allow wrapping
-                link.style.cursor = 'pointer';
-                link.style.whiteSpace = 'normal'; // Allow text to wrap
-                link.style.overflowWrap = 'break-word'; // Break long words if necessary
-
-
-                link.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    const targetElement = document.getElementById(this.getAttribute('href').substring(1));
-                    if (targetElement) {
-                        targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    }
-                });
-
-                listItem.appendChild(link);
-                list.appendChild(listItem);
-            });
-            outlineContainer.appendChild(list);
-        } else if (answerHtml) { // Fallback or for messages without explicit subqueries (like initial greeting)
-            // This part tries to find H4s if no subqueries array is given.
-            // For the initial greeting, this will likely find nothing, which is fine.
-            const tempDiv = document.createElement('div');
-            tempDiv.innerHTML = answerHtml;
-            const headers = tempDiv.querySelectorAll('h4[id^="subquery-"]');
+        
+        const cardHeader = document.createElement('div');
+        cardHeader.className = 'card-header';
+        cardHeader.textContent = 'Outline';
+        outlineContainer.appendChild(cardHeader);
+        
+        // Create empty list that will be populated as answers come in
+        const list = document.createElement('ul');
+        list.id = 'outline-list';
+        list.className = 'list-group list-group-flush flex-grow-1';
+        list.style.overflowY = 'auto';
+        outlineContainer.appendChild(list);
+        
+        // Initially show a message that answers are being generated
+        const emptyMessage = document.createElement('li');
+        emptyMessage.id = 'outline-empty-message';
+        emptyMessage.className = 'list-group-item text-center text-muted';
+        emptyMessage.textContent = 'Answers are being generated...';
+        list.appendChild(emptyMessage);
+    }
+    
+    // Helper function to add a single subquery to the outline when its answer is ready
+    function addSubqueryToOutline(index, subqueryText) {
+        if (!outlineContainer) return;
+        
+        const list = document.getElementById('outline-list');
+        if (!list) return;
+        
+        // Remove the empty message if it exists
+        const emptyMessage = document.getElementById('outline-empty-message');
+        if (emptyMessage) {
+            emptyMessage.remove();
+        }
+        
+        // Create the list item for this subquery
+        const listItem = document.createElement('li');
+        listItem.className = 'list-group-item';
+        
+        const link = document.createElement('a');
+        const targetId = `subquery-${index + 1}`; 
+        link.href = `#${targetId}`;
+        link.textContent = `${index + 1}. ${subqueryText}`;
+        link.className = 'outline-link d-block';
+        link.style.cursor = 'pointer';
+        link.style.whiteSpace = 'normal';
+        link.style.overflowWrap = 'break-word';
+        
+        link.addEventListener('click', function(e) {
+            e.preventDefault();
+            const targetElement = document.getElementById(this.getAttribute('href').substring(1));
+            if (targetElement) {
+                targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        });
+        
+        listItem.appendChild(link);
+        
+        // Insert in order by index
+        let inserted = false;
+        Array.from(list.children).forEach(child => {
+            if (child.tagName === 'LI' && child.querySelector('a')) {
+                const childLink = child.querySelector('a');
+                const childText = childLink.textContent;
+                const childIndex = parseInt(childText.split('.')[0]) - 1;
+                if (childIndex > index && !inserted) {
+                    list.insertBefore(listItem, child);
+                    inserted = true;
+                }
+            }
+        });
+        
+        if (!inserted) {
+            list.appendChild(listItem);
+        }
+    }
+    
+    // Helper function to update references from a subquery result
+    function updateReferencesFromSubquery(answerText) {
+        if (!referencesListDiv) return;
+        
+        // Extract references from this answer
+        const allReferences = new Set();
+        const existingReferences = Array.from(referencesListDiv.querySelectorAll('li')) // Ensure existingReferences is defined
+            .map(li => li.textContent.trim());
+        
+        const referencesSectionRegex = /\*\*References Used:\*\*\s*\n([\s\S]*?)(?=\n---\n|\n#### Subquery|\n## Refined Overall Goal|$)/g;
+        
+        let match;
+        while ((match = referencesSectionRegex.exec(answerText)) !== null) {
+            const referencesBlock = match[1];
+            const individualReferenceRegex = /-\s*(.+)/g;
+            let refMatch;
+            while ((refMatch = individualReferenceRegex.exec(referencesBlock)) !== null) {
+                allReferences.add(refMatch[1].trim());
+            }
+        }
+        
+        // If we found any references, merge them with existing ones
+        if (allReferences.size > 0) {
+            // If there's just a "no references" message, clear it first
+            if (referencesListDiv.querySelector('.text-center.text-muted')) {
+                referencesListDiv.innerHTML = '';
+                const ul = document.createElement('ul');
+                ul.className = 'list-unstyled';
+                ul.id = 'references-list-ul';
+                referencesListDiv.appendChild(ul);
+            }
             
-            if (headers.length > 0) {
+            const ul = document.getElementById('references-list-ul') || referencesListDiv.querySelector('ul');
+            if (!ul) return;
+            
+            // Add new references
+            allReferences.forEach(refText => {
+                if (!existingReferences.includes(refText)) {
+                    const li = referenceProcessor.createReferenceListItem(refText); // Use referenceProcessor
+                    ul.appendChild(li);
+                }
+            });
+            
+            // Re-sort all references alphabetically
+            const items = Array.from(ul.children);
+            items.sort((a, b) => {
+                return a.textContent.toLowerCase().localeCompare(b.textContent.toLowerCase());
+            });
+            
+            // Clear and re-append in sorted order
+            ul.innerHTML = '';
+            items.forEach(item => ul.appendChild(item));
+        }
+    }
+    
+    // Function to update the outline panel
+    function updateOutline(answerHtml, subqueries = null) {
+        if (!outlineContainer) return;
+        
+        // For new queries, we initialize with empty outline and add items as answers come in
+        // This is now handled by initializeEmptyOutline() and addSubqueryToOutline() during the streaming process
+        
+        // However, for history views or for the final combined answer, we still need this function
+        // to populate the entire outline at once
+        
+        // If we're displaying a history item, populate the full outline
+        if (currentJobState.finalAnswerDisplayed || !currentJobId) {
+            outlineContainer.innerHTML = ''; // Clear previous outline
+            
+            // If subqueries are provided and is an array with items, use them for the outline
+            if (subqueries && Array.isArray(subqueries) && subqueries.length > 0) {
                 const cardHeader = document.createElement('div');
                 cardHeader.className = 'card-header';
                 cardHeader.textContent = 'Outline';
                 outlineContainer.appendChild(cardHeader);
-
+                
                 const list = document.createElement('ul');
                 list.className = 'list-group list-group-flush flex-grow-1';
-                // Remove hardcoded maxHeight, controlled by CSS now
                 list.style.overflowY = 'auto';
-
-                headers.forEach(header => {
+                
+                subqueries.forEach((subqueryText, index) => {
                     const listItem = document.createElement('li');
                     listItem.className = 'list-group-item';
                     
                     const link = document.createElement('a');
-                    link.href = `#${header.id}`;
-                    link.textContent = header.textContent; // This would be "Subquery X"
-                    link.className = 'outline-link d-block text-truncate';
+                    const targetId = `subquery-${index + 1}`;
+                    link.href = `#${targetId}`;
+                    link.textContent = `${index + 1}. ${subqueryText}`;
+                    link.className = 'outline-link d-block';
                     link.style.cursor = 'pointer';
+                    link.style.whiteSpace = 'normal';
+                    link.style.overflowWrap = 'break-word';
+                    
                     link.addEventListener('click', function(e) {
                         e.preventDefault();
                         const targetElement = document.getElementById(this.getAttribute('href').substring(1));
@@ -570,18 +890,57 @@ document.addEventListener('DOMContentLoaded', function() {
                             targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
                         }
                     });
-
+                    
                     listItem.appendChild(link);
                     list.appendChild(listItem);
                 });
+                
                 outlineContainer.appendChild(list);
+            } else if (answerHtml) {
+                // This is the fallback for older format answers or non-standard formats
+                // ...existing code for fallback outline generation...
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = answerHtml;
+                const headers = tempDiv.querySelectorAll('h4[id^="subquery-"]');
+                
+                if (headers.length > 0) {
+                    const cardHeader = document.createElement('div');
+                    cardHeader.className = 'card-header';
+                    cardHeader.textContent = 'Outline';
+                    outlineContainer.appendChild(cardHeader);
+                    
+                    const list = document.createElement('ul');
+                    list.className = 'list-group list-group-flush flex-grow-1';
+                    list.style.overflowY = 'auto';
+                    
+                    headers.forEach(header => {
+                        const listItem = document.createElement('li');
+                        listItem.className = 'list-group-item';
+                        
+                        const link = document.createElement('a');
+                        link.href = `#${header.id}`;
+                        link.textContent = header.textContent;
+                        link.className = 'outline-link d-block text-truncate';
+                        link.style.cursor = 'pointer';
+                        link.addEventListener('click', function(e) {
+                            e.preventDefault();
+                            const targetElement = document.getElementById(this.getAttribute('href').substring(1));
+                            if (targetElement) {
+                                targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }
+                        });
+                        
+                        listItem.appendChild(link);
+                        list.appendChild(listItem);
+                    });
+                    
+                    outlineContainer.appendChild(list);
+                } else {
+                    addEmptyOutlineMessage();
+                }
             } else {
-                // Add "No outline" message when no headers are found
                 addEmptyOutlineMessage();
             }
-        } else {
-            // Add "No outline" message when no content is provided
-            addEmptyOutlineMessage();
         }
         
         // Helper function to add the empty outline message
@@ -634,135 +993,15 @@ document.addEventListener('DOMContentLoaded', function() {
         const ul = document.createElement('ul');
         ul.className = 'list-unstyled';
 
-        const refParseRegex = /^(.+?),\s*(.+?),\s*(\d{4}),\s*(.+?),\s*(https?:\/\/[^,]+)(?:,\s*(Cited by:\s*\d+))?$/;
-
-        function formatAuthors(authorsString) {
-            const authorList = authorsString.split(';').map(author => author.trim()).filter(author => author);
-            if (authorList.length === 0) return "";
-
-            const formattedAuthorList = authorList.map(authorStr => {
-                const parts = authorStr.split(' ');
-                if (parts.length > 1) {
-                    let initials = parts.pop(); // Last part is assumed initials
-                    const lastName = parts.join(' ');
-                    initials = initials.replace(/\.+$/, '') + '.';
-                    return `${lastName}, ${initials}`;
-                }
-                return authorStr; 
-            });
-
-            if (formattedAuthorList.length === 0) return "";
-            if (formattedAuthorList.length === 1) return formattedAuthorList[0];
-            
-            let result = formattedAuthorList.slice(0, -1).join(', ');
-            result += ` & ${formattedAuthorList.slice(-1)[0]}`;
-            return result;
-        }
-
-        function getInTextAuthorFormat(authorsString) { // authorsString is like "Shepherd T.G.;Sillmann J.;..." OR "FirstAuthor et al."
-            
-            const getMainNamePart = (fullAuthorName) => {
-                const nameParts = fullAuthorName.split(' ').map(p => p.trim()).filter(p => p.length > 0);
-                if (nameParts.length === 0) {
-                    return ""; // Handle empty or whitespace-only names
-                }
-                if (nameParts.length === 1) {
-                    return nameParts[0]; // Single word name, return as is
-                }
-
-                let lastNonInitialIndex = nameParts.length - 1;
-
-                // Iterate backwards from the second-to-last part up to the first part.
-                // We always keep nameParts[0] unless the name consists only of initials.
-                for (let i = nameParts.length - 1; i > 0; i--) {
-                    const part = nameParts[i];
-                    // An initial is typically short, all caps, possibly with dots.
-                    // Must contain at least one uppercase letter. Adjusted length to 7.
-                    const isInitial = part.length >= 1 && part.length <= 9 && /^[A-Z\.]+$/.test(part) && /[A-Z]/.test(part);
-
-                    if (isInitial) {
-                        lastNonInitialIndex = i - 1;
-                    } else {
-                        // Found a part that is not an initial, so this and all preceding parts form the name.
-                        break;
-                    }
-                }
-                // If all parts after the first are initials, lastNonInitialIndex will be 0.
-                // If the first part itself is also an initial (e.g. "X Y Z" where all are initials)
-                // we still return the first part based on this logic.
-                // Example: "X Y Z" -> lastNonInitialIndex = 0. Returns "X".
-                // Example: "Smith X Y Z" -> "Z" is initial, LNI=2. "Y" is initial, LNI=1. "X" is initial, LNI=0. Returns "Smith".
-                // (Correction for "Smith X Y Z": "X" is initial, LNI=0. "Smith" is not initial, loop breaks. LNI remains 0. Slice(0,1) is "Smith")
-                // The loop should check nameParts[i], if it's an initial, then the actual name ends at i-1.
-                // If nameParts[0] is "Smith", nameParts[1] is "X":
-                // i=1, part="X", isInitial=true. lastNonInitialIndex = 0. Loop ends. Slice(0,1) -> "Smith". Correct.
-
-                return nameParts.slice(0, lastNonInitialIndex + 1).join(' ');
-            };
-
-            // Normalize authorsString by removing any trailing period from "et al." if present
-            const normalizedAuthorsString = authorsString.replace(/\s+et al\.\s*$/, " et al.").trim();
-
-
-            // Check if authorsString itself is already in "et al." form
-            if (normalizedAuthorsString.includes(" et al.")) {
-                // Split by " et al." (case-insensitive for "et al", but standard is " et al.")
-                // The regex (?i) makes "et al." case-insensitive if needed, but usually it's consistent.
-                // For simplicity, assuming " et al." is the delimiter.
-                const parts = normalizedAuthorsString.split(/ et al\./i); // Split by " et al."
-                const firstAuthorFull = parts[0].trim();
-                const firstAuthorProcessed = getMainNamePart(firstAuthorFull);
-                return `${firstAuthorProcessed} et al.`;
-            }
-
-            // Original logic for semicolon-separated list
-            const authorList = normalizedAuthorsString.split(';').map(author => author.trim()).filter(Boolean);
-            if (authorList.length === 0) return "";
-
-            const firstAuthorNameProcessed = getMainNamePart(authorList[0]);
-
-            if (authorList.length === 1) return firstAuthorNameProcessed; 
-            
-            return `${firstAuthorNameProcessed} et al.`;
-        }
+        // The refParseRegex and formatting logic are now inside referenceProcessor.createReferenceListItem
+        // No need for formatAuthors or getInTextAuthorFormat calls here directly.
 
         sortedReferences.forEach((refText, index) => {
-            const li = document.createElement('li');
-            li.className = 'mb-2 small';
-            li.id = `ref-li-${index}`; // Simple unique ID for the li
-
-            const refMatch = refText.match(refParseRegex);
-            if (refMatch) {
-                const [fullMatch, authors, title, year, source, url, citedBy] = refMatch;
-                
-                const formattedAuthorsAPA = formatAuthors(authors); // For display
-                const inTextAuthorComponent = getInTextAuthorFormat(authors); // For matching
-                // Ensure searchKey matches the standardized format from formatAnswer
-                const searchKey = `${inTextAuthorComponent}, ${year}`; 
-                li.setAttribute('data-reference-search-key', searchKey);
-
-                const formattedYear = `(${year})`;
-                const formattedSource = `<em>${source}</em>`;
-                
-                let displayUrl = url;
-                let clickableUrl = url;
-                if (url.includes("doi.org/")) {
-                    const doi = url.substring(url.indexOf("doi.org/") + "doi.org/".length);
-                    displayUrl = `https://doi.org/${doi}`;
-                    clickableUrl = displayUrl;
-                }
-
-                let fullReferenceHtml = `${formattedAuthorsAPA}. ${formattedYear}. ${title}. ${formattedSource}. <a class="doi_url" href="${clickableUrl}" target="_blank">${displayUrl}</a>`;
-                
-                if (citedBy) {
-                    fullReferenceHtml += `. ${citedBy}`;
-                }
-                li.innerHTML = fullReferenceHtml;
-            } else {
-                li.textContent = refText; 
-                // Fallback: try to create a generic search key if possible, or leave it without one
-                // For simplicity, non-matching formats won't be scroll targets.
-            }
+            // Use referenceProcessor to create the list item
+            const li = referenceProcessor.createReferenceListItem(refText);
+            // The ID is now set by createReferenceListItem, typically a random one.
+            // If a sequential ID `ref-li-${index}` is strictly needed, createReferenceListItem would need modification
+            // or the ID could be overridden here. For now, assume the ID from createReferenceListItem is sufficient.
             ul.appendChild(li);
         });
 

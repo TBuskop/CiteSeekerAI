@@ -54,13 +54,46 @@ def get_timestamp():
 def process_research_question(job_id, question, subquestions_count=3):
     """Process a research question using the CiteSeekerAI pipeline"""
     try:
-        # Update job status
-        processing_jobs[job_id]["status"] = "Processing"
-        # Callback to send fine-grained progress updates to web UI
-        def update_web_progress(message):
+        # Initialize job structure for structured progress
+        processing_jobs[job_id].update({
+            "status": "Processing",
+            "progress": "Initializing deep research...",
+            "progress_message": "Initializing deep research...",
+            "initial_research_question": question,
+            "overall_goal": None,
+            "decomposed_queries": [],
+            "subquery_results_stream": [] # To store individual subquery results as they come
+        })
+        
+        # Callback to send structured progress updates to web UI
+        def update_web_progress(payload):
             if job_id in processing_jobs:
-                processing_jobs[job_id]["progress"] = message
-        update_web_progress("Initializing deep research...")
+                if isinstance(payload, dict):
+                    payload_type = payload.get("type")
+                    
+                    if payload_type == "initial_info":
+                        data = payload.get("data", {})
+                        processing_jobs[job_id]["overall_goal"] = data.get("overall_goal")
+                        processing_jobs[job_id]["decomposed_queries"] = data.get("decomposed_queries", [])
+                        processing_jobs[job_id]["initial_research_question"] = data.get("initial_research_question", question)
+                        processing_jobs[job_id]["progress"] = "Query decomposed. Starting subquery processing."
+                        processing_jobs[job_id]["progress_message"] = "Query decomposed. Starting subquery processing."
+                    
+                    elif payload_type == "subquery_result":
+                        data = payload.get("data", {})
+                        processing_jobs[job_id]["subquery_results_stream"].append(data)
+                        processing_jobs[job_id]["progress"] = f"Subquery {data.get('index', -1) + 1} completed."
+                        processing_jobs[job_id]["progress_message"] = f"Subquery {data.get('index', -1) + 1} completed."
+                    
+                    elif payload_type == "status_update":
+                        message = payload.get("message", "Processing...")
+                        processing_jobs[job_id]["progress"] = message
+                        processing_jobs[job_id]["progress_message"] = message
+                
+                elif isinstance(payload, str):
+                    # Backward compatibility for simple string messages
+                    processing_jobs[job_id]["progress"] = payload
+                    processing_jobs[job_id]["progress_message"] = payload
         
         # Run deep research with callback and pass the job_id as run_id
         run_deep_research(question, subquestions_count, progress_callback=update_web_progress, run_id=job_id)
@@ -152,7 +185,6 @@ def load_chat_history():
                 
             # Extract original question
             question = "Unknown Question"  # Default value
-            
             # Try new format: "## Original Research Question\n{question}\n..."
             marker_new = "## Original Research Question"
             idx_marker_new = content.find(marker_new)
@@ -238,7 +270,16 @@ def ask_question():
     job_id = get_timestamp()
     
     # Start processing in background
-    processing_jobs[job_id] = {"status": "Starting", "progress": "Initializing..."}
+    processing_jobs[job_id] = {
+        "status": "Starting", 
+        "progress": "Initializing...",
+        "progress_message": "Initializing...",
+        "initial_research_question": question,
+        "overall_goal": None,
+        "decomposed_queries": [],
+        "subquery_results_stream": []
+    }
+    
     threading.Thread(target=process_research_question, args=(job_id, question, subquestions_count)).start()
     
     return jsonify({
@@ -251,9 +292,22 @@ def ask_question():
 def job_status(job_id):
     """Check the status of a processing job"""
     if job_id not in processing_jobs:
-        return jsonify({"status": "not_found"})
+        return jsonify({"status": "not_found", "progress_message": "Job not found."})
     
-    return jsonify(processing_jobs[job_id])
+    # Ensure all relevant keys are present in the response
+    job_data = processing_jobs[job_id]
+    response_data = {
+        "status": job_data.get("status", "Unknown"),
+        "progress": job_data.get("progress", ""),  # Keep for backward compatibility
+        "progress_message": job_data.get("progress_message", ""),
+        "initial_research_question": job_data.get("initial_research_question"),
+        "overall_goal": job_data.get("overall_goal"),
+        "decomposed_queries": job_data.get("decomposed_queries", []),
+        "subquery_results_stream": job_data.get("subquery_results_stream", []),
+        "error": job_data.get("error")  # Include error if present
+    }
+    
+    return jsonify(response_data)
 
 @app.route('/result/<job_id>')
 def get_result(job_id):
