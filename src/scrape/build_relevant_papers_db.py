@@ -10,6 +10,8 @@ from src.rag.chroma_manager import ConfigurableEmbeddingFunction
 import os # For path checking and makedirs
 import gc # For garbage collection
 import time # Import time for sleep
+import subprocess # For subprocess calls
+import shutil # For shutil.rmtree as a fallback or for type checking
 
 def build_relevant_db(
     relevant_doi_list: List[str],
@@ -68,6 +70,38 @@ def build_relevant_db(
             del temp_reset_client # Ensure client is deleted
             gc.collect() # Trigger garbage collection to help release resources
             time.sleep(1) # Add a 1-second delay to allow OS to release file locks
+            
+            # Forcefully delete contents of the target_db_path using subprocess
+            # This is to ensure any lingering files/folders (like Chroma's UUID segment folders) are removed
+            # if client.reset() didn't fully clear them.
+            print(f"Attempting to forcefully clear contents of directory: {target_db_path}")
+            if os.path.exists(target_db_path) and os.path.isdir(target_db_path):
+                for item_name in os.listdir(target_db_path):
+                    item_path = os.path.join(target_db_path, item_name)
+                    try:
+                        if os.path.isfile(item_path) or os.path.islink(item_path):
+                            print(f"  Deleting file: {item_path}")
+                            # Use subprocess for potentially more robust deletion on Windows
+                            subprocess.run(['cmd', '/c', 'del', '/F', '/Q', item_path], check=False, capture_output=True, text=True)
+                            if os.path.exists(item_path): # Check if deletion failed
+                                print(f"    Warning: Failed to delete file {item_path} with subprocess. Trying os.remove().")
+                                os.remove(item_path)
+                        elif os.path.isdir(item_path):
+                            print(f"  Deleting directory: {item_path}")
+                            # Use subprocess for potentially more robust deletion on Windows
+                            subprocess.run(['cmd', '/c', 'rmdir', '/S', '/Q', item_path], check=False, capture_output=True, text=True)
+                            if os.path.exists(item_path): # Check if deletion failed
+                                print(f"    Warning: Failed to delete directory {item_path} with subprocess. Trying shutil.rmtree().")
+                                shutil.rmtree(item_path)
+                    except Exception as e:
+                        print(f"    Warning: Could not delete {item_path}. Error: {e}")
+                print(f"Finished attempting to clear contents of {target_db_path}.")
+            else:
+                print(f"Directory {target_db_path} does not exist or is not a directory after reset. No contents to clear.")
+            
+            # Re-ensure the main directory exists if it was somehow removed by rmdir (though it shouldn't be)
+            os.makedirs(target_db_path, exist_ok=True)
+
         except Exception as reset_err:
             print(f"Error resetting database at {target_db_path}: {reset_err}")
             traceback.print_exc()
