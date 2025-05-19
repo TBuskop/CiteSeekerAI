@@ -792,11 +792,9 @@ def sanitize_doi_for_filename(doi_str):
     """Sanitizes a DOI string to be filesystem-friendly for filenames."""
     if not doi_str:
         return ""
-    # This sanitization should match the one used when saving PDF files.
-    # A common approach: replace non-alphanumeric characters (except typical DOI chars like '.', '-') with underscores.
-    # For simplicity, let's assume '/' and ':' are the main ones to replace.
-    # More robust: filename = re.sub(r'[^a-zA-Z0-9._-]', '_', doi_str)
-    filename = doi_str.replace('/', '_').replace(':', '_')
+    # Replace characters not suitable for filenames (non-alphanumeric, '.', '-') with underscores.
+    # This matches the sanitization used in download_papers.py.
+    filename = re.sub(r'[^\w\d.-]', '_', doi_str)
     return filename
 
 if __name__ == '__main__':
