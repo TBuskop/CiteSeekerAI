@@ -383,16 +383,13 @@ def fetch_with_playwright(url: str) -> str:
             page = context.new_page()
             print("Applying stealth...")
 
-            # <<< NEW: Set extra HTTP headers for the page >>>
-            # Remove User-Agent from random_headers if it's there, as it's set at context level
-            # and Playwright might warn or error if set in both places.
-            # However, Playwright's set_extra_http_headers typically overrides or adds,
-            # and User-Agent is special. It's safer to let context handle UA.
-            # For other headers, this is the place.
-            headers_for_page = {k: v for k, v in random_headers.items() if k.lower() != 'user-agent'}
-            if headers_for_page:
-                print(f"Setting extra HTTP headers for the page: {list(headers_for_page.keys())}")
-                page.set_extra_http_headers(headers_for_page)
+            # <<< MODIFIED: Remove explicit page.set_extra_http_headers() call >>>
+            # We will rely on the User-Agent set at the context level,
+            # and Playwright's default behavior for other headers,
+            # augmented by playwright-stealth.
+            # This is to test if any of the headers in ROTATING_HEADERS_LIST,
+            # even after filtering, are causing ERR_INVALID_ARGUMENT.
+            print("Relying on context-level User-Agent and Playwright/Stealth default headers for page requests.")
 
             stealth_sync(page)
 
