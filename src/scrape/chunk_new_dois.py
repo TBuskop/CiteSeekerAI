@@ -66,6 +66,7 @@ def find_new_text_files(folder_path: str, db_path: str, collection_name: str) ->
     """
     Scans a folder for .txt files and returns a list of paths for files
     whose corresponding DOI is not found in the ChromaDB collection metadata.
+    This version optimizes by querying ChromaDB only for DOIs found in filenames.
     """
     print(f"Scanning folder '{folder_path}' for new .txt files...")
     if not os.path.isdir(folder_path):
@@ -77,53 +78,84 @@ def find_new_text_files(folder_path: str, db_path: str, collection_name: str) ->
         print("No .txt files found in the folder.")
         return []
 
-    print(f"Found {len(all_txt_files)} total .txt files. Checking against database...")
-    existing_dois: Set[str] = set()
-    try:
-        # Connect in 'index' mode to check existing data without triggering embedding calls
-        collection = get_chroma_collection(db_path, collection_name, execution_mode="index")
-        estimated_count = collection.count()
-        if estimated_count > 0:
-            print(f"Fetching existing DOIs from metadata in '{collection_name}'...")
-            # Fetch metadata in batches to avoid memory issues for large collections
-            fetch_limit = 10000
-            offset = 0
-            fetched_count = 0
-            with tqdm(total=estimated_count, desc="Fetching metadata", unit="chunks") as pbar:
-                 while True:
-                     results = collection.get(limit=fetch_limit, offset=offset, include=['metadatas'])
-                     if not results or not results.get('ids'): break
-                     metadatas = results.get('metadatas', [])
-                     batch_dois = {meta.get('doi') for meta in metadatas if meta and meta.get('doi')}
-                     existing_dois.update(batch_dois)
-                     fetched_count += len(results['ids'])
-                     pbar.update(len(results['ids']))
-                     offset += len(results['ids'])
-                     if len(results['ids']) < fetch_limit: break # Reached the end
-            print(f"Found {len(existing_dois)} unique existing DOIs in the database.")
-        else:
-            print("Collection is empty or does not exist yet.")
+    print(f"Found {len(all_txt_files)} total .txt files. Extracting DOIs from filenames...")
 
-    except Exception as e:
-        print(f"Warning: Could not check existing DOIs in ChromaDB: {e}. Assuming all files are new.")
-        # Proceed as if all files are new if DB check fails
+    # 1. Extract DOIs from all filenames first
+    # Stores file_path -> doi mapping for valid DOIs
+    filepath_to_doi_map: Dict[str, str] = {}
+    # Set of unique DOIs found in filenames
+    candidate_dois_from_filenames: Set[str] = set()
+    files_with_doi_extraction_failure = 0
 
-    new_files = []
-    skipped_count = 0
     for file_path in all_txt_files:
         filename = os.path.basename(file_path)
         doi = extract_doi_from_filename(filename)
-        if doi and doi in existing_dois:
-            skipped_count += 1
-        elif doi: # DOI extracted but not in existing set
+        if doi:
+            filepath_to_doi_map[file_path] = doi
+            candidate_dois_from_filenames.add(doi)
+        else:
+            # This count will be added to skipped_count later
+            files_with_doi_extraction_failure += 1
+            # Optional: print(f"DOI extraction failed for '{filename}' during initial scan.")
+
+    if not candidate_dois_from_filenames:
+        print("No valid DOIs extracted from any filenames.")
+        if files_with_doi_extraction_failure > 0:
+            print(f"Skipped {files_with_doi_extraction_failure} files due to DOI extraction failure.")
+        return []
+
+    print(f"Found {len(candidate_dois_from_filenames)} unique DOIs in filenames. Checking against database...")
+
+    # This set will store DOIs that are present in filenames AND also exist in the database.
+    existing_dois_in_db: Set[str] = set()
+    try:
+        collection = get_chroma_collection(db_path, collection_name, execution_mode="index")
+        
+        if collection.count() == 0:
+            print("Collection is empty. All files with valid DOIs will be treated as new.")
+        else:
+            # Query ChromaDB only for the DOIs extracted from filenames
+            candidate_doi_list = list(candidate_dois_from_filenames)
+            
+            print(f"Querying database for {len(candidate_doi_list)} DOIs from filenames...")
+            start_time = time.time()
+            # Fetch metadata only for chunks whose DOI is in our candidate list
+            results = collection.get(
+                where={"doi": {"$in": candidate_doi_list}},
+                include=['metadatas'] # We need 'doi' from metadatas to confirm existence
+            )
+            query_time = time.time() - start_time
+            print(f"Database query completed in {query_time:.2f} seconds.")
+
+            if results and results.get('metadatas'):
+                for meta in results.get('metadatas', []):
+                    # Add the DOI to our set if it's present in the metadata
+                    if meta and meta.get('doi'):
+                        existing_dois_in_db.add(meta.get('doi'))
+            
+            print(f"Found {len(existing_dois_in_db)} DOIs (from filenames) that are already in the database.")
+
+    except Exception as e:
+        print(f"Warning: Could not efficiently check existing DOIs in ChromaDB: {e}")
+        traceback.print_exc() # Print stack trace for debugging
+        print("As a fallback, assuming all files with valid DOIs (from filenames) are new if DB check failed.")
+        # existing_dois_in_db will remain empty, so all files with valid DOIs will be treated as new.
+
+    new_files = []
+    processed_and_skipped_count = 0 # Files that had a valid DOI and were checked against DB
+
+    # Use the pre-populated filepath_to_doi_map for this loop
+    for file_path, doi in filepath_to_doi_map.items():
+        if doi in existing_dois_in_db:
+            processed_and_skipped_count += 1
+        else: # DOI extracted, and not in the (filtered) existing_dois_in_db set
             new_files.append(file_path)
-        else: # DOI extraction failed
-            print(f"Skipping file '{filename}' due to DOI extraction failure.")
-            skipped_count += 1
+
+    total_skipped_count = processed_and_skipped_count + files_with_doi_extraction_failure
 
     print(f"Found {len(new_files)} new files to process.")
-    if skipped_count > 0:
-        print(f"Skipped {skipped_count} files (already processed or DOI extraction failed).")
+    if total_skipped_count > 0:
+        print(f"Skipped {total_skipped_count} files (already processed or DOI extraction failed).")
     return new_files
 
 def process_and_index_files(
