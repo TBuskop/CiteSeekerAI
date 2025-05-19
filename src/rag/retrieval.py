@@ -1,6 +1,7 @@
 import numpy as np
 import traceback
 from typing import List, Dict, Tuple, Optional, Any
+from chromadb.config import Settings # Import for type hinting
 
 # --- Local Imports ---
 from rag.chroma_manager import get_chroma_collection
@@ -23,7 +24,8 @@ reranker_model_cache: Dict[str, Any] = {}
 
 # --- Vector Retrieval ---
 def retrieve_chunks_vector(query: str, db_path: str, collection_name: str,
-                           top_k: int, execution_mode: str = "query") -> List[dict]:
+                           top_k: int, execution_mode: str = "query",
+                           settings: Optional[Settings] = None) -> List[dict]: # Add settings parameter
     """Retrieve top-K chunks from ChromaDB using vector similarity."""
     
     if top_k <= 0: top_k = 1
@@ -31,7 +33,7 @@ def retrieve_chunks_vector(query: str, db_path: str, collection_name: str,
     print(f"DEBUG (retrieve_chunks_vector): Retrieving top {top_k} from '{collection_name}' for query: '{query[:50]}...'")
     try:
         # Get collection with appropriate embedding function behavior for query mode
-        collection = get_chroma_collection(db_path, collection_name, execution_mode=execution_mode)
+        collection = get_chroma_collection(db_path, collection_name, execution_mode=execution_mode, settings=settings) # Pass settings
         print(f"DEBUG (retrieve_chunks_vector): Collection '{collection_name}' obtained.")
 
         # Embed the query using the llm_interface
@@ -149,7 +151,8 @@ def retrieve_chunks_bm25(query: str, db_path: str, collection_name: str, top_k: 
 
 # --- RRF Combination ---
 def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str, float]],
-                        db_path: str, collection_name: str, execution_mode: str = "query", k_rrf: int = 50, weight_vector_bm25=[0.7, 0.3]) -> List[Dict]:
+                        db_path: str, collection_name: str, execution_mode: str = "query", k_rrf: int = 50, weight_vector_bm25=[0.7, 0.3],
+                        db_settings: Optional[Settings] = None) -> List[Dict]: # Add db_settings parameter
     """Combines vector and BM25 results using Reciprocal Rank Fusion (RRF)."""
     # Determine effective collection name based on HYPE flag
     effective_collection_name = f"{collection_name}{HYPE_SUFFIX}" if HYPE else collection_name
@@ -214,7 +217,7 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
             # Ensure we fetch metadata from the BASE collection where BM25 IDs exist
             base_collection_name = collection_name.replace(HYPE_SUFFIX, "") if HYPE else collection_name
             print(f"DEBUG (combine_rrf fetch): Fetching metadata from BASE collection: '{base_collection_name}'") # Add log
-            collection = get_chroma_collection(db_path, base_collection_name, execution_mode=execution_mode) # Use base_collection_name
+            collection = get_chroma_collection(db_path, base_collection_name, execution_mode=execution_mode, settings=db_settings) # Pass db_settings
 
             # Fetch in batches for potentially large number of IDs
             batch_size_fetch = 200 # Adjust as needed
@@ -280,7 +283,7 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
     if effective_collection_name.endswith(HYPE_SUFFIX):
         collection_name_metadata = effective_collection_name.replace(HYPE_SUFFIX, "") # Remove suffix for metadata
         try:
-            source_col = get_chroma_collection(db_path, collection_name_metadata, execution_mode=execution_mode)
+            source_col = get_chroma_collection(db_path, collection_name_metadata, execution_mode=execution_mode, settings=db_settings) # Pass db_settings
             doi_list = [m.get('original_chunk_id') for m in final_results_list if m.get('original_chunk_id')]
             doi_list += [m.get('doi') for m in final_results_list if m.get('doi')]
             doi_list = np.unique(doi_list).tolist() # Remove duplicates

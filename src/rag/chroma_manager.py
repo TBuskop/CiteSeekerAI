@@ -4,6 +4,7 @@ from typing import List, Dict, Optional
 
 import chromadb
 from chromadb import Documents, EmbeddingFunction, Embeddings
+from chromadb.config import Settings
 # --- Add project root to sys.path ---
 # This allows absolute imports from 'src' assuming the script is in 'workflows'
 import sys
@@ -108,7 +109,7 @@ class ConfigurableEmbeddingFunction(EmbeddingFunction):
         return all_embeddings
 
 # --- ChromaDB Client and Collection Setup ---
-def get_chroma_collection(db_path: str, collection_name: str, execution_mode: str) -> chromadb.Collection:
+def get_chroma_collection(db_path: str, collection_name: str, execution_mode: str, settings: Optional[Settings] = None) -> chromadb.Collection:
     """
     Gets or creates a ChromaDB collection with the appropriate embedding function behavior.
 
@@ -116,6 +117,7 @@ def get_chroma_collection(db_path: str, collection_name: str, execution_mode: st
         db_path: Path to the persistent database directory.
         collection_name: Name of the ChromaDB collection.
         execution_mode: The current script mode ('index', 'embed', 'query', etc.).
+        settings: Optional ChromaDB settings for the client.
 
     Returns:
         A chromadb.Collection instance.
@@ -134,8 +136,8 @@ def get_chroma_collection(db_path: str, collection_name: str, execution_mode: st
         # Ensure the database directory exists
         os.makedirs(db_path, exist_ok=True)
 
-        # Create the persistent client
-        chroma_client = chromadb.PersistentClient(path=db_path)
+        # Create the persistent client with the specified settings
+        chroma_client = chromadb.PersistentClient(path=db_path, settings=settings)
 
         # print(f"DEBUG: Getting/Creating collection '{collection_name}' with EmbeddingFunction instance.")
 

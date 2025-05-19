@@ -3,6 +3,7 @@ import re
 import traceback
 import json # <-- Add json import
 from typing import List, Dict, Optional
+from chromadb.config import Settings # Import for type hinting
 
 # --- Add google.genai import for type checking ---
 try:
@@ -52,6 +53,7 @@ def retrieve_and_rerank_chunks(
     rerank_candidate_count: int = DEFAULT_RERANK_CANDIDATE_COUNT,
     execution_mode: str = "retrieval_only", # Default mode for this function
     abstracts: Optional[bool] = True, # Flag to indicate if we are looking at abstracts of paper chunks
+    db_settings: Optional[Settings] = None # Add db_settings parameter
 ) -> List[Dict]:
     # Switch to Hype or Abstract collection based on config
     effective_collection_name = f"{collection_name}{HYPE_SUFFIX}" if HYPE else collection_name
@@ -82,7 +84,7 @@ def retrieve_and_rerank_chunks(
 
     # 1. Retrieve Chunks (Hybrid)
     try:
-        vector_results = retrieve_chunks_vector(query, db_path, effective_collection_name, fetch_k, execution_mode=execution_mode)
+        vector_results = retrieve_chunks_vector(query, db_path, effective_collection_name, fetch_k, execution_mode=execution_mode, settings=db_settings) # Pass db_settings
         bm25_results = retrieve_chunks_bm25(query, db_path, collection_name, fetch_k)
     except Exception as e:
         print(f"Error during initial retrieval: {e}")
@@ -117,7 +119,7 @@ def retrieve_and_rerank_chunks(
 
     try:
         combined_chunks_rrf = combine_results_rrf(
-            deduped_vector_results, deduped_bm25_results, db_path, collection_name, execution_mode=execution_mode
+            deduped_vector_results, deduped_bm25_results, db_path, collection_name, execution_mode=execution_mode, db_settings=db_settings # Pass db_settings
             # Note: combine_results_rrf internally handles appending HYPE_SUFFIX based on config.HYPE
         )
         # Limit to fetch_k *before* reranking
@@ -416,7 +418,8 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
                         execution_mode: str = "query",
                         output_dir: Optional[str] = None,
                         query_index: Optional[int] = None, # Add query_index
-                        use_hype: bool = False) -> str:
+                        use_hype: bool = False,
+                        db_settings: Optional[Settings] = None) -> str: # Add db_settings parameter
     """Performs iterative RAG with subquery generation, separate hybrid retrieval, RRF, and optional reranking."""
 
     # Determine effective collection name
@@ -465,7 +468,8 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
         print(f"Vector Query {idx+1}/{len(vector_search_queries)}: \"{query[:100]}...\"")
         try:
             results = retrieve_chunks_vector(query, db_path, effective_collection_name, fetch_k_per_query,
-                                             execution_mode=f"{execution_mode}_vector_{idx+1}")
+                                             execution_mode=f"{execution_mode}_vector_{idx+1}",
+                                             settings=db_settings) # Pass db_settings
             for chunk in results:
                 cid = chunk.get("chunk_id")
                 if cid and cid not in processed_vector_ids:
@@ -494,7 +498,8 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
     try:
         # Pass the *base* collection name; combine_results_rrf handles the suffix internally
         combined_chunks = combine_results_rrf(all_vector_results, all_bm25_results, db_path, collection_name, 
-                                              execution_mode=execution_mode)
+                                              execution_mode=execution_mode,
+                                              db_settings=db_settings) # Pass db_settings
     except Exception as e:
         print(f"Error during RRF combination: {e}")
         traceback.print_exc()
@@ -515,6 +520,8 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
             final_chunks = [chunk for chunk in final_chunks if chunk.get('ce_prob', 0) > relevance_score_filter]
             post_filter_len = len(final_chunks)
             print(f"discarded because chunk with relevance score < {relevance_score_filter}: {pre_filter_len-post_filter_len}")
+            final_chunks = final_chunks[:top_k] # Limit to top_k after reranking
+            print(f"Final chunks after reranking and filtering for top_k: {len(final_chunks)}")
 
         except Exception as e:
             print(f"Error during reranking: {e}")
@@ -559,7 +566,8 @@ def query_index(query: str, db_path: str, collection_name: str,
                 rerank_candidate_count: int = DEFAULT_RERANK_CANDIDATE_COUNT,
                 output_dir: Optional[str] = None,
                 query_index: Optional[int] = None, # Add query_index
-                execution_mode: str = "query_direct") -> str:
+                execution_mode: str = "query_direct",
+                db_settings: Optional[Settings] = None) -> str: # Add db_settings parameter
     """Performs direct hybrid query (no subqueries), RRF, optional reranking, and answer generation."""
     # Determine effective collection name
     effective_collection_name = f"{collection_name}{HYPE_SUFFIX}" if HYPE else collection_name
@@ -597,7 +605,8 @@ def query_index(query: str, db_path: str, collection_name: str,
         top_k=top_k,
         reranker_model=reranker_model,
         rerank_candidate_count=rerank_candidate_count,
-        execution_mode=execution_mode
+        execution_mode=execution_mode,
+        db_settings=db_settings # Pass db_settings
     )
 
     if not final_chunks_list:

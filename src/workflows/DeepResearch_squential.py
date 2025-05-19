@@ -21,6 +21,7 @@ from src.rag import workflows as rag_workflows
 from src.rag.querying import query_decomposition, follow_up_query_refinement
 
 import config
+from chromadb.config import Settings # Import Settings
 
 
 # --- Central Configuration ---
@@ -44,6 +45,7 @@ CHUNK_OVERLAP = config.DEFAULT_CHUNK_OVERLAP
 # Relevant Chunks Database Configuration
 RELEVANT_CHUNKS_DB_PATH = os.path.join(BASE_DATA_DIR, "databases", "relevant_chunks_db")
 RELEVANT_CHUNKS_COLLECTION_NAME = "relevant_paper_chunks"
+RELEVANT_CHUNKS_DB_SETTINGS = Settings(allow_reset=True) # Define settings for this DB
 
 # --- Research Question & Search Configuration ---
 INITIAL_RESEARCH_QUESTION = config.QUERY
@@ -175,6 +177,7 @@ def process_subquery(query: str, query_index: int, progress_callback=None, run_s
             "mode": "query",
             "db_path": RELEVANT_CHUNKS_DB_PATH,
             "collection_name": RELEVANT_CHUNKS_COLLECTION_NAME,
+            "db_settings": RELEVANT_CHUNKS_DB_SETTINGS, # Pass the specific settings
             "query": query,
             "top_k": current_query_top_k_chunks,
             "reranker": QUERY_RERANKER,

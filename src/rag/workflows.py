@@ -25,6 +25,7 @@ from src.rag import indexing # Index mode logic
 from src.rag import embedding # Embed mode logic
 from src.rag import querying # Query modes logic
 import chromadb # Direct ChromaDB client import for checks
+from chromadb.config import Settings # Import Settings for type hinting if needed
 
 # --- Add top-level genai import for consistent type checking ---
 try:
@@ -156,6 +157,7 @@ def run_query_mode(config_params: Dict[str, Any]):
     db_path = config_params.get('db_path', './rag_db')
     collection_name = config_params.get('collection_name', config.DEFAULT_CHROMA_COLLECTION_NAME)
     use_hype = config_params.get('use_hype', config.HYPE)
+    db_settings = config_params.get("db_settings") # Extract db_settings
     # Determine effective collection name for querying
     effective_collection_name = f"{collection_name}{HYPE_SUFFIX}" if use_hype else collection_name
     if use_hype:
@@ -175,8 +177,8 @@ def run_query_mode(config_params: Dict[str, Any]):
     print(f"\n--- Verifying Collection State ---")
     print(f"Checking collection '{effective_collection_name}' at path '{db_path}'...")
     try:
-        # Create a temporary client just for checking
-        check_client = chromadb.PersistentClient(path=db_path)
+        # Create a temporary client just for checking, using the passed settings
+        check_client = chromadb.PersistentClient(path=db_path, settings=db_settings if db_settings else Settings())
         try:
             check_collection = check_client.get_collection(name=effective_collection_name)
             collection_count = check_collection.count()
@@ -253,7 +255,8 @@ def run_query_mode(config_params: Dict[str, Any]):
                     execution_mode=mode,
                     output_dir=output_dir,
                     query_index=query_index, # Pass query_index
-                    use_hype = use_hype
+                    use_hype = use_hype,
+                    db_settings=db_settings # Pass db_settings
                 )
         elif mode == "query_direct":
                 final_answer = querying.query_index(
@@ -266,7 +269,8 @@ def run_query_mode(config_params: Dict[str, Any]):
                     rerank_candidate_count=rerank_candidates,
                     output_dir=output_dir,
                     query_index=query_index, # Pass query_index
-                    execution_mode=mode
+                    execution_mode=mode,
+                    db_settings=db_settings # Pass db_settings
                 )
         else:
              print(f"Error: Unknown query mode '{mode}'")

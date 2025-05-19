@@ -14,6 +14,8 @@ from src.scrape.build_relevant_papers_db import build_relevant_db
 from src.rag import workflows as rag_workflows
 from src.my_utils import llm_interface
 import config
+from chromadb.config import Settings # Import Settings
+
 # --- Central Configuration ---
 # General
 # Assuming the script is run from the project root (e.g., python workflows/paper_collection_pipeline.py)
@@ -35,6 +37,7 @@ CHUNK_OVERLAP = 150 # Default chunk overlap from chunk_new_dois
 # --- Special Relevant Chunks DB Config ---
 RELEVANT_CHUNKS_DB_PATH = os.path.join(BASE_DATA_DIR, "databases", "relevant_chunks_db") # New DB path
 RELEVANT_CHUNKS_COLLECTION_NAME = "relevant_paper_chunks" # New collection name
+RELEVANT_CHUNKS_DB_SETTINGS = Settings(allow_reset=True) # Define settings for this DB
 
 # Search String Generation Configuration
 INITIAL_RESEARCH_QUESTION = "What are the effects of sea level rise on italy?"
@@ -120,6 +123,7 @@ if relevant_doi_list and llm_interface.gemini_client: # Only run if DOIs were fo
         "mode": "query", # Or "query_direct" if preferred
         "db_path": RELEVANT_CHUNKS_DB_PATH,
         "collection_name": RELEVANT_CHUNKS_COLLECTION_NAME,
+        "db_settings": RELEVANT_CHUNKS_DB_SETTINGS, # Pass the specific settings
         "query": INITIAL_RESEARCH_QUESTION,
         "top_k": QUERY_TOP_K,
         "reranker": QUERY_RERANKER,
