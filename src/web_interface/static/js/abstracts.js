@@ -373,7 +373,9 @@ document.addEventListener('DOMContentLoaded', function() {
                             if (scrollHeight - scrollTop - clientHeight < 100 && !document.getElementById('load-more-indicator')) {
                                 const nextPage = parseInt(abstractsList.dataset.nextPage, 10);
                                 if (nextPage) {
-                                    loadDatabaseAbstracts(searchTerm, nextPage, true);
+                                    // Fetch the CURRENT search term from the input field
+                                    const currentSearchTerm = abstractSearch.value.trim();
+                                    loadDatabaseAbstracts(currentSearchTerm, nextPage, true);
                                 }
                             }
                         });
