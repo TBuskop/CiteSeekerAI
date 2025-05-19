@@ -357,7 +357,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (chatContainer) {
                 chatContainer.innerHTML = ''; // Clear chat area
                 // Add default greeting message
-                addMessage('assistant', "Hello! I'm CiteSeekerAI, your research assistant. Ask me a research question, and I'll analyze academic literature to provide you with a comprehensive answer.\n\nFor example: \"What is the difference between water scarcity and water security?\"");
+                addMessage('assistant', "<p>Hello! I'm CiteSeekerAI, your research assistant. I analyze academic literature to provide you with comprehensive answers.</p><p><strong>Important:</strong> Please go to the <a href=\"/abstracts\">Collect Abstracts</a> tab first to gather relevant literature for your topic. Once abstracts are collected, you can ask your research questions here.</p><p>For example, after collecting abstracts on water management, you could ask: \"What is the difference between water scarcity and water security?\"</p>");
             }
             currentJobId = null; // Reset current job ID
             currentJobState = {}; // Reset job state
