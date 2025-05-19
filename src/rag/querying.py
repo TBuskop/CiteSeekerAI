@@ -509,7 +509,6 @@ def iterative_rag_query(initial_query: str, db_path: str, collection_name: str,
         print(f"\n--- Reranking Top {len(combined_chunks)} Candidates using {reranker_model} ---")
         try:
             final_chunks = rerank_chunks(initial_query, combined_chunks, reranker_model, DEFAULT_RERANK_CANDIDATE_COUNT, abstracts=False)
-            final_chunks = final_chunks[:top_k] # Limit to top_k after reranking
             # only keep final chunks with ce_prob > 0.4
             pre_filter_len = len(final_chunks)
             relevance_score_filter = 0.4
