@@ -837,39 +837,7 @@ def fetch_article_from_url(url: str, doi: str, output_directory) -> Dict[str, st
             print(f"[*] HTML extraction successful for {final_html_url}")
             return html_extraction_result # Return successful HTML extraction
         else:
-            print(f"[!] HTML extraction failed or text too short (length: {len(html_text)}) for {final_html_url}. Source: {html_extraction_result.get('source', 'N/A')}. Attempting PDF fallback using resolved URL: {final_url}")
-            if config.USE_SCIHUB:
-                print(f"[*] Attempting PDF fallback using Sci-Hub for DOI: {doi}")
-                sci_hub_url = f"https://sci-hub.se/{doi}"
-                response = httpx.get(sci_hub_url, headers=headers, follow_redirects=True)
-                html_bs = BeautifulSoup(response, "html.parser")
-                # html tag is embed with type="application/pdf"
-                pdf_embed_tag = html_bs.find("embed", type="application/pdf") # Find the PDF link in the HTML
-                # find the src attribute of the embed tag
-                if pdf_embed_tag:
-                    final_url = pdf_embed_tag.get("src")
-                    # add https: to the url
-                    if not final_url.startswith("http"):
-                        final_url = "https:" + final_url
-
-                # find the type "application/pdf" tag in the html and extract the url
-
-                pdf_fallback_result = _handle_pdf_url(final_url,output_directory, headers)
-                pdf_text = pdf_fallback_result.get("text", "")
-                is_pdf_sufficient = pdf_text and len(pdf_text) >= min_text_length_threshold and "failed" not in pdf_fallback_result.get("source", "")
-
-                if is_pdf_sufficient:
-                    print(f"[+] PDF fallback successful for {final_url}.")
-                    return pdf_fallback_result # Return successful PDF extraction
-            else:
-                print(f"[!] PDF fallback also failed or text too short for {final_url}. Source: {pdf_fallback_result.get('source', 'N/A')}. Returning original HTML result.")
-                return html_extraction_result # Return the original (failed) HTML result
-        # --- END NEW: PDF Fallback Logic ---
-
-    # 5. Handle other unsupported content types
-    else:
-        print(f"Skipping unsupported content-type '{content_type}' for URL {final_url}")
-        return {"text": "", "source": f"skipped_{content_type.replace('/', '_')}"}
+            print(f"[!] HTML extraction failed or insufficient text for {final_html_url}")
 
 ####################################
 # DOI Resolution and Processing
