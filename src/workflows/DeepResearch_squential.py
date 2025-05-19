@@ -76,7 +76,7 @@ os.makedirs(QUERY_SPECIFIC_OUTPUT_DIR, exist_ok=True)
 
 
 # --- Define Worker Function for Processing Each Subquery ---
-def process_subquery(query: str, query_index: int, progress_callback=None, run_specific_output_dir=None): # MODIFIED: Added run_specific_output_dir
+def process_subquery(query: str, query_index: int, progress_callback=None, run_specific_output_dir=None, top_k_abstracts_val=None, top_k_chunks_val=None): # MODIFIED: Added run_specific_output_dir
     """
     Processes a single subquery through the pipeline steps:
     Find relevant DOIs -> Download papers -> Chunk papers -> Build relevant chunk DB -> Query relevant chunks.
@@ -86,6 +86,8 @@ def process_subquery(query: str, query_index: int, progress_callback=None, run_s
         query_index (int): The index of the subquery (0-based).
         progress_callback (function): Callback for progress updates.
         run_specific_output_dir (str): The output directory for this specific run.
+        top_k_abstracts_val (int, optional): Override for TOP_K_ABSTRACTS.
+        top_k_chunks_val (int, optional): Override for QUERY_TOP_K (for chunks).
 
     Returns:
         tuple: (query_index, original_query, final_answer_or_status)
@@ -102,11 +104,12 @@ def process_subquery(query: str, query_index: int, progress_callback=None, run_s
     log_progress_sub("Finding relevant DOIs from abstracts...")
     relevant_abstracts_output_filename_i = os.path.join(run_specific_output_dir, f"relevant_abstracts_{query_index+1}.txt") # MODIFIED: Use passed run_specific_output_dir
 
+    current_top_k_abstracts = top_k_abstracts_val if top_k_abstracts_val is not None else TOP_K_ABSTRACTS
     relevant_doi_list = find_relevant_dois_from_abstracts(
         initial_query=query,
         db_path=ABSTRACT_DB_PATH,
         collection_name=ACTIVE_ABSTRACT_COLLECTION,
-        top_k=TOP_K_ABSTRACTS,
+        top_k=current_top_k_abstracts,
         use_rerank=USE_RERANK_ABSTRACTS,
         output_filename=relevant_abstracts_output_filename_i,
         use_hype=config.HYPE,
@@ -167,12 +170,13 @@ def process_subquery(query: str, query_index: int, progress_callback=None, run_s
         log_progress_sub("Querying the relevant chunks database...")
         query_output_filename_i = os.path.join(run_specific_output_dir, f"final_answer_{query_index+1}.txt") # MODIFIED: Use passed run_specific_output_dir
 
+        current_query_top_k_chunks = top_k_chunks_val if top_k_chunks_val is not None else QUERY_TOP_K
         query_config = {
             "mode": "query",
             "db_path": RELEVANT_CHUNKS_DB_PATH,
             "collection_name": RELEVANT_CHUNKS_COLLECTION_NAME,
             "query": query,
-            "top_k": QUERY_TOP_K,
+            "top_k": current_query_top_k_chunks,
             "reranker": QUERY_RERANKER,
             "rerank_candidates": QUERY_RERANK_CANDIDATES,
             "output_filename": query_output_filename_i,
@@ -205,7 +209,7 @@ def process_subquery(query: str, query_index: int, progress_callback=None, run_s
 
 
 # --- Main Pipeline Function ---
-def run_deep_research(question=None, query_numbers=None, progress_callback=None, run_id=None):
+def run_deep_research(question=None, query_numbers=None, progress_callback=None, run_id=None, top_k_abstracts_val=None, top_k_chunks_val=None):
     """
     Run the deep research pipeline.
     
@@ -214,6 +218,8 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None,
         query_numbers (int): Number of subqueries to generate
         progress_callback (function): Callback to report progress updates
         run_id (str): Optional ID to use for output files instead of generating a timestamp
+        top_k_abstracts_val (int, optional): Number of abstracts to search.
+        top_k_chunks_val (int, optional): Number of chunks to use for the answer.
     """
     # --- Initialize Run-Specific Variables ---
     current_run_timestamp = run_id if run_id else time.strftime('%Y%m%d_%H%M%S')
@@ -302,7 +308,14 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None,
             def subquery_step_callback(msg):
                 log_progress_main("status_update", message=f"[Subquery {i+1} Step] {msg}")
 
-            result_tuple = process_subquery(current_query, i, progress_callback=subquery_step_callback, run_specific_output_dir=run_specific_output_dir)
+            result_tuple = process_subquery(
+                current_query, 
+                i, 
+                progress_callback=subquery_step_callback, 
+                run_specific_output_dir=run_specific_output_dir,
+                top_k_abstracts_val=top_k_abstracts_val,
+                top_k_chunks_val=top_k_chunks_val
+            )
             results.append(result_tuple)
             
             # Send structured update for this subquery's result

@@ -659,378 +659,119 @@ pre {
     border-radius: 2px;
 }
 
-/* Citation Styles */
-.citation {
-    text-decoration: none;
-    cursor: pointer;
-    color: #6da2df; /* Bootstrap primary blue for links */
-    font-weight: normal; /* Make it slightly more prominent */
+/* Slider Controls Styling */
+#slider-controls-container {
+    padding-left: 0.5rem; /* Align with chat input padding */
+    padding-right: 0.5rem;
 }
 
-.citation:hover {
-    color: #0056b3; /* Darker blue on hover */
+#slider-controls-container .form-label {
+    font-size: 0.8rem; /* Smaller label */
+    margin-bottom: 0.1rem; /* Reduced margin */
+    display: flex; 
+    align-items: center; 
+    color: #555555; /* Medium Dark Gray text */
 }
 
-.citation-tooltip {
-    position: absolute;
-    background-color: #ffffff; /* White background */
-    border: 1px solid #cccccc; /* Light gray border */
-    padding: 10px 12px; /* Slightly more padding */
-    max-width: 450px; /* Increased max-width for better readability of chunks */
-    width: auto; /* Allow it to be smaller if content is small */
-    min-width: 200px; /* Minimum width */
-    z-index: 1050; /* Ensure it's above most other elements, Bootstrap modals are 1050+ */
-    display: none;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15); /* Softer, larger shadow */
-    font-size: 0.875rem; /* Slightly smaller font for tooltip content */
-    line-height: 1.5;
-    color: #333333; /* Dark gray text */
-    border-radius: 4px; /* Rounded corners */
-    
-    /* For handling multi-line and long content */
-    white-space: pre-wrap;  /* Preserve whitespace and newlines from the chunk */
-    max-height: 300px;      /* Max height before scrolling */
-    overflow-y: auto;       /* Add scrollbar if content exceeds max-height */
+#slider-controls-container .form-label i.bi-info-circle {
+    margin-left: 0.3rem;
+    color: #6c757d; /* Bootstrap secondary text color */
+    cursor: help;
+    font-size: 0.9rem; /* Slightly smaller icon */
 }
 
-/* Highlight for reference scrolled into view */
-.highlight-reference {
-    background-color: #e6f0ff !important; /* Light blue highlight, !important to override potential other styles */
-    transition: background-color 0.3s ease-out;
+#slider-controls-container .form-range {
+    flex-grow: 1;
+    padding-top: 0.5rem; /* Align thumb vertically better */
+    padding-bottom: 0.5rem;
 }
 
-/* Styles for collapsible "References Used" section */
-.references-details {
-    margin-top: 1rem;
-    margin-bottom: 1rem;
-    border: 1px solid #eeeeee;
-    border-radius: 4px;
-    background-color: #f9f9f9;
-}
-
-.references-summary {
-    cursor: pointer;
-    padding: 0.75rem 1.25rem;
-    font-weight: bold;
-    background-color: #f5f5f5;
-    border-bottom: 1px solid #eeeeee;
-    list-style: none; /* Remove default marker */
-    display: block; /* Make it block to take full width */
-}
-
-.references-summary::-webkit-details-marker {
-    display: none; /* Hide default marker in WebKit browsers */
-}
-
-.references-summary::before {
-    content: '▶ '; /* Default state: collapsed */
-    margin-right: 0.5em;
-}
-
-.references-details[open] > .references-summary::before {
-    content: '▼ '; /* Open state */
-}
-
-.references-content {
-    padding: 0.75rem 1.25rem;
-}
-
-.references-content ul {
-    padding-left: 1.25rem; /* Indent list items if they are in a ul */
-    margin-bottom: 0;
-}
-
-.references-content p {
-    margin-bottom: 0.5rem;
-}
-
-.doi_url{
-    color: #6da2df; /* Bootstrap primary blue for links */
-    text-decoration: none;
-}
-
-/* Abstract toggle and text styles */
-.abstract-text {
-    font-size: 0.75rem;
-    color: #555;
-    margin-top: 0.4rem;
-    display: none; /* Hidden by default */
-    padding: 0.5rem;
-    background-color: #fafafa;
-    border-radius: 4px;
-    border-left: 2px solid #e0e0e0;  /* Left border for better visual separation */
-}
-
-.abstract-toggle {
-    font-size: 0.7rem;
-    color: #6da2df;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    margin-top: 0.2rem;
-    user-select: none;  /* Prevent text selection */
-    transition: color 0.2s;
-    width: fit-content;  /* Only as wide as content */
-    padding: 2px 4px;  /* Small padding for better click target */
-}
-
-.abstract-toggle:hover {
-    color: #4a7ab0;
-    background-color: #f5f5f5;
-    border-radius: 4px;
-}
-
-/* Abstract List Styles */
-.abstracts-container {
-    max-height: calc(100vh - 180px);
-    overflow-y: auto;
-    scroll-behavior: smooth;
-    padding-right: 5px; /* Add padding for scrollbar */
-    padding: 0.5rem;
-}
-
-.abstract-item {
-    padding: 0.5rem;
-    margin-bottom: 0.7rem;
-    border-bottom: 1px solid #f0f0f0;
-    animation: fadeIn 0.3s ease-in-out; /* Smooth fade-in for new items */
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-/* Subtle scroll indicator */
-.abstracts-container::-webkit-scrollbar {
-    width: 6px;
-}
-
-.abstracts-container::-webkit-scrollbar-track {
-    background: #f1f1f1;
-    border-radius: 10px;
-}
-
-.abstracts-container::-webkit-scrollbar-thumb {
-    background: #ccc;
-    border-radius: 10px;
-}
-
-.abstracts-container::-webkit-scrollbar-thumb:hover {
-    background: #aaa;
-}
-
-/* Highlight search matches */
-.search-highlight {
-    background-color: #fffacd;
-    padding: 0 2px;
-    border-radius: 2px;
-}
-
-/* APA Style Formatting - Update to make collapsible elements clearer */
-.apa-citation,
-.reference-style-citation {
+#slider-controls-container .slider-value {
+    min-width: 28px; /* Ensure space for 2-3 digits */
+    text-align: center;
     font-size: 0.8rem;
-    line-height: 1.4;
-    text-align: left;
-    margin-bottom: 0.2rem;  /* Reduced to bring toggle closer */
+    color: #333333;
+    background: linear-gradient(to bottom, #fafafa, #f2f2f2);
+    padding: 0.2rem 0.5rem;
+    border-radius: 1rem; /* Pill shape */
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    transition: all 0.2s ease;
 }
 
-.reference-style-citation {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+#slider-controls-container .slider-value:hover {
+    background: linear-gradient(to bottom, #f0f0f0, #e8e8e8);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.15);
 }
 
-.reference-style-citation .authors {
-    font-weight: normal;
+/* Info icon tooltip styling */
+.info-tooltip {
+    position: relative;
+    cursor: help;
 }
 
-.reference-style-citation .year {
-    font-weight: normal;
-}
-
-.reference-style-citation .title {
-    font-style: normal;
-}
-
-.reference-style-citation .source {
-    /* Source title is already italicized in the HTML */
-}
-
-.reference-style-citation .doi-link .doi_url {
-    color: #6da2df;
-    text-decoration: none;
-    word-break: break-all;
-}
-
-.reference-style-citation .cited-by {
-    font-weight: normal;
-    color: #555;
-}
-
-/* Citation Styles */
-.citation {
-    text-decoration: none;
-    cursor: pointer;
-    color: #6da2df; /* Bootstrap primary blue for links */
-    font-weight: normal; /* Make it slightly more prominent */
-}
-
-.citation:hover {
-    color: #0056b3; /* Darker blue on hover */
-}
-
-.citation-tooltip {
+.info-tooltip .tooltip-text {
+    visibility: hidden;
     position: absolute;
-    background-color: #ffffff; /* White background */
-    border: 1px solid #cccccc; /* Light gray border */
-    padding: 10px 12px; /* Slightly more padding */
-    max-width: 450px; /* Increased max-width for better readability of chunks */
-    width: auto; /* Allow it to be smaller if content is small */
-    min-width: 200px; /* Minimum width */
-    z-index: 1050; /* Ensure it's above most other elements, Bootstrap modals are 1050+ */
-    display: none;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15); /* Softer, larger shadow */
-    font-size: 0.875rem; /* Slightly smaller font for tooltip content */
-    line-height: 1.5;
-    color: #333333; /* Dark gray text */
-    border-radius: 4px; /* Rounded corners */
-    
-    /* For handling multi-line and long content */
-    white-space: pre-wrap;  /* Preserve whitespace and newlines from the chunk */
-    max-height: 300px;      /* Max height before scrolling */
-    overflow-y: auto;       /* Add scrollbar if content exceeds max-height */
-}
-
-/* Highlight for reference scrolled into view */
-.highlight-reference {
-    background-color: #e6f0ff !important; /* Light blue highlight, !important to override potential other styles */
-    transition: background-color 0.3s ease-out;
-}
-
-/* Styles for collapsible "References Used" section */
-.references-details {
-    margin-top: 1rem;
-    margin-bottom: 1rem;
-    border: 1px solid #eeeeee;
-    border-radius: 4px;
-    background-color: #f9f9f9;
-}
-
-.references-summary {
-    cursor: pointer;
-    padding: 0.75rem 1.25rem;
-    font-weight: bold;
-    background-color: #f5f5f5;
-    border-bottom: 1px solid #eeeeee;
-    list-style: none; /* Remove default marker */
-    display: block; /* Make it block to take full width */
-}
-
-.references-summary::-webkit-details-marker {
-    display: none; /* Hide default marker in WebKit browsers */
-}
-
-.references-summary::before {
-    content: '▶ '; /* Default state: collapsed */
-    margin-right: 0.5em;
-}
-
-.references-details[open] > .references-summary::before {
-    content: '▼ '; /* Open state */
-}
-
-.references-content {
-    padding: 0.75rem 1.25rem;
-}
-
-.references-content ul {
-    padding-left: 1.25rem; /* Indent list items if they are in a ul */
-    margin-bottom: 0;
-}
-
-.references-content p {
-    margin-bottom: 0.5rem;
-}
-
-.doi_url{
-    color: #6da2df; /* Bootstrap primary blue for links */
-    text-decoration: none;
-}
-
-/* Abstract toggle and text styles */
-.abstract-text {
+    bottom: 125%;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: #5a5a5a;
+    color: #fff;
+    text-align: left;
+    padding: 8px 12px;
+    border-radius: 8px;
+    width: 250px;
     font-size: 0.75rem;
-    color: #555;
-    margin-top: 0.4rem;
-    display: none; /* Hidden by default */
-    padding: 0.5rem;
-    background-color: #fafafa;
-    border-radius: 4px;
-    border-left: 2px solid #e0e0e0;  /* Left border for better visual separation */
+    line-height: 1.4;
+    z-index: 1000;
+    opacity: 0;
+    transition: opacity 0.3s, transform 0.3s;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+    pointer-events: none;
+    transform: translateX(-50%) translateY(10px);
+    word-wrap: break-word;
 }
 
-.abstract-toggle {
-    font-size: 0.7rem;
-    color: #6da2df;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    margin-top: 0.2rem;
-    user-select: none;  /* Prevent text selection */
-    transition: color 0.2s;
-    width: fit-content;  /* Only as wide as content */
-    padding: 2px 4px;  /* Small padding for better click target */
+.info-tooltip .tooltip-text::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    margin-left: -5px;
+    border-width: 5px;
+    border-style: solid;
+    border-color: #5a5a5a transparent transparent transparent;
 }
 
-.abstract-toggle:hover {
-    color: #4a7ab0;
-    background-color: #f5f5f5;
-    border-radius: 4px;
+.info-tooltip:hover .tooltip-text {
+    visibility: visible;
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
 }
 
-/* Abstract List Styles */
-.abstracts-container {
-    max-height: calc(100vh - 180px);
-    overflow-y: auto;
-    scroll-behavior: smooth;
-    padding-right: 5px; /* Add padding for scrollbar */
-    padding: 0.5rem;
+@media (max-width: 768px) {
+    .info-tooltip .tooltip-text {
+        width: 200px;
+        font-size: 0.7rem;
+        padding: 6px 10px;
+    }
 }
 
-.abstract-item {
-    padding: 0.5rem;
-    margin-bottom: 0.7rem;
-    border-bottom: 1px solid #f0f0f0;
-    animation: fadeIn 0.3s ease-in-out; /* Smooth fade-in for new items */
+/* Slider thumb and track styling to match theme */
+.form-range::-webkit-slider-thumb {
+    background-color: #1d1b1b ; /* Changed to pure black */
+    margin-top: -4px; /* Adjust vertical position for webkit */
 }
 
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
+.form-range::-moz-range-thumb {
+    background-color: #1d1b1b ; /* Changed to pure black */
+    border: none; /* Remove default border in Firefox */
 }
 
-/* Subtle scroll indicator */
-.abstracts-container::-webkit-scrollbar {
-    width: 6px;
+.form-range::-ms-thumb {
+    background-color: #1d1b1b ; /* Changed to pure black */
 }
 
-.abstracts-container::-webkit-scrollbar-track {
-    background: #f1f1f1;
-    border-radius: 10px;
-}
-
-.abstracts-container::-webkit-scrollbar-thumb {
-    background: #ccc;
-    border-radius: 10px;
-}
-
-.abstracts-container::-webkit-scrollbar-thumb:hover {
-    background: #aaa;
-}
-
-/* Highlight search matches */
-.search-highlight {
-    background-color: #fffacd;
-    padding: 0 2px;
-    border-radius: 2px;
-}
+/* ...existing code... */

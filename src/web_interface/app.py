@@ -51,7 +51,7 @@ def get_timestamp():
     """Generate a timestamp for job ID"""
     return datetime.now().strftime('%Y%m%d_%H%M%S')
 
-def process_research_question(job_id, question, subquestions_count=3):
+def process_research_question(job_id, question, subquestions_count=3, top_k_abstracts=None, top_k_chunks=None):
     """Process a research question using the CiteSeekerAI pipeline"""
     try:
         # Initialize job structure for structured progress
@@ -96,7 +96,14 @@ def process_research_question(job_id, question, subquestions_count=3):
                     processing_jobs[job_id]["progress_message"] = payload
         
         # Run deep research with callback and pass the job_id as run_id
-        run_deep_research(question, subquestions_count, progress_callback=update_web_progress, run_id=job_id)
+        run_deep_research(
+            question=question, 
+            query_numbers=subquestions_count, 
+            progress_callback=update_web_progress, 
+            run_id=job_id,
+            top_k_abstracts_val=top_k_abstracts,
+            top_k_chunks_val=top_k_chunks
+        )
 
         # Find the expected output file directly using job_id instead of finding latest
         output_file = os.path.join(OUTPUT_DIR, f"combined_answers_{job_id}.txt")
@@ -262,6 +269,17 @@ def ask_question():
             subquestions_count = 3  # Default to 3 if out of range
     except ValueError:
         subquestions_count = 3  # Default to 3 if not a valid integer
+
+    # Get slider values
+    try:
+        top_k_abstracts = int(request.form.get('top_k_abstracts', config.TOP_K_ABSTRACTS))
+    except (ValueError, TypeError):
+        top_k_abstracts = config.TOP_K_ABSTRACTS
+    
+    try:
+        top_k_chunks = int(request.form.get('top_k_chunks', config.DEFAULT_TOP_K))
+    except (ValueError, TypeError):
+        top_k_chunks = config.DEFAULT_TOP_K
     
     if not question:
         return jsonify({"status": "error", "message": "Question cannot be empty"})
@@ -280,7 +298,7 @@ def ask_question():
         "subquery_results_stream": []
     }
     
-    threading.Thread(target=process_research_question, args=(job_id, question, subquestions_count)).start()
+    threading.Thread(target=process_research_question, args=(job_id, question, subquestions_count, top_k_abstracts, top_k_chunks)).start()
     
     return jsonify({
         "status": "success",

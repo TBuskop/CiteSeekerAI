@@ -11,6 +11,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const statusText = document.getElementById('status-text');
     const progressBar = document.getElementById('progress-bar');
     const newChatBtn = document.getElementById('new-chat-btn'); // Added
+    // Slider elements
+    const topKAbstractsSlider = document.getElementById('top-k-abstracts-slider');
+    const topKAbstractsValue = document.getElementById('top-k-abstracts-value');
+    const topKChunksSlider = document.getElementById('top-k-chunks-slider');
+    const topKChunksValue = document.getElementById('top-k-chunks-value');
     // const historyItems = document.querySelectorAll('.history-item'); // Will be handled by updateHistoryList
     const outlineContainer = document.getElementById('outline-container'); // Added for outline
     const referencesListDiv = document.getElementById('references-list'); // Added for references panel
@@ -334,6 +339,18 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initial attachment
     attachHistoryEventListeners();
 
+    // Slider value updates
+    if (topKAbstractsSlider && topKAbstractsValue) {
+        topKAbstractsSlider.addEventListener('input', function() {
+            topKAbstractsValue.textContent = this.value;
+        });
+    }
+    if (topKChunksSlider && topKChunksValue) {
+        topKChunksSlider.addEventListener('input', function() {
+            topKChunksValue.textContent = this.value;
+        });
+    }
+
     // New Chat button functionality
     if (newChatBtn) {
         newChatBtn.addEventListener('click', function() {
@@ -371,10 +388,14 @@ document.addEventListener('DOMContentLoaded', function() {
             questionInput.disabled = true;
             submitBtn.disabled = true;
             if (subquestionsCount) subquestionsCount.disabled = true;
+            if (topKAbstractsSlider) topKAbstractsSlider.disabled = true;
+            if (topKChunksSlider) topKChunksSlider.disabled = true;
             
             const formData = new FormData();
             formData.append('question', question);
             if (subquestionsCount) formData.append('subquestions_count', subquestionsCount.value);
+            if (topKAbstractsSlider) formData.append('top_k_abstracts', topKAbstractsSlider.value);
+            if (topKChunksSlider) formData.append('top_k_chunks', topKChunksSlider.value);
             
             fetch('/ask', {
                 method: 'POST',
@@ -396,7 +417,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     progressBar.style.width = '0%';
                     progressBar.classList.remove('bg-danger');
                     
-                    checkStatus(); // Initial check
+                    checkStatus; // Initial check
                     if (statusCheckInterval) clearInterval(statusCheckInterval);
                     statusCheckInterval = setInterval(checkStatus, 3000);
                 } else {
@@ -1071,6 +1092,12 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         if (subquestionsCount) {
             subquestionsCount.disabled = false;
+        }
+        if (topKAbstractsSlider) {
+            topKAbstractsSlider.disabled = false;
+        }
+        if (topKChunksSlider) {
+            topKChunksSlider.disabled = false;
         }
         // currentJobId is not reset here, as it might be needed for viewing results
         // It will be overwritten when a new question is asked.
