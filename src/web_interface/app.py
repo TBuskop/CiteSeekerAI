@@ -8,6 +8,7 @@ import glob
 from datetime import datetime
 from collections import OrderedDict
 from markupsafe import Markup
+import re # Import re for sanitization
 
 # --- Ensure project root is in sys.path ---
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -26,6 +27,7 @@ if _PROJECT_ROOT not in sys.path:
 from src.workflows.DeepResearch_squential import run_deep_research
 from src.workflows.obtain_store_abstracts import obtain_store_abstracts
 from src.rag.chroma_manager import get_chroma_collection
+from src.scrape.download_papers import download_dois # Import download_dois
 
 import config
 
@@ -45,6 +47,7 @@ def basename_filter(path):
 processing_jobs = {}  # Store active processing jobs
 chat_history = OrderedDict()  # Store chat history
 OUTPUT_DIR = os.path.join(_PROJECT_ROOT, "output")
+PAPER_DOWNLOAD_DIR = os.path.join(_PROJECT_ROOT, "data", "downloads", "full_doi_texts") # Path to downloaded PDFs
 
 
 def get_timestamp():
@@ -401,6 +404,133 @@ def abstract_job_status(job_id):
     
     return jsonify(processing_jobs[job_id])
 
+
+def process_single_paper_download(job_id: str, doi: str):
+    """Downloads a single paper using its DOI."""
+    try:
+        processing_jobs[job_id] = {
+            "status": "Processing",
+            "progress": f"Starting download for DOI: {doi}",
+            "doi": doi
+        }
+        print(f"Background job {job_id}: Starting download for DOI {doi} to {PAPER_DOWNLOAD_DIR}")
+
+        # Ensure the output directory for download_dois exists
+        os.makedirs(PAPER_DOWNLOAD_DIR, exist_ok=True)
+
+        # download_dois expects a list of DOIs and the output directory
+        download_dois([doi], PAPER_DOWNLOAD_DIR) # download_dois handles its own threading for multiple DOIs, for one it's direct.
+
+        # Verify download by checking file existence
+        sanitized_doi_filename = sanitize_doi_for_filename(doi) + ".txt"
+        file_path = os.path.join(PAPER_DOWNLOAD_DIR, sanitized_doi_filename)
+
+        if os.path.exists(file_path):
+            processing_jobs[job_id]["status"] = "Completed"
+            processing_jobs[job_id]["progress"] = f"Successfully downloaded DOI: {doi}"
+            print(f"Background job {job_id}: Successfully downloaded {file_path}")
+        else:
+            processing_jobs[job_id]["status"] = "Error"
+            processing_jobs[job_id]["error"] = f"File not found after download attempt for DOI: {doi}"
+            print(f"Background job {job_id}: Error - File not found for {doi} at {file_path}")
+
+    except Exception as e:
+        processing_jobs[job_id]["status"] = "Error"
+        processing_jobs[job_id]["error"] = f"Failed to download DOI {doi}: {str(e)}"
+        print(f"Background job {job_id}: Exception during download for DOI {doi} - {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+
+@app.route('/abstracts/download_paper', methods=['POST'])
+def download_paper_route():
+    """Initiates the download of a single paper by DOI."""
+    doi = request.form.get('doi', '').strip()
+    if not doi:
+        return jsonify({"status": "error", "message": "DOI cannot be empty"}), 400
+
+    job_id = get_timestamp() + f"_dl_{sanitize_doi_for_filename(doi)[:20]}" # Make job_id more unique for downloads
+    
+    processing_jobs[job_id] = {
+        "status": "Starting",
+        "progress": f"Initializing download for DOI: {doi}",
+        "doi": doi
+    }
+    
+    # Start download in a background thread
+    thread = threading.Thread(target=process_single_paper_download, args=(job_id, doi))
+    thread.start()
+    
+    return jsonify({
+        "status": "success",
+        "job_id": job_id,
+        "message": f"Download initiated for DOI: {doi}. Polling for status."
+    })
+
+def process_multiple_papers_download(job_id: str, dois: list):
+    """Downloads multiple papers using their DOIs."""
+    total_dois = len(dois)
+    processing_jobs[job_id] = {
+        "status": "Processing",
+        "progress": f"Downloading {total_dois} paper(s)...",
+        "total_dois": total_dois,
+        "downloaded_count": 0
+    }
+    print(f"Background job {job_id}: Starting download for {total_dois} DOIs to {PAPER_DOWNLOAD_DIR}")
+
+    try:
+        os.makedirs(PAPER_DOWNLOAD_DIR, exist_ok=True)
+        
+        # download_dois will handle the list.
+        # If download_dois had a progress callback, we could use it here.
+        # For now, we assume it processes all or fails.
+        download_dois(dois, PAPER_DOWNLOAD_DIR)
+
+        # Verification can be tricky for batch. We'll assume success if no exceptions.
+        # A more robust check would iterate through DOIs and check individual files.
+        # For simplicity, we'll mark as completed. The UI will refresh and show individual statuses.
+        processing_jobs[job_id]["status"] = "Completed"
+        processing_jobs[job_id]["progress"] = f"Finished download process for {total_dois} paper(s)."
+        processing_jobs[job_id]["downloaded_count"] = total_dois # Assume all attempted
+        print(f"Background job {job_id}: Finished download process for {total_dois} DOIs.")
+
+    except Exception as e:
+        processing_jobs[job_id]["status"] = "Error"
+        processing_jobs[job_id]["error"] = f"Failed during batch download: {str(e)}"
+        print(f"Background job {job_id}: Exception during batch download - {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+@app.route('/abstracts/download_multiple_papers', methods=['POST'])
+def download_multiple_papers_route():
+    """Initiates the download of multiple papers by a list of DOIs."""
+    data = request.get_json()
+    dois = data.get('dois', [])
+
+    if not dois or not isinstance(dois, list):
+        return jsonify({"status": "error", "message": "List of DOIs cannot be empty"}), 400
+    
+    # Sanitize/validate DOIs if necessary here
+
+    job_id = get_timestamp() + f"_dl_batch_{len(dois)}"
+    
+    processing_jobs[job_id] = {
+        "status": "Starting",
+        "progress": f"Initializing batch download for {len(dois)} paper(s)...",
+        "total_dois": len(dois),
+        "downloaded_count": 0
+    }
+    
+    thread = threading.Thread(target=process_multiple_papers_download, args=(job_id, dois))
+    thread.start()
+    
+    return jsonify({
+        "status": "success",
+        "job_id": job_id,
+        "message": f"Batch download initiated for {len(dois)} paper(s). Polling for status."
+    })
+
+
 def process_abstract_search(job_id, query, scopus_search_scope): # Added scopus_search_scope parameter
     """Process an abstract collection using the obtain_store_abstracts function"""
     try:
@@ -615,6 +745,17 @@ def list_abstracts():
                 if item_id in id_to_full_data_map:
                     full_data = id_to_full_data_map[item_id]
                     metadata = full_data['metadata']
+                    
+                    is_downloaded = False
+                    doi = metadata.get('doi', '')
+                    if doi:
+                        sanitized_doi = sanitize_doi_for_filename(doi)
+                        # Ensure the TXT extension is added for the check
+                        txt_filename = f"{sanitized_doi}.txt" 
+                        txt_path = os.path.join(PAPER_DOWNLOAD_DIR, txt_filename) # PDF_DOWNLOAD_DIR is used for .txt files as per user context
+                        if os.path.exists(txt_path):
+                            is_downloaded = True
+                            
                     paginated_abstracts_data.append({
                         'id': item_id,
                         'title': metadata.get('title', ''),
@@ -622,8 +763,9 @@ def list_abstracts():
                         'year': metadata.get('year', ''),
                         'source_title': metadata.get('source_title', ''),
                         'cited_by': metadata.get('cited_by', ''),
-                        'doi': metadata.get('doi', ''),
-                        'document': full_data['document']
+                        'doi': doi,
+                        'document': full_data['document'],
+                        'is_downloaded': is_downloaded # Add the downloaded status
                     })
         
         has_more = end_idx < len(sortable_items)
@@ -645,6 +787,17 @@ def list_abstracts():
             'status': 'error',
             'message': f"Failed to retrieve abstracts: {str(e)}"
         }), 500
+
+def sanitize_doi_for_filename(doi_str):
+    """Sanitizes a DOI string to be filesystem-friendly for filenames."""
+    if not doi_str:
+        return ""
+    # This sanitization should match the one used when saving PDF files.
+    # A common approach: replace non-alphanumeric characters (except typical DOI chars like '.', '-') with underscores.
+    # For simplicity, let's assume '/' and ':' are the main ones to replace.
+    # More robust: filename = re.sub(r'[^a-zA-Z0-9._-]', '_', doi_str)
+    filename = doi_str.replace('/', '_').replace(':', '_')
+    return filename
 
 if __name__ == '__main__':
 
