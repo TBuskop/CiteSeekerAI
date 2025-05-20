@@ -109,7 +109,7 @@ CiteSeekerAI also offers a web-based interface for a more interactive experience
 
 **How to Run the Web Interface:**
 
-Simply execute the `run_web_interface.bat` script located in the root directory of the project:
+Simply execute or double click the `run_web_interface.bat` script located in the root directory of the project:
 
 ```bash
 run_web_interface.bat
