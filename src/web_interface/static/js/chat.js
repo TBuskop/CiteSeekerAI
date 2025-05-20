@@ -201,11 +201,8 @@ document.addEventListener('DOMContentLoaded', function() {
             let processedSegmentsOutput = [];
 
             // Regex to parse individual citation segments.
-            // Captures: 1. preText (text before the chunk's specific base reference)
-            //           2. chunkBaseRef (Author, YYYY immediately preceding chunks)
-            //           3. chunksString (e.g., ", Chunk #1, Chunk #2")
-            //           4. postText (text after the chunks)
-            const segmentRegex = /^\s*(.*?)([A-Z][^,();]+(?:,\s*(?!Chunk #\d|citing)[^,();]+)*?,\s*\d{4})\s*((?:,\s*Chunk #\d+)+)(.*)\s*$/;
+            const segmentRegex = /^\s*(.*?)([A-Z][^,();]+(?:,\s*(?!\s*(?:Chunk #\d+|citing|cited by))[^,();]+)*?,\s*\d{4})(?=\s*,\s*Chunk #\d+)\s*((?:,\s*Chunk #\d+)+)(.*)\s*$/;
+
 
             for (const segment of citationSegments) {
                 const segmentTrimmed = segment.trim();
