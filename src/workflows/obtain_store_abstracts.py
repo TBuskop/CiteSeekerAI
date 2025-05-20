@@ -42,8 +42,8 @@ SAVE_GENERATED_SEARCH_STRING = True # Whether to save the generated string to a 
 
 # Scopus Search Configuration
 SCOPUS_HEADLESS_MODE = False # Example: Add config for headless mode
-MANUAL_SCOPUS_QUERY = config.SCOPUS_SEARCH_STRING # Use from config.py
-MANUAL_SCOPUS_QUERY = config.SCOPUS_SEARCH_STRING  # Use from config.py
+SCOPUS_YEAR_FROM = config.SCOPUS_START_YEAR  # Example: Add config for year filter start
+SCOPUS_YEAR_TO = config.SCOPUS_END_YEAR  # Example: Add config for year filter end
 # Credentials and Institution are expected to be in .env by search_scopus.py
 
 # ChromaDB Ingestion Configuration
@@ -124,7 +124,7 @@ def obtain_store_abstracts(search_query=None, scopus_search_scope=None, progress
         headless=SCOPUS_HEADLESS_MODE,
         year_from=SCOPUS_YEAR_FROM,
         year_to=SCOPUS_YEAR_TO,
-        scopus_search_scope=final_scopus_search_scope # Pass the scope
+        scopus_search_scope=final_scopus_search_scope, # Pass the scope
     )
     # The original logic for MANUAL_SCOPUS_QUERY and checking file existence might need adjustment
     # if the goal is to always re-run with UI parameters.
