@@ -8,6 +8,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const resultContent = document.getElementById('result-content');
     const searchQuery = document.getElementById('search-query');
     const scopusSearchScope = document.getElementById('scopus-search-scope');
+    const yearFromInput = document.getElementById('year-from');
+    const yearToInput = document.getElementById('year-to');
     
     // New elements for database abstracts panel
     const abstractsList = document.getElementById('abstracts-list');
@@ -43,6 +45,8 @@ document.addEventListener('DOMContentLoaded', function() {
         
         const query = searchQuery.value.trim();
         const selectedScope = scopusSearchScope.value;
+        const yearFrom = yearFromInput.value.trim();
+        const yearTo = yearToInput.value.trim();
         
         if (!query) {
             alert('Please enter a search query');
@@ -56,15 +60,25 @@ document.addEventListener('DOMContentLoaded', function() {
         statusText.textContent = 'Initializing search...';
         progressBar.style.width = '10%';
           // Send the request to start the abstract collection
+        
+        const requestBody = {
+            'query': query,
+            'scopus_search_scope': selectedScope
+        };
+
+        if (yearFrom) {
+            requestBody['year_from'] = yearFrom;
+        }
+        if (yearTo) {
+            requestBody['year_to'] = yearTo;
+        }
+
         fetch('/abstracts/search', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
             },
-            body: new URLSearchParams({
-                'query': query, // Ensure query is passed, not the element
-                'scopus_search_scope': selectedScope // Added
-            })
+            body: new URLSearchParams(requestBody)
         })
         .then(response => response.json())
         .then(data => {

@@ -59,7 +59,7 @@ os.makedirs(os.path.dirname(RELEVANT_CHUNKS_DB_PATH), exist_ok=True) # Added for
 
 # --- Pipeline Execution ---
 
-def obtain_store_abstracts(search_query=None, scopus_search_scope=None, progress_callback=None): # Added scopus_search_scope
+def obtain_store_abstracts(search_query=None, scopus_search_scope=None, year_from=None, year_to=None, progress_callback=None): # Added year_from, year_to
     # helper for UI progress and console
     def log_progress(msg):
         if progress_callback:
@@ -114,6 +114,10 @@ def obtain_store_abstracts(search_query=None, scopus_search_scope=None, progress
     # Determine the search scope to use: passed argument or config default
     final_scopus_search_scope = scopus_search_scope if scopus_search_scope else config.SCOPUS_SEARCH_SCOPE
 
+    # Determine years to use: passed arguments or config defaults
+    final_year_from = year_from if year_from is not None else SCOPUS_YEAR_FROM
+    final_year_to = year_to if year_to is not None else SCOPUS_YEAR_TO
+
     # Run the Scopus search using the determined query and output path
     # Always run search if initiated from UI, even if file exists, to reflect current parameters.
     # Or, add more sophisticated logic to check if parameters match existing file.
@@ -122,8 +126,8 @@ def obtain_store_abstracts(search_query=None, scopus_search_scope=None, progress
         query=SCOPUS_QUERY,
         output_csv_path=SCOPUS_OUTPUT_CSV_PATH,
         headless=SCOPUS_HEADLESS_MODE,
-        year_from=SCOPUS_YEAR_FROM,
-        year_to=SCOPUS_YEAR_TO,
+        year_from=final_year_from, # Use final_year_from
+        year_to=final_year_to,     # Use final_year_to
         scopus_search_scope=final_scopus_search_scope, # Pass the scope
     )
     # The original logic for MANUAL_SCOPUS_QUERY and checking file existence might need adjustment

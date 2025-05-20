@@ -379,6 +379,11 @@ def start_abstract_search():
     """Handle new abstract collection requests"""
     query = request.form.get('query', '').strip()
     scopus_search_scope = request.form.get('scopus_search_scope', config.SCOPUS_SEARCH_SCOPE) # Added, with fallback to config
+    year_from_str = request.form.get('year_from', '').strip()
+    year_to_str = request.form.get('year_to', '').strip()
+
+    year_from = int(year_from_str) if year_from_str else None
+    year_to = int(year_to_str) if year_to_str else None
     
     if not query:
         return jsonify({"status": "error", "message": "Search query cannot be empty"})
@@ -388,7 +393,7 @@ def start_abstract_search():
     
     # Start processing in background
     processing_jobs[job_id] = {"status": "Starting", "progress": "Initializing..."}
-    threading.Thread(target=process_abstract_search, args=(job_id, query, scopus_search_scope)).start() # Pass scope
+    threading.Thread(target=process_abstract_search, args=(job_id, query, scopus_search_scope, year_from, year_to)).start() # Pass scope and years
     
     return jsonify({
         "status": "success",
@@ -549,6 +554,58 @@ def process_abstract_search(job_id, query, scopus_search_scope): # Added scopus_
         # Run with callback to update progress
         obtain_store_abstracts(search_query=query, # Pass query from form
                                scopus_search_scope=scopus_search_scope, # Pass selected scope
+                               progress_callback=update_web_progress)
+
+        # Restore original config if it was changed (though direct passing is preferred)
+        # config.SCOPUS_SEARCH_STRING = original_scopus_search_string
+
+        # Finalize job status
+        processing_jobs[job_id]["status"] = "Completed"
+        update_web_progress("Abstract collection completed!")
+        # Add more details about the results
+        csv_dir = os.path.join(_PROJECT_ROOT, 'data', 'downloads', 'csv')
+        latest_csv = max(glob.glob(os.path.join(csv_dir, "*.csv")), key=os.path.getctime, default=None)
+        if latest_csv:
+            processing_jobs[job_id]["file_path"] = latest_csv
+            # Try to count rows in the CSV
+            try:
+                with open(latest_csv, 'r', encoding='utf-8') as f:
+                    count = sum(1 for _ in f) - 1 # -1 for header
+                processing_jobs[job_id]["count"] = count
+                update_web_progress(f"Abstract collection completed! Found {count} abstracts. File: {os.path.basename(latest_csv)}")
+            except Exception as e_count:
+                print(f"Could not count rows in {latest_csv}: {e_count}")
+                update_web_progress(f"Abstract collection completed! File: {os.path.basename(latest_csv)}")
+                pass
+        else:
+            update_web_progress("Abstract collection completed! No CSV file found to report details.")
+            
+    except Exception as e:
+        processing_jobs[job_id]["status"] = "Error"
+        processing_jobs[job_id]["error"] = str(e)
+        print(f"Error in abstract collection job {job_id}: {e}")
+        import traceback; traceback.print_exc()
+
+def process_abstract_search(job_id, query, scopus_search_scope, year_from=None, year_to=None): # Added year_from and year_to
+    """Process an abstract collection using the obtain_store_abstracts function"""
+    try:
+        # Update job status
+        processing_jobs[job_id]["status"] = "Processing"
+        # Callback for UI progress updates
+        def update_web_progress(message):
+            if job_id in processing_jobs:
+                processing_jobs[job_id]["progress"] = message
+        update_web_progress("Initializing abstract collection...")
+        # Temporarily override the SCOPUS_SEARCH_STRING in config
+        original_scopus_search_string = config.SCOPUS_SEARCH_STRING
+        # The query from the form is now the primary search string for obtain_store_abstracts
+        # config.SCOPUS_SEARCH_STRING = query # This line might be redundant if query is passed directly
+
+        # Run with callback to update progress
+        obtain_store_abstracts(search_query=query, # Pass query from form
+                               scopus_search_scope=scopus_search_scope, # Pass selected scope
+                               year_from=year_from, # Pass year_from
+                               year_to=year_to,     # Pass year_to
                                progress_callback=update_web_progress)
 
         # Restore original config if it was changed (though direct passing is preferred)
