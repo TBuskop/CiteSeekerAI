@@ -26,7 +26,8 @@ SCOPUS_SEARCH_STRING = """
     ("climate storylines" AND "drought*")
 """
 SCOPUS_SEARCH_SCOPE = "TITLE_ABS_KEY"  # Options: "ALL", "TITLE_ABS_KEY"
-
+SCOPUS_START_YEAR = None  # Start year for Scopus search
+SCOPUS_END_YEAR = None  # End year for Scopus search - # none is standard
 # --- Query Configuration ---
 # How many results to retrieve at different stages.
 # the top number of papers to retrieve based on the query. To many papers might lead to irrelevant results and to few papers might lead to missing relevant results

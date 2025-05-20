@@ -42,8 +42,8 @@ SAVE_GENERATED_SEARCH_STRING = True # Whether to save the generated string to a 
 
 # Scopus Search Configuration
 SCOPUS_HEADLESS_MODE = False # Example: Add config for headless mode
-SCOPUS_YEAR_FROM = None # Example: Add config for year filter start
-SCOPUS_YEAR_TO = None   # Example: Add config for year filter end
+MANUAL_SCOPUS_QUERY = config.SCOPUS_SEARCH_STRING # Use from config.py
+MANUAL_SCOPUS_QUERY = config.SCOPUS_SEARCH_STRING  # Use from config.py
 # Credentials and Institution are expected to be in .env by search_scopus.py
 
 # ChromaDB Ingestion Configuration
