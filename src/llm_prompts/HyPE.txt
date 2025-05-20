@@ -1,0 +1,17 @@
+[
+  {
+    "id": "unique_abstract_id_1",
+    "questions": [
+      "What is the role of global climate models (GCMs) in exploring future climate conditions?",
+      "How does variability among GCM projections complicate regional climate risk assessments?",
+      "What factors besides emission scenarios contribute to the variability in future climate projections?",
+      "How does internal variability affect projected meteorological conditions, particularly for precipitation?",
+      "What is the proposed method for selecting impact-relevant climate scenarios?",
+      "What is an 'exploratory amplification' factor and how is it used in this context?",
+      "What is the application of the method for flood risk in the Latvian Lielupe basin?",
+      "What exploratory amplification factor was observed in the Latvian Lielupe basin for mid-century flood risk?",
+      "What are the benefits of using locally relevant climate scenarios for adaptation planning?",
+      "How does the proposed method improve the exploration of future climate impacts compared to traditional approaches?"
+    ]
+  }
+]
