@@ -129,7 +129,7 @@ python src/web_interface/app.py
 
 Once opened collect abstracts first before asking a question.
 
-![image](https://github.com/user-attachments/assets/9b98de2d-55c0-42a8-a75e-c440c1d24c64)
+![image](https://github.com/user-attachments/assets/d917e679-0341-428d-ac37-9f8144c6e438)
 
 
 ## Disclaimer
