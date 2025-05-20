@@ -95,7 +95,8 @@ def ingest_csv_to_chroma(
     csv_file_path: str,
     db_path: str,
     collection_name: str,
-    force_reindex: bool = False
+    force_reindex: bool = False,
+    min_citations: Optional[int] = None # Added min_citations parameter
 ):
     """
     Reads a CSV, adds publication data to ChromaDB without embeddings,
@@ -106,12 +107,15 @@ def ingest_csv_to_chroma(
         db_path: Path to the ChromaDB persistence directory.
         collection_name: Name of the ChromaDB collection.
         force_reindex: If True, reindex documents even if they exist in DB
+        min_citations: If set, only store abstracts with at least this many citations.
     """
     print(f"--- Starting CSV Ingestion ---")
     print(f"CSV Source: {csv_file_path}")
     print(f"ChromaDB Path: {db_path}")
     print(f"Collection Name: {collection_name}")
     print(f"Force Reindex: {force_reindex}")
+    if min_citations is not None:
+        print(f"Minimum Citations Filter: {min_citations}")
 
     # == Phase 1: Indexing (Add data without embeddings) ==
     print("\n--- Phase 1: Indexing Data ---")
@@ -162,6 +166,7 @@ def ingest_csv_to_chroma(
     # --- End BM25 lists ---
     skipped_rows = 0
     processed_rows = 0
+    skipped_due_to_citations = 0 # Counter for citation skips
 
     # Track IDs we've seen to avoid duplicates
     seen_ids = set()
@@ -183,6 +188,13 @@ def ingest_csv_to_chroma(
             doi = str(row.get('DOI', '')) # Keep as string for ID generation
             year = _clean_numeric(row.get('Year'))
             cited_by = _clean_numeric(row.get('Cited by'))
+
+            # --- Filter by minimum citations ---
+            if min_citations is not None and (cited_by is None or cited_by < min_citations):
+                skipped_due_to_citations += 1
+                skipped_rows +=1 # Also count as a general skip
+                continue
+            # --- End citation filter ---
 
             # Generate unique ID using updated function with seen_ids tracking
             doc_id = _generate_id(doi, index, seen_ids)
@@ -250,6 +262,8 @@ def ingest_csv_to_chroma(
     print(f"Indexing Phase Complete.")
     print(f"  Processed {processed_rows} rows for indexing.")
     print(f"  Skipped {skipped_rows} rows (e.g., missing abstract or processing error).")
+    if min_citations is not None:
+        print(f"  Of which: skipped {skipped_due_to_citations} rows due to not meeting minimum citation count ({min_citations}).")
     print(f"  Total items potentially in collection '{collection_name}': {index_collection.count()}")
 
     # --- Build BM25 Index ---

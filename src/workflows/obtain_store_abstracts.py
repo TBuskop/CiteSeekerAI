@@ -44,10 +44,12 @@ SAVE_GENERATED_SEARCH_STRING = True # Whether to save the generated string to a 
 SCOPUS_HEADLESS_MODE = False # Example: Add config for headless mode
 SCOPUS_YEAR_FROM = config.SCOPUS_START_YEAR  # Example: Add config for year filter start
 SCOPUS_YEAR_TO = config.SCOPUS_END_YEAR  # Example: Add config for year filter end
+MIN_CITATIONS = config.MIN_CITATIONS_STORE_ABSTRACT # Example: Add config for minimum citations
 # Credentials and Institution are expected to be in .env by search_scopus.py
 
 # ChromaDB Ingestion Configuration
 FORCE_REINDEX_CHROMA = False # Set to True to re-index existing documents
+# MIN_CITATIONS_FILTER = config.MIN_CITATIONS_STORE_ABSTRACT # This will be determined dynamically
 
 # --- Ensure Directories Exist ---
 os.makedirs(FULL_TEXT_DIR, exist_ok=True)
@@ -59,7 +61,7 @@ os.makedirs(os.path.dirname(RELEVANT_CHUNKS_DB_PATH), exist_ok=True) # Added for
 
 # --- Pipeline Execution ---
 
-def obtain_store_abstracts(search_query=None, scopus_search_scope=None, year_from=None, year_to=None, progress_callback=None): # Added year_from, year_to
+def obtain_store_abstracts(search_query=None, scopus_search_scope=None, year_from=None, year_to=None, min_citations_param=None, progress_callback=None): # Added min_citations_param
     # helper for UI progress and console
     def log_progress(msg):
         if progress_callback:
@@ -144,12 +146,22 @@ def obtain_store_abstracts(search_query=None, scopus_search_scope=None, year_fro
         exit() # Exit if search failed
 
     log_progress("--- Step 2: Ingesting CSV to ChromaDB ---")
+    
+    # Determine the minimum citations filter to use
+    # Use the value from UI if provided and valid, otherwise fallback to config
+    final_min_citations_filter = min_citations_param if min_citations_param is not None else config.MIN_CITATIONS_STORE_ABSTRACT
+    if min_citations_param is not None:
+        log_progress(f"Using minimum citations from UI: {min_citations_param}")
+    else:
+        log_progress(f"Using minimum citations from config: {config.MIN_CITATIONS_STORE_ABSTRACT}")
+
     # This step now implicitly relies on search_success being True from Step 1
     ingest_csv_to_chroma(
         csv_file_path=SCOPUS_OUTPUT_CSV_PATH,
         db_path=ABSTRACT_DB_PATH, # Use abstract DB path
         collection_name=ABSTRACT_COLLECTION_NAME, # Use abstract collection name
-        force_reindex=FORCE_REINDEX_CHROMA
+        force_reindex=FORCE_REINDEX_CHROMA,
+        min_citations=final_min_citations_filter # Pass the determined minimum citations filter
     )
 
     log_progress("--- Step 2.5: Running HyPE Indexing on Abstracts ---")

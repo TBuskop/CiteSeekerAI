@@ -1,3 +1,5 @@
+print("Loading packages and modules...")
+
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_from_directory, session
 import os
 import sys
@@ -31,7 +33,6 @@ from src.scrape.download_papers import download_dois # Import download_dois
 
 import config
 
-print("Loading packages and modules...")
 
 
 app = Flask(__name__, static_folder=os.path.join(_PROJECT_ROOT, "src", "web_interface", "static"), 
@@ -381,9 +382,11 @@ def start_abstract_search():
     scopus_search_scope = request.form.get('scopus_search_scope', config.SCOPUS_SEARCH_SCOPE) # Added, with fallback to config
     year_from_str = request.form.get('year_from', '').strip()
     year_to_str = request.form.get('year_to', '').strip()
+    min_citations_str = request.form.get('min_citations', '').strip() # Get min_citations
 
     year_from = int(year_from_str) if year_from_str else None
     year_to = int(year_to_str) if year_to_str else None
+    min_citations = int(min_citations_str) if min_citations_str else None # Convert to int or None
     
     if not query:
         return jsonify({"status": "error", "message": "Search query cannot be empty"})
@@ -393,7 +396,8 @@ def start_abstract_search():
     
     # Start processing in background
     processing_jobs[job_id] = {"status": "Starting", "progress": "Initializing..."}
-    threading.Thread(target=process_abstract_search, args=(job_id, query, scopus_search_scope, year_from, year_to)).start() # Pass scope and years
+    # Pass min_citations to process_abstract_search
+    threading.Thread(target=process_abstract_search, args=(job_id, query, scopus_search_scope, year_from, year_to, min_citations)).start() 
     
     return jsonify({
         "status": "success",
@@ -586,7 +590,7 @@ def process_abstract_search(job_id, query, scopus_search_scope): # Added scopus_
         print(f"Error in abstract collection job {job_id}: {e}")
         import traceback; traceback.print_exc()
 
-def process_abstract_search(job_id, query, scopus_search_scope, year_from=None, year_to=None): # Added year_from and year_to
+def process_abstract_search(job_id, query, scopus_search_scope, year_from=None, year_to=None, min_citations=None): # Added min_citations
     """Process an abstract collection using the obtain_store_abstracts function"""
     try:
         # Update job status
@@ -606,6 +610,7 @@ def process_abstract_search(job_id, query, scopus_search_scope, year_from=None, 
                                scopus_search_scope=scopus_search_scope, # Pass selected scope
                                year_from=year_from, # Pass year_from
                                year_to=year_to,     # Pass year_to
+                               min_citations_param=min_citations, # Pass min_citations from UI
                                progress_callback=update_web_progress)
 
         # Restore original config if it was changed (though direct passing is preferred)

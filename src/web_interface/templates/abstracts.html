@@ -127,6 +127,14 @@
                                 </select>
                             </div>
                             
+                            <div class="mb-1">
+                                <label for="min-citations" class="form-label small mb-1 fw-bold">Minimum Citations</label>
+                                <input type="number" id="min-citations" class="form-control form-control-sm" placeholder="e.g., 5 (Optional)">
+                                <div class="form-text mt-1 small text-muted">
+                                    Only store abstracts with at least this many citations. Leave blank for no minimum.
+                                </div>
+                            </div>
+
                             <div class="d-grid mt-2">
                                 <button type="submit" class="btn btn-primary btn-sm py-1" id="submit-btn">Start Collection</button>
                             </div>
@@ -134,9 +142,9 @@
                     </div>
                 </div>
                 
-                <div id="status-container" class="alert alert-info compact-alert d-none py-2 px-2 mb-1">
+                <div id="status-container" class="alert alert-info compact-alert d-none py-2 px-2 mb-1 text-break">
                     <h6 id="status-header" class="mb-1 fw-bold">Processing your search request...</h6>
-                    <div id="status-text" class="small mb-1"></div>
+                    <div id="status-text" class="small mb-1 text-break"></div>
                     <div class="progress mt-1" style="height: 10px;">
                         <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
                     </div>

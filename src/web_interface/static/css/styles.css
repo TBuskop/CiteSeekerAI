@@ -255,6 +255,7 @@ pre {
 .compact-body {
     padding: 0.5rem !important;
     overflow-y: auto;
+    overflow-x: hidden; /* Add this to prevent horizontal overflow */
     max-height: calc(100vh - 160px);
 }
 

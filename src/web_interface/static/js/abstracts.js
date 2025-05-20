@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const scopusSearchScope = document.getElementById('scopus-search-scope');
     const yearFromInput = document.getElementById('year-from');
     const yearToInput = document.getElementById('year-to');
+    const minCitationsInput = document.getElementById('min-citations'); // Added
     
     // New elements for database abstracts panel
     const abstractsList = document.getElementById('abstracts-list');
@@ -47,6 +48,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const selectedScope = scopusSearchScope.value;
         const yearFrom = yearFromInput.value.trim();
         const yearTo = yearToInput.value.trim();
+        const minCitations = minCitationsInput.value.trim(); // Added
         
         if (!query) {
             alert('Please enter a search query');
@@ -71,6 +73,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         if (yearTo) {
             requestBody['year_to'] = yearTo;
+        }
+        if (minCitations) { // Added
+            requestBody['min_citations'] = minCitations;
         }
 
         fetch('/abstracts/search', {
