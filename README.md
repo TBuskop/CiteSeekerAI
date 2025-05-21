@@ -1,140 +1,115 @@
-# CiteSeekerAI: A Tool for Cited LLM Responses 
+# 🚀 CiteSeekerAI: Your AI-powered Research Sidekick
 
-## Overview
+Tired of drowning in a sea of academic papers? Let **CiteSeekerAI** be your AI research buddy, helping you quickly find clear answers backed by real citations!
 
-Imagine you want to research a topic but do not know where to begin. You could either go through a mountain of academic papers to find the needle in the haystack or you could use this tool. This tool acts like a **research assistant** to help you find answers much faster and more effectively.
+![image](https://github.com/user-attachments/assets/d917e679-0341-428d-ac37-9f8144c6e438)
 
-**What does it do?**
+## ✨ How It Works
 
-Think of it working in these steps:
+Just ask your question, sit back, and let CiteSeekerAI:
 
-1.  **Finds Relevant Papers:**
-    *   You give it your research question (or a general topic).
-    *   It intelligently searches a massive online library of academic papers (like Scopus).
-    *   It picks out the summaries (abstracts) of papers that seem most relevant to your question.
+1. **🔎 Find the Good Stuff**
 
-2.  **Gets the Full Story:**
-    *   For the most promising paper summaries it found, the tool tries to download the full academic papers.
+   * Takes your research question or topic.
+   * Searches huge academic libraries (like Scopus).
+   * Picks the best paper summaries for your needs.
 
-3.  **Breaks Down Your Big Question:**
-    *   Your main research question might be quite broad or complex.
-    *   The tool uses smart AI (similar to what powers ChatGPT) to break your big question down into several smaller, more specific sub-questions. This makes finding precise answers easier.
+2. **📥 Grab the Papers**
 
-4.  **Reads and Understands the Papers (The Smart Part!):**
-    *   The tool then "reads" through the full papers it downloaded.
-    *   It's clever enough to understand the *meaning and context* of the text, not just looking for keywords.
-    *   It then creates a special, organized mini-library containing only the most relevant pieces of information from these papers that relate to your overall research question.
+   * Automatically fetches full-text versions of promising papers.
 
-5.  **Answers Your Questions, Step-by-Step:**
-    *   For each of those smaller sub-questions, the tool dives into its specially created mini-library of relevant information.
-    *   It uses AI to find the exact snippets from the papers that answer that sub-question.
-    *   It then uses AI to write an answer to that sub-question, making sure the answer is based on the information it found in the papers.
+3. **🧩 Break it Down**
 
-6.  **Puts It All Together for a Final Answer:**
-    *   Finally, it takes all the answers to the smaller sub-questions and combines them.
-    *   This creates a comprehensive, well-supported answer to your original, big research question, all backed by the academic literature it processed.
+   * Splits your big question into smaller, bite-sized queries using smart AI.
 
-**In simple terms, you ask a tough research question, and this tool:**
+4. **📖 Read & Understand (Yep, Smart!)**
 
-*   🔎 Searches for relevant academic articles.
-*   📄 Downloads the most important ones.
-*   🧠 "Reads" and "understands" these articles to find the key information.
-*   💡 Uses AI to piece together that information and provide you with a detailed answer.
+   * Actually "reads" and comprehends full papers (not just keyword matching).
+   * Organizes a neat mini-library focused on your topic.
 
-This saves you many hours of manual searching, sifting through papers, and trying to connect all the dots yourself!
-  
+5. **🎯 Find Exact Answers**
 
-## Features
-  *   **Automated Scopus Search:** Can generate Scopus search strings from a research question.
-*   **Full-Text Download:** Automates downloading papers based on DOIs (requires network access to journals, e.g., via university VPN/eduroam).
-*   **Sequential Processing & Refinement:** Handles sub-queries one after another and allowing for  refinement of later sub-queries based on prior results.
-*   **Configurable:** Uses a central `config.py` queries, , LLM models and default parameters.
-*   **Adjusment of LLM system prompts to your needs:** System prompts are provided and can be edited to suit your needs
-*   **Web Interface:** Provides a user-friendly web interface for interacting with the research assistant, viewing chat history, and collecting abstracts.
+   * Picks out precise snippets that directly answer each sub-question.
+   * Uses AI to clearly and concisely summarize answers.
 
-## Setup
-1.  **Clone the repository:**
+6. **🌟 Deliver One Awesome Answer**
 
- ```bash
- 
- git clone https://github.com/TBuskop/CiteSeekerAI.git
- 
- ```
+   * Combines these detailed answers into one comprehensive, fully-cited response.
 
-2.  **Install dependencies:**
+Forget manual searches and long hours reading—let CiteSeekerAI connect the dots!
+
+## 🔥 Key Features
+
+* **Auto Scopus Search:** Turn questions directly into Scopus queries.
+* **Paper Fetching:** Automatically grab full-text papers (needs university access).
+* **AI-driven Q\&A:** Decompose complex questions into manageable tasks.
+* **Fully Customizable:** Easily adjust prompts, parameters, and searches via `config.py`.
+* **Web & CLI Interfaces:** Easy-to-use web app and straightforward command-line tool.
+
+## 🛠️ Quick Setup
+
+Clone, install, configure—done!
 
 ```bash
-cd your_path/CiteSeekerAI
+git clone https://github.com/TBuskop/CiteSeekerAI.git
+cd CiteSeekerAI
 conda env create -f environment.yml
 conda activate citeseeker
 playwright install
-
- ```
- 
-3.  **Environment Variables:**
-    Create a `.env` file (or rename `.env.example` to .env) in the project root directory and add the [api key](https://ai.google.dev/gemini-api/docs/api-key). Be sure to setup the billing information.
-
-```env
-
- GEMINI_API_KEY="YOUR_GEMINI_API_KEY_HERE"
-
- ```
-  
-## Configuration
-Adjust the search query for scopus, your question and how many iterations for the question it should go through. The script will recognise if abstracts need te be collected based on previous queries and will only download papers relevant to the question and that are not in the databse already.    
-
-## Running the Workflow
-
-There are two main ways to interact with CiteSeekerAI:
-
-### 1. Command-Line Interface (CLI)
-
-The main workflow orchestrates the entire process from abstract collection using Scopus, downloading relevant papers, query decomposition, all the way to final answer generation. It is executed via:
-
-```bash
-
-python src/main.py
-
 ```
 
-### 2. Web Interface
+### 🔑 Set Your Google Gemini [API Key](https://ai.google.dev/gemini-api/docs/api-key) (be sure to add billing information):
 
-CiteSeekerAI also offers a web-based interface for a more interactive experience.
+Create a `.env` file with your API key:
 
-**Features of the Web Interface:**
-*   **Chat-based Interaction:** Ask research questions directly in a chat window.
-*   **View Previous Questions:** Access and review the history of your past research queries and their answers.
-*   **Citation Context:** Hover over citations to see the original text to get a better understanding of the statement. 
-*   **Abstract Collection:** Collecting abstracts based on your search terms.
+```env
+GEMINI_API_KEY="YOUR_GEMINI_API_KEY_HERE"
+```
 
-**How to Run the Web Interface:**
+## 🚦 Running CiteSeekerAI
 
-Simply execute or double click the `run_web_interface.bat` script located in the root directory of the project:
+### 💻 Command Line (CLI)
+
+Simply run:
+
+```bash
+python src/main.py
+```
+
+### 🌐 Web Interface (Interactive & Fun!)
+
+Run the easy-start script:
 
 ```bash
 run_web_interface.bat
 ```
-This script will:
-1. Activate the necessary conda environment.
-2. Start the Flask server.
-3. Automatically open the web interface in your default browser (usually at `http://127.0.0.1:5000`).
 
-Or run
+Or manually:
 
 ```bash
-
 python src/web_interface/app.py
-
 ```
 
-Once opened collect abstracts first before asking a question.
+Then visit [http://127.0.0.1:5000](http://127.0.0.1:5000) and start exploring!
 
-![image](https://github.com/user-attachments/assets/d917e679-0341-428d-ac37-9f8144c6e438)
+### Web Highlights
+
+* Chat-style interaction
+* Citation previews on hover
+* Customizable research parameters
+* Simple abstract management
+* Easy batch paper downloads
+
+## ☕ Coffee Break Alert!
+
+* Some queries take a moment—perfect for a coffee run!
+* Remember, advanced queries may incur small costs (usually just a few cents).
+
+🎉 Happy researching!
 
 
-## Disclaimer
+## ⚠️ Disclaimer
+
 This project includes features for downloading and processing academic papers. Users are solely responsible for ensuring that their use of these features complies with all applicable laws, including copyright regulations, and the terms of service of any websites or APIs accessed. The authors of this project are not liable for any misuse or legal issues arising from the use of this software. Always respect publisher copyrights and terms of use.
 
-## To Note
-- Sometimes the process takes a while. Run the script, get a coffee and come back to your result.
-- Each query does cost a little bit of money. A query can be very cheap (less than a cent) or be very complex involving advanced reasoning models and many subqueries and a large amount of chunks being sent to the LLM to generate and answer.
+---
