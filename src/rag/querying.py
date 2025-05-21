@@ -15,7 +15,7 @@ except ImportError:
 
 import sys
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
@@ -648,7 +648,7 @@ def follow_up_query_refinement(intended_next_query: str, overall_goal: str, prev
     """
     print(f"\n--- Refining Follow-Up Query using {model} ---")
     # open the system prompt file
-    system_prompt_path = os.path.join(_PROJECT_ROOT, 'llm_prompts', 'follow_up_query_refinement.txt')
+    system_prompt_path = os.path.join(_PROJECT_ROOT, 'src', 'llm_prompts', 'follow_up_query_refinement.txt')
     with open(system_prompt_path, 'r', encoding='utf-8') as f:
         system_prompt = f.read().strip() 
 
