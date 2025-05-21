@@ -29,6 +29,7 @@ SCOPUS_SEARCH_SCOPE = "TITLE_ABS_KEY"  # Options: "ALL", "TITLE_ABS_KEY"
 SCOPUS_START_YEAR = None  # Start year for Scopus search
 SCOPUS_END_YEAR = None  # End year for Scopus search - # None is standard
 MIN_CITATIONS_STORE_ABSTRACT = 0  # Minimum citations for storing results
+
 # --- Query Configuration ---
 # How many results to retrieve at different stages.
 # the top number of papers to retrieve based on the query. To many papers might lead to irrelevant results and to few papers might lead to missing relevant results
@@ -36,6 +37,7 @@ TOP_K_ABSTRACTS = 20  # Number of papers to retrieve based on abstract similarit
 
 # From all relevant papers how many chunks of text to send to the LLM. The more default top_k the more expensive the query as more chunks are sent to the LLM 
 DEFAULT_TOP_K = 30    # Number of chunks to retrieve from the selected papers for context
+MIN_CITATIONS_RELEVANT_PAPERS = 5  # Minimum citations for relevance
 
 # --- Core Model Configuration ---
 # These are the primary models you'll interact with.

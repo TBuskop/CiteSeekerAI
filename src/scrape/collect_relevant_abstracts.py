@@ -23,6 +23,7 @@ from config import (
     SUBQUERY_MODEL,
     SUBQUERY_MODEL_SIMPLE,
     HYPE_SUFFIX,
+    MIN_CITATIONS_RELEVANT_PAPERS, # Added import
 )
 from rag.chroma_manager import get_chroma_collection
 from my_utils.llm_interface import initialize_clients, GOOGLE_GENAI_AVAILABLE, generate_subqueries
@@ -79,6 +80,27 @@ def extract_metadata(chunks: List[Dict]) -> List[Tuple[str, str, str, str, float
 
     return sorted(info_list, key=sort_key)
 
+
+# --- Helper function for citation filtering ---
+def _filter_chunks_by_citations(chunks: List[Dict], min_citations: int) -> List[Dict]:
+    """Filters a list of chunk dictionaries by minimum 'cited_by' count."""
+    if not min_citations > 0:
+        return chunks
+    
+    filtered_list = []
+    for chunk_dict in chunks:
+        citations = 0
+        try:
+            # Ensure 'cited_by' is treated as a number, default to 0 if missing or not convertible
+            cited_by_value = chunk_dict.get('cited_by')
+            if cited_by_value is not None:
+                citations = int(cited_by_value)
+        except (ValueError, TypeError):
+            citations = 0 # Default to 0 if conversion fails or type is wrong
+        
+        if citations >= min_citations:
+            filtered_list.append(chunk_dict)
+    return filtered_list
 
 # --- Refactored Functions ---
 
@@ -430,23 +452,136 @@ def find_relevant_dois_from_abstracts(
     fetch_k_per_query = config["rerank_candidates"] if reranker_model_to_use else config["top_k"]
     fetch_k_per_query = max(fetch_k_per_query * 2, config["top_k"] * 2)
 
-    vector_results, bm25_results = retrieve_initial_chunks(
+    vector_results_raw, bm25_results_tuples_raw = retrieve_initial_chunks(
         vector_search_queries,
         bm25_queries,
         config["db_path"],
         config["collection_name"],
         fetch_k=fetch_k_per_query,
         execution_mode=config["execution_mode"],
-        use_hype=use_hype
+        use_hype=use_hype # This flag is used by retrieve_chunks_vector to know if it's querying a HYPE collection
     )
 
-    if not vector_results and not bm25_results:
-        print("\nNo relevant documents found after initial retrieval.")
-        return []
+    # Enrich vector_results_raw with 'cited_by' from base collection if use_hype is True
+    if MIN_CITATIONS_RELEVANT_PAPERS > 0 and use_hype and vector_results_raw:
+        print(f"\n--- Enriching {len(vector_results_raw)} HYPE vector results with 'cited_by' from base collection '{config['collection_name']}' ---")
+        
+        original_ids_to_fetch_meta = []
+        # Identify HYPE chunks that likely need 'cited_by' enrichment
+        # (i.e., 'cited_by' is default 0 from retrieve_chunks_vector, and original_chunk_id exists)
+        for i, chunk_meta in enumerate(vector_results_raw):
+            if chunk_meta.get('cited_by', 0) == 0 and chunk_meta.get('original_chunk_id'):
+                original_ids_to_fetch_meta.append(chunk_meta['original_chunk_id'])
+        
+        if original_ids_to_fetch_meta:
+            unique_original_ids = sorted(list(set(original_ids_to_fetch_meta)))
+            print(f"Found {len(unique_original_ids)} unique original_chunk_ids to query for 'cited_by'.")
+            try:
+                # Fetch from the base abstract collection (config["collection_name"])
+                base_abstract_collection = get_chroma_collection(
+                    db_path=config["db_path"],
+                    collection_name=config["collection_name"].replace("_hype", ""), # This is the base collection name
+                    execution_mode="enrich_hype_results_cited_by"
+                )
+                
+                original_metadatas_response = base_abstract_collection.get(
+                    ids=unique_original_ids,
+                    include=["metadatas"] # We only need metadatas
+                )
+                
+                original_meta_map = {} # Map original_id to its 'cited_by' count
+                if original_metadatas_response and original_metadatas_response.get('ids') and original_metadatas_response.get('metadatas'):
+                    for i, orig_id in enumerate(original_metadatas_response['ids']):
+                        meta_content = original_metadatas_response['metadatas'][i]
+                        if meta_content and meta_content.get('cited_by') is not None:
+                            original_meta_map[orig_id] = meta_content['cited_by']
+                
+                # Update vector_results_raw with fetched 'cited_by'
+                enriched_count = 0
+                for chunk_meta in vector_results_raw:
+                    original_id = chunk_meta.get('original_chunk_id')
+                    if original_id and original_id in original_meta_map:
+                        # Only update if 'cited_by' was 0 and we found a non-zero value, or if it was missing
+                        if chunk_meta.get('cited_by', 0) == 0 or 'cited_by' not in chunk_meta :
+                            chunk_meta['cited_by'] = original_meta_map[original_id]
+                            enriched_count +=1
+                print(f"Enriched {enriched_count} HYPE vector results with 'cited_by' information.")
 
+            except Exception as e:
+                print(f"Warning: Error during 'cited_by' enrichment for HYPE vector results: {e}")
+                traceback.print_exc()
+
+    # Filter vector_results by citations
+    vector_results_filtered = vector_results_raw
+    if MIN_CITATIONS_RELEVANT_PAPERS > 0:
+        print(f"\n--- Filtering {len(vector_results_raw)} vector results by minimum citations ({MIN_CITATIONS_RELEVANT_PAPERS}) ---")
+        vector_results_filtered = _filter_chunks_by_citations(vector_results_raw, MIN_CITATIONS_RELEVANT_PAPERS)
+        print(f"Filtered vector results from {len(vector_results_raw)} to {len(vector_results_filtered)}.")
+
+    # Filter bm25_results by citations
+    bm25_results_tuples_filtered = bm25_results_tuples_raw
+    if MIN_CITATIONS_RELEVANT_PAPERS > 0 and bm25_results_tuples_raw:
+        print(f"\n--- Filtering {len(bm25_results_tuples_raw)} BM25 results by minimum citations ({MIN_CITATIONS_RELEVANT_PAPERS}) ---")
+        
+        bm25_chunk_ids = [item[0] for item in bm25_results_tuples_raw]
+        bm25_scores_map = {item[0]: item[1] for item in bm25_results_tuples_raw}
+
+        # Determine collection name for BM25 metadata fetching (handle HYPE suffix)
+        # This should be the collection that BM25 actually queried.
+        collection_name_for_bm25_meta = config["collection_name"]
+        if collection_name_for_bm25_meta.endswith(HYPE_SUFFIX): # If original collection was HYPE
+            # BM25 searches the non-HYPE version
+            collection_name_for_bm25_meta = collection_name_for_bm25_meta.replace(HYPE_SUFFIX, '')
+        
+        try:
+            if bm25_chunk_ids: # Proceed only if there are IDs to fetch
+                bm25_collection = get_chroma_collection(
+                    db_path=config["db_path"],
+                    collection_name=collection_name_for_bm25_meta,
+                    execution_mode="query_filter_bm25_meta" 
+                )
+                metadatas_response = bm25_collection.get(ids=bm25_chunk_ids, include=["metadatas"])
+                
+                bm25_chunks_with_meta_temp = []
+                # Ensure metadatas_response['ids'] and metadatas_response['metadatas'] are not None
+                if metadatas_response and metadatas_response.get('ids') and metadatas_response.get('metadatas'):
+                    for i, chunk_id in enumerate(metadatas_response['ids']):
+                        # Check if index i is valid for metadatas list
+                        if i < len(metadatas_response['metadatas']):
+                            meta = metadatas_response['metadatas'][i]
+                            if meta is None: meta = {} # Ensure meta is a dict
+                            meta['chunk_id'] = chunk_id 
+                            meta['bm25_score'] = bm25_scores_map.get(chunk_id) # Use .get for safety
+                            bm25_chunks_with_meta_temp.append(meta)
+                        else:
+                            print(f"Warning: Metadata missing for BM25 chunk ID {chunk_id} at index {i}. Skipping.")
+                
+                filtered_bm25_chunks_with_meta = _filter_chunks_by_citations(bm25_chunks_with_meta_temp, MIN_CITATIONS_RELEVANT_PAPERS)
+                
+                # Convert back to List[Tuple[str, float]], ensuring score is present
+                bm25_results_tuples_filtered = [
+                    (chunk['chunk_id'], chunk['bm25_score']) 
+                    for chunk in filtered_bm25_chunks_with_meta 
+                    if chunk.get('bm25_score') is not None
+                ]
+            else: # No BM25 chunk IDs to process
+                 bm25_results_tuples_filtered = [] # Should be empty if bm25_results_tuples_raw was empty
+
+            print(f"Filtered BM25 results from {len(bm25_results_tuples_raw)} to {len(bm25_results_tuples_filtered)}.")
+
+        except Exception as e:
+            print(f"Warning: Failed to filter BM25 results by citation: {e}. Using (potentially unfiltered) BM25 results.")
+            traceback.print_exc()
+            # Fallback to raw if error, or ensure it's empty if it started empty
+            bm25_results_tuples_filtered = bm25_results_tuples_raw if not bm25_results_tuples_raw else bm25_results_tuples_filtered
+
+    if not vector_results_filtered and not bm25_results_tuples_filtered:
+        print("\nNo relevant documents found after initial retrieval and citation filtering.")
+        return []
+    
     ranked_chunks = combine_and_rerank_results(
-        vector_results,
-        bm25_results,
+        vector_results_filtered, # Pass filtered vector results
+        bm25_results_tuples_filtered, # Pass filtered BM25 results
         config["initial_query"],
         config["db_path"],
         config["collection_name"],

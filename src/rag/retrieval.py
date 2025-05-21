@@ -85,6 +85,7 @@ def retrieve_chunks_vector(query: str, db_path: str, collection_name: str,
                      meta['retrieved_by'] = meta.get('retrieved_by', []) + ['vector'] # Track retrieval method
                      meta['chunk_id'] = chunk_id # Ensure chunk_id is in metadata
                      meta['text'] = doc_text # Add the document text under the 'text' key
+                     meta['cited_by'] = meta.get('cited_by', 0) # Ensure 'cited_by' key is present, default to 0
                      retrieved_chunks.append(meta)
                  else:
                       # This case should be less likely now, primarily if ids[i] itself is None/empty
@@ -151,7 +152,7 @@ def retrieve_chunks_bm25(query: str, db_path: str, collection_name: str, top_k: 
 
 # --- RRF Combination ---
 def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str, float]],
-                        db_path: str, collection_name: str, execution_mode: str = "query", k_rrf: int = 50, weight_vector_bm25=[0.7, 0.3],
+                        db_path: str, collection_name: str, execution_mode: str = "query", k_rrf: int = 50, weight_vector_bm25=[0.65, 0.35],
                         db_settings: Optional[Settings] = None) -> List[Dict]: # Add db_settings parameter
     """Combines vector and BM25 results using Reciprocal Rank Fusion (RRF)."""
     # Determine effective collection name based on HYPE flag
@@ -256,6 +257,7 @@ def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str
                                       meta['retrieved_by'] = ['bm25'] # Mark as retrieved by BM25
                                       meta['chunk_id'] = fetched_id # Ensure chunk_id is present
                                       meta['text'] = doc_text # Add the document text under the 'text' key
+                                      meta['cited_by'] = meta.get('cited_by', 0) # Ensure 'cited_by' key is present, default to 0
                                       chunk_metadata_cache[fetched_id] = meta
                                   # else: print(f"DEBUG (combine_rrf fetch): Condition not met for fetched ID {fetched_id} (in combined_scores: {fetched_id in combined_scores}, meta ok: {meta is not None}, not in cache: {fetched_id not in chunk_metadata_cache})", flush=True) # Detailed condition log
                  except Exception as batch_fetch_err:
