@@ -41,7 +41,7 @@ MIN_CITATIONS_RELEVANT_PAPERS = 0  # Minimum citations for relevance
 
 # --- Core Model Configuration ---
 # These are the primary models you'll interact with.
-CHAT_MODEL = "gemini-2.5-flash-preview-04-17" #"gemini-2.0-flash-lite", "gemini-2.5-pro-exp-03-25"  # Main model for chat and generation
+CHAT_MODEL = "gemini-2.5-flash-preview-05-20" #"gemini-2.0-flash-lite", "gemini-2.5-pro-exp-03-25"  # Main model for chat and generation
 SUBQUERY_MODEL = "gemini-2.5-pro-preview-05-06" # Model for generating sub-queries (more powerful is better and relevant questions)
 
 # ------------------------------------
