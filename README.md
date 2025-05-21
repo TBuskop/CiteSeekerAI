@@ -68,6 +68,10 @@ GEMINI_API_KEY="YOUR_GEMINI_API_KEY_HERE"
 
 ## 🚦 Running CiteSeekerAI
 
+### 🛜 Connect via Academic Network
+
+Make sure you're on a network (campus Wi-Fi or VPN) that unlocks full access to academic papers.
+
 ### 💻 Command Line (CLI)
 
 Simply run:
