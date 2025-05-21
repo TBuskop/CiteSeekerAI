@@ -267,12 +267,49 @@ def ingest_csv_to_chroma(
     print(f"  Total items potentially in collection '{collection_name}': {index_collection.count()}")
 
     # --- Build BM25 Index ---
-    if all_processed_ids:
-        print("\n--- Building BM25 Index ---")
+    # Fetch all documents from the collection for BM25 indexing
+    print("\n--- Preparing for BM25 Index ---")
+    all_collection_ids: List[str] = []
+    all_collection_documents: List[str] = []
+
+    try:
+        # Get all items from the collection
+        # Ensure we fetch enough items if the collection is large.
+        # ChromaDB's get() without limit/offset might have default limits,
+        # so explicitly handle fetching all if necessary.
+        # For now, assuming .get() without IDs fetches all, or a reasonable amount.
+        collection_count = index_collection.count()
+        if collection_count > 0:
+            print(f"Fetching all {collection_count} documents from '{collection_name}' for BM25 index...")
+            # Fetch all entries. ChromaDB's get() can take include=["documents", "metadatas"]
+            # We only need documents for BM25.
+            # If collection_count is very large, this might need batching.
+            # For simplicity, fetching all at once.
+            # Note: .get() without IDs fetches all items.
+            results = index_collection.get(include=["documents"])
+            all_collection_ids = results.get('ids', [])
+            all_collection_documents = results.get('documents', [])
+
+            if not all_collection_ids or not all_collection_documents:
+                print("Warning: Fetched no IDs or documents from the collection, though count > 0.")
+            elif len(all_collection_ids) != collection_count:
+                print(f"Warning: Fetched {len(all_collection_ids)} items, but collection count is {collection_count}.")
+
+        else:
+            print("Collection is empty. Skipping BM25 index build.")
+
+    except Exception as e:
+        print(f"Error fetching documents from ChromaDB for BM25 index: {e}")
+        traceback.print_exc()
+        # Decide if we should proceed without BM25 or stop. For now, we'll skip BM25.
+        all_collection_ids = [] # Ensure it's empty so BM25 build is skipped
+
+    if all_collection_ids and all_collection_documents:
+        print(f"\n--- Building BM25 Index with {len(all_collection_ids)} total documents from the collection ---")
         try:
             build_and_save_bm25_index(
-                chunk_ids=all_processed_ids,
-                chunk_texts=all_processed_documents,
+                chunk_ids=all_collection_ids,
+                chunk_texts=all_collection_documents,
                 db_path=db_path,
                 collection_name=collection_name
             )
@@ -280,7 +317,7 @@ def ingest_csv_to_chroma(
             print(f"!!! Error building/saving BM25 index: {bm25_err}")
             traceback.print_exc()
     else:
-        print("\nSkipping BM25 index build: No documents were successfully processed.")
+        print("\nSkipping BM25 index build: No documents available from the collection or error during fetch.")
     # --- End Build BM25 Index ---
 
 
