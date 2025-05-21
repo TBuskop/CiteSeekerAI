@@ -11,6 +11,10 @@ from datetime import datetime
 from collections import OrderedDict
 from markupsafe import Markup
 import re # Import re for sanitization
+import subprocess
+import requests
+import zipfile
+from io import BytesIO
 
 # --- Ensure project root is in sys.path ---
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -501,7 +505,8 @@ def process_abstract_search_with_force(job_id, query, scopus_search_scope, year_
         processing_jobs[job_id]["status"] = "Error"
         processing_jobs[job_id]["error"] = str(e)
         print(f"Error in abstract collection job {job_id}: {e}")
-        import traceback; traceback.print_exc()
+        import traceback
+        traceback.print_exc()
 
 
 def process_single_paper_download(job_id: str, doi: str):
@@ -666,7 +671,7 @@ def process_abstract_search(job_id, query, scopus_search_scope): # Added scopus_
                 with open(latest_csv, 'r', encoding='utf-8') as f:
                     count = sum(1 for _ in f) - 1 # -1 for header
                 processing_jobs[job_id]["count"] = count
-                update_web_progress(f"Abstract collection completed! Found {count} abstracts. File: {os.path.basename(latest_csv)}")
+                update_web_progress(f"Abstract collection completed! Found {result['count']} abstracts. File: {os.path.basename(latest_csv)}")
             except Exception as e_count:
                 print(f"Could not count rows in {latest_csv}: {e_count}")
                 update_web_progress(f"Abstract collection completed! File: {os.path.basename(latest_csv)}")
@@ -1009,6 +1014,69 @@ def sanitize_doi_for_filename(doi_str):
     # This matches the sanitization used in download_papers.py.
     filename = re.sub(r'[^\w\d.-]', '_', doi_str)
     return filename
+
+# Add update check state and functions
+update_info = {"available": False, "local": None, "remote": None, "error": None}
+
+def check_for_updates():
+     try:
+         subprocess.run(["git", "fetch", "origin", "main"], cwd=_PROJECT_ROOT, check=True)
+         local = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=_PROJECT_ROOT).decode().strip()
+         remote = subprocess.check_output(["git", "rev-parse", "origin/main"], cwd=_PROJECT_ROOT).decode().strip()
+         update_info["local"] = local
+         update_info["remote"] = remote
+         update_info["error"] = None
+         if local != remote:
+             update_info["available"] = True
+     except FileNotFoundError as e:
+        # Git command not found
+        update_info["error"] = "Git not installed"
+        update_info["available"] = False
+     except Exception as e:
+        # Other errors during update check
+        update_info["error"] = str(e)
+        update_info["available"] = False
+
+# Start update check in background
+threading.Thread(target=check_for_updates, daemon=True).start()
+
+# Endpoints for update status and perform update
+@app.route('/update_status')
+def update_status():
+    return jsonify({
+        "available": update_info.get("available", False),
+        "error": update_info.get("error")
+    })
+
+@app.route('/update', methods=["POST"])
+def perform_update():
+    # Fallback ZIP update if Git not installed
+    if update_info.get("error") == "Git not installed" and config.UPDATE_ZIP_URL:
+        try:
+            resp = requests.get(config.UPDATE_ZIP_URL, timeout=60)
+            resp.raise_for_status()
+            with zipfile.ZipFile(BytesIO(resp.content)) as zf:
+                zf.extractall(_PROJECT_ROOT)
+            # Reset update_info and reload
+            update_info["available"] = False
+            update_info["error"] = None
+            return jsonify({"success": True, "message": "Updated via ZIP download"})
+        except Exception as e_zip:
+            return jsonify({"success": False, "message": f"Fallback update failed: {e_zip}"})
+    # If Git unavailable without ZIP fallback, report error
+    if update_info.get("error"):
+        return jsonify({"success": False, "message": update_info.get("error")})
+    # Git-based update
+    if update_info.get("available"):
+        result = subprocess.run(["git", "pull", "origin", "main"], cwd=_PROJECT_ROOT, capture_output=True, text=True)
+        success = (result.returncode == 0)
+        if success:
+            update_info["available"] = False
+        return jsonify({
+            "success": success,
+            "output": result.stdout + result.stderr
+        })
+    return jsonify({"success": False, "message": "No update available"})
 
 if __name__ == '__main__':
 

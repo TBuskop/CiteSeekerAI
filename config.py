@@ -90,3 +90,6 @@ if not GEMINI_API_KEY:
     print("Warning: GEMINI_API_KEY environment variable not set.")
     # Depending on usage, you might want to raise an error here if Gemini is essential
     # raise ValueError("GEMINI_API_KEY is required.")
+
+# URL for downloading an update archive (e.g., GitHub ZIP of main branch). If set, fallback update uses this.
+UPDATE_ZIP_URL = os.getenv("UPDATE_ZIP_URL", "")

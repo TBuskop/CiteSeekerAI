@@ -863,3 +863,17 @@ pre {
     font-size: 0.85rem;
     /* Add any other custom styles here if needed */
 }
+
+/* Update Icon */
+.update-icon {
+    position: fixed;
+    top: 15px;
+    right: 15px;
+    font-size: 1.5rem;
+    color: #dc3545; /* Bootstrap danger red */
+    cursor: pointer;
+    z-index: 1000;
+}
+.update-icon:hover {
+    color: #a71d2a;
+}

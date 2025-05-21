@@ -1088,6 +1088,50 @@ document.addEventListener('DOMContentLoaded', function() {
         .catch(error => console.error("Error updating history list:", error));
     }
 
+    // Update functionality: check for code updates from main branch
+    const updateIcon = document.getElementById('update-icon');
+
+    function checkUpdateStatus() {
+        fetch('/update_status')
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    // Git not available or other error, disable update
+                    console.warn('Update functionality disabled:', data.error);
+                    updateIcon.style.display = 'none';
+                } else if (data.available) {
+                    updateIcon.style.display = 'block';
+                } else {
+                    updateIcon.style.display = 'none';
+                }
+            })
+            .catch(err => console.error('Error checking update status:', err));
+    }
+
+    updateIcon.addEventListener('click', () => {
+        updateIcon.classList.add('loading');
+        fetch('/update', { method: 'POST' })
+            .then(response => response.json())
+            .then(result => {
+                updateIcon.classList.remove('loading');
+                if (result.success) {
+                    window.location.reload();
+                } else if (result.message) {
+                    alert('Update error: ' + result.message);
+                } else {
+                    console.error('Update failed:', result);
+                }
+            })
+            .catch(err => {
+                updateIcon.classList.remove('loading');
+                console.error('Error performing update:', err);
+            });
+    });
+
+    // Initial check and periodic polling every minute
+    checkUpdateStatus();
+    setInterval(checkUpdateStatus, 60000);
+
     // Reset the form
     function resetForm() {
         if (questionInput) {
