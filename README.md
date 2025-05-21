@@ -2,7 +2,7 @@
 
 Tired of drowning in a sea of academic papers? Let **CiteSeekerAI** be your AI research buddy, helping you quickly find clear answers backed by real citations!
 
-![image](https://github.com/user-attachments/assets/d917e679-0341-428d-ac37-9f8144c6e438)
+![image](https://github.com/user-attachments/assets/fd3c0ba9-da7f-430a-a164-5ab12554a36f)
 
 ## ✨ How It Works
 
