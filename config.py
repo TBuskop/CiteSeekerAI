@@ -37,7 +37,7 @@ TOP_K_ABSTRACTS = 20  # Number of papers to retrieve based on abstract similarit
 
 # From all relevant papers how many chunks of text to send to the LLM. The more default top_k the more expensive the query as more chunks are sent to the LLM 
 DEFAULT_TOP_K = 30    # Number of chunks to retrieve from the selected papers for context
-MIN_CITATIONS_RELEVANT_PAPERS = 5  # Minimum citations for relevance
+MIN_CITATIONS_RELEVANT_PAPERS = 0  # Minimum citations for relevance
 
 # --- Core Model Configuration ---
 # These are the primary models you'll interact with.
