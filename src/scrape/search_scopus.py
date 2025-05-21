@@ -99,8 +99,9 @@ def run_scopus_search(query: str = None, headless: bool = False,
                      year_from: Optional[int] = None, year_to: Optional[int] = None, 
                      download_dir: str = "data/downloads/csv",
                      output_csv_path: Optional[Union[str, Path]] = None,
-                     scopus_search_scope: Optional[str] = None  # Added parameter
-                     ) -> Tuple[bool, Optional[Path]]:
+                     scopus_search_scope: Optional[str] = None,
+                     force_continue_large_search: bool = False  # Ensure this is part of the definition
+                     ) -> Tuple[str, Optional[Path], Optional[int]]:
     """
     Run a search on Scopus and download results as CSV.
     
@@ -112,9 +113,17 @@ def run_scopus_search(query: str = None, headless: bool = False,
         download_dir: Directory to save downloaded files (used if output_csv_path is None)
         output_csv_path: Specific path (including filename) to save the CSV. Overrides download_dir and generated filename.
         scopus_search_scope: The scope for the Scopus search (e.g., "ALL", "TITLE_ABS_KEY"). Defaults to config if None.
+        force_continue_large_search: If True and search results are many (warning), proceed with export anyway.
         
     Returns:
-        Tuple containing (success: bool, csv_path: Optional[Path])
+        Tuple containing:
+        - status_code: String indicating search/export success or error
+          - "EXPORT_SUCCESS": Export was successful
+          - "SEARCH_WARNING_TOO_MANY_RESULTS": Results > 1000 but export succeeded
+          - "SEARCH_ERROR_LIMIT_EXCEEDED": Results > 20,000 (export not attempted)
+          - Other failure codes from search or export
+        - csv_path: Optional[Path] - Path to the exported CSV if successful
+        - count: Optional[int] - The number of results (if available)
     """
     try:
         # Change to the directory of this script
@@ -167,31 +176,45 @@ def run_scopus_search(query: str = None, headless: bool = False,
             headless=headless,
             download_dir=final_download_dir,
             screenshots_dir=screenshots_dir
-        ) as scraper:
+        ) as scraper:              
             logger.info("Scopus scraper initialized successfully.")
             
-            # Perform search
-            search_success = scraper.search(query, search_scope_override=scopus_search_scope) # Pass scope
-            if not search_success:
-                logger.error("Search failed. Check your query and try again.")
-                return False, None
-            logger.info("Search completed successfully.")
+            # Perform search with year parameters
+            search_status, results_count = scraper.search(
+                query, 
+                search_scope_override=scopus_search_scope,
+                year_from=year_from,
+                year_to=year_to
+            )
             
-            # Apply date filters if specified
-            if year_from or year_to:
-                logger.info(f"Applying date filters: {year_from} to {year_to}")
-                filter_success = scraper.apply_date_filter(year_from, year_to)
-                if not filter_success:
-                    logger.warning("Failed to apply date filters, continuing with unfiltered results")
+            # Check for errors or warnings
+            if search_status == "SEARCH_ERROR_LIMIT_EXCEEDED":
+                logger.error(f"Search returned too many results: {results_count} (limit: 20,000)")
+                return search_status, None, results_count
+                
+            if search_status == "SEARCH_WARNING_TOO_MANY_RESULTS":
+                if not force_continue_large_search:
+                    logger.warning(f"Search returned many results: {results_count} (recommended max: 1,000). Pausing for user confirmation.")
+                    # Return the warning status so the caller can decide whether to continue
+                    return search_status, None, results_count
                 else:
-                    logger.info("Date filters applied successfully")
+                    logger.info(f"Search returned many results: {results_count}. Proceeding with export as force_continue_large_search is True.")
+                    # Do not return here; continue to filtering and export.
+                    # The status will be EXPORT_SUCCESS if export is successful.
+                
+            if search_status.startswith("SEARCH_FAILURE"):
+                logger.error(f"Search failed with status: {search_status}")
+                return search_status, None, results_count
+                  
+            logger.info(f"Search completed with status: {search_status}")
             
+            # Date filters are now applied directly in the search method
             # Export results to CSV
             logger.info("Exporting results to CSV...")
             actual_csv_path = scraper.export_to_csv(final_filename_base)
-            if not actual_csv_path:
+            if not actual_csv_path:                
                 logger.error("Failed to export results to CSV.")
-                return False, None
+                return "EXPORT_FAILURE", None, results_count
 
             if output_csv_path and actual_csv_path != output_csv_path:
                 try:
@@ -202,36 +225,38 @@ def run_scopus_search(query: str = None, headless: bool = False,
                         actual_csv_path.rename(output_csv_path)
                         logger.info(f"Renamed downloaded file to specified path: {output_csv_path}")
                         actual_csv_path = output_csv_path
-                    else:
+                    else:                        
                         logger.error(f"Scraper reported saving to {actual_csv_path}, but file not found.")
-                        return False, None
+                        return "EXPORT_FAILURE", None, results_count
                 except OSError as e:
                     logger.error(f"Could not rename {actual_csv_path} to {output_csv_path}: {e}")
-                    logger.warning(f"Results saved to CSV at the generated path: {actual_csv_path}")
-                    return True, actual_csv_path
-
+                    logger.warning(f"Results saved to CSV at the generated path: {actual_csv_path}")                    # Still success, just at a different path than requested
+                    return "EXPORT_SUCCESS", actual_csv_path, results_count
+            
             logger.info(f"Results exported to CSV at: {actual_csv_path}")
-            return True, actual_csv_path
+            return "EXPORT_SUCCESS", actual_csv_path, results_count
             
     except Exception as e:
         logger.exception(f"An unexpected error occurred: {e}")
-        return False, None
+        return "UNEXPECTED_ERROR", None, None
 
 # Keep the original script functionality when run directly
 if __name__ == "__main__":
     args = parse_arguments()
-    success, csv_file = run_scopus_search(
+    # Consider adding a CLI arg for force_continue_large_search if needed for direct script runs
+    status, csv_file, results_count = run_scopus_search(
         query=args.query,
         headless=args.headless,
         year_from=args.year_from,
         year_to=args.year_to,
         download_dir=args.download_dir,
-        scopus_search_scope=args.scopus_search_scope # Pass from CLI args
+        scopus_search_scope=args.scopus_search_scope,
+        force_continue_large_search=False # Default for CLI run - corrected position
     )
     
-    if success and csv_file:
+    if status == "EXPORT_SUCCESS" and csv_file:
         print(f"\nSearch results saved to: {csv_file}")
         sys.exit(0)  # Success
     else:
-        print("\nSearch process failed or did not complete successfully. See log for details.")
+        print(f"\nSearch process failed or did not complete successfully. Status: {status}. See log for details.")
         sys.exit(1)  # Error

@@ -32,11 +32,24 @@ class ScopusScraper:
         self.browser = None
         self.page = None
         self.playwright = None
-        
-        # Set screenshots directory
-        self.screenshots_dir = screenshots_dir or self._get_default_screenshots_dir()
-        # Ensure the screenshots directory exists
+
+        # Ensure download_dir is a Path object. Actual mkdir is in _start_browser.
+        self.download_dir = download_dir if download_dir is not None else self._get_default_download_dir()
+        # If self.download_dir is not None, ensure it's a Path object here as well for consistency,
+        # though _start_browser will also do it.
+        if self.download_dir is not None:
+            self.download_dir = Path(self.download_dir)
+
+
+        # Ensure screenshots_dir is a Path object and created
+        # Determine the path to use (either provided or default)
+        chosen_screenshots_path = screenshots_dir if screenshots_dir is not None else self._get_default_screenshots_dir()
+        # Ensure it's a Path object
+        self.screenshots_dir = Path(chosen_screenshots_path)
+        # Now, create the directory
         self.screenshots_dir.mkdir(parents=True, exist_ok=True)
+
+        self.logger = logging.getLogger(__name__)
     
     def _get_default_screenshots_dir(self) -> Path:
         """
@@ -128,19 +141,26 @@ class ScopusScraper:
             self.playwright.stop()
             self.playwright = None
             
-        logger.info("Browser closed")
-    
-    def search(self, query: str, search_scope_override: Optional[str] = None) -> bool: # Added search_scope_override
+        logger.info("Browser closed")    
+    def search(self, query: str, search_scope_override: Optional[str] = None, year_from: Optional[int] = None, year_to: Optional[int] = None) -> Tuple[str, Optional[int]]:
         """
         Perform a search on Scopus. Assumes already logged in.
-        Date filters should be applied separately using apply_date_filter.
+        Date filters can be applied directly within this method.
         
         Args:
             query: Search query string
             search_scope_override: If provided, overrides the SCOPUS_SEARCH_SCOPE from config.
+            year_from: Start year for filtering (optional)
+            year_to: End year for filtering (optional)
             
         Returns:
-            bool: True if search successful, False otherwise
+            Tuple containing:
+                - status_code: String indicating search success or error
+                  - "SEARCH_SUCCESS": Search successful and within reasonable limits.
+                  - "SEARCH_WARNING_TOO_MANY_RESULTS": Results > 1000 but <= 20,000.
+                  - "SEARCH_ERROR_LIMIT_EXCEEDED": Results > 20,000.
+                  - Other failure codes: "SEARCH_FAILURE_NAV", "SEARCH_FAILURE_FIELD", etc.
+                - count: Optional[int] - The number of results (if available)
         """
         try:
             logger.info(f"Performing search with query: {query}")
@@ -160,9 +180,8 @@ class ScopusScraper:
                      # Check if login is needed again
                      if "signin" in self.page.url or "login" in self.page.url:
                          logger.error("Redirected to login page unexpectedly. Aborting search.")
-                         # Consider attempting re-login here if desired, but for now, fail.
-                     self._save_screenshot("search_nav_failed")
-                     return False
+                         # Consider attempting re-login here if desired, but for now, fail.                     self._save_screenshot("search_nav_failed")
+                     return "SEARCH_FAILURE_NAV", None
 
             # Select the search scope/field from the dropdown
             search_scope_selector = 'select[data-testid="select-field-select"]'
@@ -196,7 +215,7 @@ class ScopusScraper:
                 logger.error("Could not find search input field. Page may not have loaded properly.")
                 logger.info(f"Current URL: {self.page.url}")
                 self._save_screenshot("search_field_error")
-                return False
+                return "SEARCH_FAILURE_FIELD", None
                 
             logger.info(f"Found search form using selector: {found_selector}")
             
@@ -218,13 +237,10 @@ class ScopusScraper:
                     self.page.click(selector)
                     clicked = True
                     break
-                    
             if not clicked:
                 logger.error("Could not find search button. Search form may have changed.")
                 self._save_screenshot("search_button_error")
-                return False
-
-            # Wait for results page navigation/update
+                return "SEARCH_FAILURE_BUTTON", None            # Wait for results page navigation/update
             logger.info("Waiting for search results to load...")
             try:
                 # Wait for URL change or a known results element
@@ -233,30 +249,56 @@ class ScopusScraper:
             except PlaywrightTimeoutError:
                 logger.warning("Timeout waiting for results page URL. Checking for results elements.")
                 # Proceed to check for elements even if URL didn't change as expected
-
-            # Check initial search results count
-            logger.info("Getting initial search results count")
-            # sleep for 2 seconds
-            time.sleep(2)
-            results_count_text = self._get_results_count()
-            if results_count_text:
-                logger.info(f"Initial search found: {results_count_text}")
+            
+            # FIRST: Apply date filter if provided
+            if year_from is not None or year_to is not None:
+                logger.info(f"Applying date filter from {year_from if year_from else 'earliest'} to {year_to if year_to else 'latest'}")
+                if not self._apply_date_range_filter(year_from, year_to):
+                    logger.warning("Failed to apply date filter, proceeding with search anyway")
+                    self._save_screenshot("date_filter_failed")
+                else:
+                    logger.info("Date filter applied successfully")
+                    # Give time for results to update after filtering
+                    time.sleep(3)
+              # THEN: Get search results count after filtering
+            logger.info("Getting search results count")
+            # sleep for 5 seconds to ensure page has loaded completely and filters are applied
+            time.sleep(5)
+            results_count = self._get_results_count()
+            
+            if results_count:
+                logger.info(f"Search found: {results_count} documents")
+                
+                # Check against thresholds and return appropriate status
+                if results_count > 20000:
+                    logger.warning(f"Search returned {results_count} results, which exceeds the maximum recommended limit of 20,000")
+                    # Take screenshot for debugging purposes
+                    self._save_screenshot("search_results_too_many")
+                    return "SEARCH_ERROR_LIMIT_EXCEEDED", results_count
+                
+                elif results_count > 1000:
+                    logger.warning(f"Search returned {results_count} results, which is over the recommended limit of 1,000")
+                    # Return warning code but allow to continue
+                    return "SEARCH_WARNING_TOO_MANY_RESULTS", results_count
+                
+                # Within acceptable limits
+                return "SEARCH_SUCCESS", results_count
             else:
                 logger.warning("Could not determine results count.")
                 # Don't fail here, just log it. Export might still work.
                 self._save_screenshot("search_results_no_count")
+                return "SEARCH_SUCCESS_COUNT_UNKNOWN", None
 
             logger.info("Search request submitted successfully.")
-            return True # Return True if search was submitted and results page likely loaded
-                
+        
         except PlaywrightTimeoutError as pe:
             logger.error(f"Search timed out: {str(pe)}")
             self._save_screenshot("search_timeout_error")
-            return False
+            return "SEARCH_FAILURE_TIMEOUT", None
         except Exception as e:
             logger.error(f"Search failed with unexpected error: {str(e)}")
             self._save_screenshot("search_exception")
-            return False
+            return "SEARCH_FAILURE_EXCEPTION", None
 
     def apply_date_filter(self, year_from: Optional[int] = None, year_to: Optional[int] = None) -> bool:
         """
@@ -277,13 +319,13 @@ class ScopusScraper:
         logger.info(f"Applying date filter: {year_from if year_from else 'earliest'} to {year_to if year_to else 'latest'}")
         return self._apply_date_range_filter(year_from, year_to)
 
-    def _get_results_count(self) -> Optional[str]:
+    def _get_results_count(self) -> Optional[int]:
         """
         Get the number of results from the search results page by targeting
         the specific H2 tag with the defined class names.
         
         Returns:
-            The results count as a string, or None if not found.
+            The number of results as an integer, or None if not found or could not be parsed.
         """
         try:
             # Define the specific selector matching the tag's class names
@@ -295,7 +337,22 @@ class ScopusScraper:
             if self.page.is_visible(specific_selector):
                 text = self.page.text_content(specific_selector)
                 logger.info(f"Found specific results count in H2: '{text}'")
-                return text
+                
+                # Extract numeric value using regex
+                import re
+                match = re.search(r'(\d{1,3}(?:,\d{3})*)(?:\s+documents found)', text)
+                if match:
+                    # Remove commas from the number and convert to int
+                    count_str = match.group(1).replace(',', '')
+                    try:
+                        count = int(count_str)
+                        logger.info(f"Extracted count: {count}")
+                        return count
+                    except ValueError:
+                        logger.error(f"Could not convert '{count_str}' to integer")
+                else:
+                    logger.warning(f"Could not extract count from text: '{text}'")
+                return None
             
             logger.warning("Could not find the specific results count tag")
             return None
@@ -418,7 +475,7 @@ class ScopusScraper:
             
             # Wait for the filter to be applied and results updated
             time.sleep(3)
-            self.page.wait_for_load_state('networkidle', timeout=10000)
+            self.page.wait_for_load_state('domcontentloaded', timeout=10000)
                         
             logger.info("Date range filter applied successfully")
             return True
@@ -427,32 +484,31 @@ class ScopusScraper:
             logger.error(f"Error applying date range filter: {str(e)}")
             self._save_screenshot("date_filter_error")
             return False
-    
+        
     def _apply_filters(self, filters: Dict):
         """
         Apply filters to the search results.
         
         Args:
             filters: Dictionary of filters to apply
+            
+        Returns:
+            bool: True if filters were applied successfully, False otherwise
         """
         logger.info("Applying filters to search results")
+        success = True
         
-        # Example implementation for date range filter
-        if 'year_from' in filters and 'year_to' in filters:
-            # Click on date range filter
-            self.page.click('button[data-testid="date-range-dropdown-button"]')
-            
-            # Fill date range
-            self.page.fill('input[data-testid="date-range-from-input"]', str(filters['year_from']))
-            self.page.fill('input[data-testid="date-range-to-input"]', str(filters['year_to']))
-            
-            # Apply filter
-            self.page.click('button[data-testid="date-range-apply-button"]')
-            
-            # Wait for results to update
-            time.sleep(2)
+        # Apply date range filter if specified
+        if 'year_from' in filters or 'year_to' in filters:
+            year_from = filters.get('year_from')
+            year_to = filters.get('year_to')
+            if not self._apply_date_range_filter(year_from, year_to):
+                logger.warning("Failed to apply date range filter")
+                success = False
         
         # Add more filter implementations as needed
+        
+        return success
     
     def export_to_csv(self, filename: Optional[str] = None) -> Optional[Path]:
         """
@@ -593,7 +649,7 @@ class ScopusScraper:
                     ]
                     
                     submit_clicked = False
-                    with self.page.expect_download(timeout=60000 * 3) as download_info:
+                    with self.page.expect_download(timeout=60000 * 10) as download_info:
                         for selector in submit_selectors:
                             if self.page.is_visible(selector):
                                 logger.info(f"Clicking submit export button: {selector}")
@@ -770,23 +826,14 @@ class ScopusScraper:
 
         Returns:
             Path to the downloaded file or None if any step failed
-        """
-        # Login is assumed to be handled by institutional network access.
+        """        # Login is assumed to be handled by institutional network access.
         # If direct navigation to Scopus search page fails, it might indicate an issue
         # with network access or Scopus availability.
 
-        if not self.search(query):
-            logger.error("Search step failed.")
+        result, count = self.search(query, year_from=year_from, year_to=year_to)
+        if not result or result.startswith("SEARCH_FAILURE"):
+            logger.error(f"Search step failed with status: {result}")
             return None
-
-        if year_from or year_to:
-            logger.info("Applying date filter...")
-            if not self.apply_date_filter(year_from, year_to):
-                logger.warning("Failed to apply date filter, proceeding with export anyway.")
-                # Decide if you want to stop here or continue export without filter
-                # return None # Uncomment to stop if filtering fails
-            else:
-                logger.info("Date filter applied successfully.")
 
         logger.info("Proceeding to export...")
         return self.export_to_csv(filename)

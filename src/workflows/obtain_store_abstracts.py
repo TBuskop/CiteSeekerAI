@@ -1,5 +1,6 @@
 import os
 import sys
+import logging # Add logging import
 
 # --- Add project root to sys.path ---
 # This allows absolute imports from 'src' assuming the script is in 'workflows'
@@ -15,6 +16,8 @@ from src.scrape.get_search_string import generate_scopus_search_string
 from src.my_utils import llm_interface
 from src.rag.HyPE import run_hype_index # Added import
 import config
+
+logger = logging.getLogger(__name__) # Initialize logger
 
 # --- Central Configuration ---
 # General
@@ -61,45 +64,54 @@ os.makedirs(os.path.dirname(RELEVANT_CHUNKS_DB_PATH), exist_ok=True) # Added for
 
 # --- Pipeline Execution ---
 
-def obtain_store_abstracts(search_query=None, scopus_search_scope=None, year_from=None, year_to=None, min_citations_param=None, progress_callback=None): # Added min_citations_param
+def obtain_store_abstracts(search_query=None, scopus_search_scope=None, year_from=None, year_to=None, min_citations_param=None, progress_callback=None, force_continue_large_search=False): # Added force_continue_large_search parameter
     # helper for UI progress and console
     def log_progress(msg):
         if progress_callback:
             progress_callback(msg)
-        print(msg)
-        
+        logger.info(msg)
+        print(msg) # Also print to console for backend visibility
+
+    # --- Configuration & Setup ---
     log_progress("--- Initializing LLM Clients ---")
     llm_client = llm_interface.initialize_clients() # Initialize LLM client
 
-    # Use the passed question or fall back to config.QUERY
-    # The search_query parameter is now the primary Scopus search string from the UI
-    # search_query = search_query if search_query is not None else config.SCOPUS_SEARCH_STRING # This logic might change
-
+    # Determine final Scopus query
     log_progress("--- Step 0: Generating Scopus Search String ---")
-    # If a direct Scopus search query is provided from the UI, we use that.
-    # The generate_scopus_search_string (which converts a research question to a Scopus query)
-    # might not be needed if the user provides a direct Scopus query.
-    # For now, we assume 'search_query' IS the Scopus query.
     if search_query:
-        SCOPUS_QUERY = search_query
-        print(f"Using provided Scopus query: {SCOPUS_QUERY}")
+        final_scopus_query = search_query
+        print(f"Using provided Scopus query: {final_scopus_query}")
     elif MANUAL_SCOPUS_QUERY: # Fallback to config if no direct query and MANUAL_SCOPUS_QUERY is set
-        SCOPUS_QUERY = config.SCOPUS_SEARCH_STRING
-        print(f"Using manual Scopus query from config: {SCOPUS_QUERY}")
+        final_scopus_query = config.SCOPUS_SEARCH_STRING
+        print(f"Using manual Scopus query from config: {final_scopus_query}")
     else: # Fallback to generating from INITIAL_RESEARCH_QUESTION if no direct query and not manual
         success, generated_query = generate_scopus_search_string(
             query=INITIAL_RESEARCH_QUESTION, # Generate based on the general research question from config
             save_to_file=SAVE_GENERATED_SEARCH_STRING
         )
         if success and generated_query:
-            SCOPUS_QUERY = generated_query
-            print(f"Using generated Scopus query: {SCOPUS_QUERY}")
+            final_scopus_query = generated_query
+            print(f"Using generated Scopus query: {final_scopus_query}")
         else:
-            SCOPUS_QUERY = DEFAULT_SCOPUS_QUERY # Ultimate fallback
-            print(f"Failed to generate search string. Using default Scopus query: {SCOPUS_QUERY}")
+            final_scopus_query = DEFAULT_SCOPUS_QUERY # Ultimate fallback
+            print(f"Failed to generate search string. Using default Scopus query: {final_scopus_query}")
+
+    # Process other parameters
+    # Process year filters - fall back to None for web interface
+    final_year_from = year_from
+    final_year_to = year_to
+    log_progress(f"Year filter: {final_year_from or 'None'} to {final_year_to or 'None'}")
+    
+    # Process search scope - fall back to None for web interface
+    final_scopus_search_scope = scopus_search_scope
+    log_progress(f"Search scope: {final_scopus_search_scope or 'Default'}")
+    
+    # Process minimum citations - fall back to None for web interface
+    final_min_citations = min_citations_param
+    log_progress(f"Minimum citations filter: {final_min_citations or 'None'}")
 
     # Define Scopus output path based on the final query
-    clean_query = (SCOPUS_QUERY.replace(' ', '_')
+    clean_query = (final_scopus_query.replace(' ', '_')
                                  .replace("'", '')
                                  .replace('(', '')
                                  .replace(')', '')
@@ -112,39 +124,62 @@ def obtain_store_abstracts(search_query=None, scopus_search_scope=None, year_fro
     SCOPUS_OUTPUT_CSV_FILENAME = f"scopus_{clean_query}.csv"
     SCOPUS_OUTPUT_CSV_PATH = os.path.join(CSV_DIR, SCOPUS_OUTPUT_CSV_FILENAME)
 
-    log_progress("--- Step 1: Running Scopus Search ---")
-    # Determine the search scope to use: passed argument or config default
-    final_scopus_search_scope = scopus_search_scope if scopus_search_scope else config.SCOPUS_SEARCH_SCOPE
-
-    # Determine years to use: passed arguments or config defaults
-    final_year_from = year_from if year_from is not None else SCOPUS_YEAR_FROM
-    final_year_to = year_to if year_to is not None else SCOPUS_YEAR_TO
-
-    # Run the Scopus search using the determined query and output path
-    # Always run search if initiated from UI, even if file exists, to reflect current parameters.
-    # Or, add more sophisticated logic to check if parameters match existing file.
-    # For simplicity, we'll run it.
-    search_success, actual_csv_path = run_scopus_search(
-        query=SCOPUS_QUERY,
-        output_csv_path=SCOPUS_OUTPUT_CSV_PATH,
+    # --- Step 1: Performing Scopus Search ---
+    search_status, actual_csv_path, results_count = run_scopus_search(
+        query=final_scopus_query,
         headless=SCOPUS_HEADLESS_MODE,
-        year_from=final_year_from, # Use final_year_from
-        year_to=final_year_to,     # Use final_year_to
-        scopus_search_scope=final_scopus_search_scope, # Pass the scope
+        year_from=final_year_from,
+        year_to=final_year_to,
+        output_csv_path=SCOPUS_OUTPUT_CSV_PATH, # Use the centrally defined path
+        scopus_search_scope=final_scopus_search_scope,
+        force_continue_large_search=force_continue_large_search # Pass the flag
     )
-    # The original logic for MANUAL_SCOPUS_QUERY and checking file existence might need adjustment
-    # if the goal is to always re-run with UI parameters.
-    # The code below is simplified assuming a re-run.
 
-    # Check if the search was successful and update the path variable
-    if search_success and actual_csv_path:
-        SCOPUS_OUTPUT_CSV_PATH = str(actual_csv_path) # Update path to the actual one used/created
-        log_progress(f"Scopus search successful. Results saved to: {SCOPUS_OUTPUT_CSV_PATH}")
-    else:
-        print(f"Error: Scopus search failed. Check logs in search_scopus script.")
-        # Decide how to proceed: exit or try to continue? Exiting is safer.
-        exit() # Exit if search failed
+    log_progress(f"Scopus search completed. Status: {search_status}, Results: {results_count}, CSV Path: {actual_csv_path}")
 
+    # Handle specific search outcomes
+    if search_status == "SEARCH_WARNING_TOO_MANY_RESULTS":
+        # This block is now only reached if force_continue_large_search was False during run_scopus_search call,
+        # meaning user confirmation is genuinely needed.
+        log_progress(f"Scopus search returned {results_count} results, which is a large number. Awaiting user confirmation.")
+        return {
+            "status": "AWAITING_USER_CONFIRMATION_LARGE_RESULTS",
+            "message": f"Scopus search returned {results_count} results. Proceed anyway or cancel?",
+            "results_count": results_count,
+            "query_details": {
+                "query": final_scopus_query,
+                "scope": final_scopus_search_scope,
+                "year_from": final_year_from,
+                "year_to": final_year_to,
+                "min_citations": final_min_citations # Ensure final_min_citations is defined in this scope
+            }
+        }
+
+    if search_status == "SEARCH_ERROR_LIMIT_EXCEEDED":
+        log_progress(f"Scopus search error: Limit exceeded with {results_count} results.")
+        return {"status": "ERROR_SCRAPE_LIMIT_EXCEEDED", "message": f"Search limit exceeded: {results_count} results. Please refine your query.", "results_count": results_count}
+
+    # Check for CSV file creation after search attempt (successful or forced continue)
+    if not actual_csv_path:
+        log_progress(f"Scopus search/export did not produce a CSV file. Status: {search_status}, Results: {results_count}")
+        if search_status.startswith("SEARCH_FAILURE"):
+            return {"status": "ERROR_SCRAPE_SEARCH_FAILED", "message": f"Scopus search failed: {search_status}", "results_count": results_count}
+        elif search_status == "EXPORT_FAILURE":
+            return {"status": "ERROR_SCRAPE_EXPORT_FAILED", "message": "Failed to export Scopus results to CSV.", "results_count": results_count}
+        elif search_status == "EXPORT_SUCCESS": 
+             log_progress(f"Search reported EXPORT_SUCCESS but no CSV path was returned. This is unexpected. Status: {search_status}")
+             return {"status": "ERROR_SCRAPE_NO_CSV_UNEXPECTED", "message": "Scopus export reported success, but the CSV file was not found.", "results_count": results_count}
+        return {"status": "ERROR_SCRAPE_UNKNOWN", "message": "An unknown error occurred during Scopus scraping.", "results_count": results_count}
+
+    log_progress(f"Scopus CSV successfully created at: {actual_csv_path}")
+    # Ensure SCOPUS_OUTPUT_CSV_PATH is updated if it's used later and might have changed.
+    # If SCOPUS_OUTPUT_CSV_PATH is a global or module-level var, direct assignment might not be ideal.
+    # Consider returning it or handling its update carefully.
+    # For now, assuming it's handled or its update here is intended:
+    # SCOPUS_OUTPUT_CSV_PATH = str(actual_csv_path) 
+
+    # --- Step 2: Ingesting CSV into ChromaDB ---
+    
     log_progress("--- Step 2: Ingesting CSV to ChromaDB ---")
     
     # Determine the minimum citations filter to use
@@ -153,9 +188,7 @@ def obtain_store_abstracts(search_query=None, scopus_search_scope=None, year_fro
     if min_citations_param is not None:
         log_progress(f"Using minimum citations from UI: {min_citations_param}")
     else:
-        log_progress(f"Using minimum citations from config: {config.MIN_CITATIONS_STORE_ABSTRACT}")
-
-    # This step now implicitly relies on search_success being True from Step 1
+        log_progress(f"Using minimum citations from config: {config.MIN_CITATIONS_STORE_ABSTRACT}")    # This step now implicitly relies on search_success being True from Step 1
     ingest_csv_to_chroma(
         csv_file_path=SCOPUS_OUTPUT_CSV_PATH,
         db_path=ABSTRACT_DB_PATH, # Use abstract DB path
@@ -163,7 +196,7 @@ def obtain_store_abstracts(search_query=None, scopus_search_scope=None, year_fro
         force_reindex=FORCE_REINDEX_CHROMA,
         min_citations=final_min_citations_filter # Pass the determined minimum citations filter
     )
-
+    
     log_progress("--- Step 2.5: Running HyPE Indexing on Abstracts ---")
     # This step generates hypothetical questions for abstracts and embeds them.
     # It uses the same DB as abstracts but a different collection.
@@ -174,6 +207,13 @@ def obtain_store_abstracts(search_query=None, scopus_search_scope=None, year_fro
             hype_collection_name=HYPE_ABSTRACT_COLLECTION_NAME,
             client=llm_client # Pass the initialized client
         )
+      # Return success result
+    return {
+        "status": "SUCCESS", 
+        "message": "Abstract collection completed successfully", 
+        "file_path": SCOPUS_OUTPUT_CSV_PATH,
+        "count": results_count
+    }
 
 if __name__ == "__main__":
     obtain_store_abstracts()

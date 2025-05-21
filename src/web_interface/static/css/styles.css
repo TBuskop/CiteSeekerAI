@@ -436,6 +436,76 @@ pre {
     color: #333333 !important; /* Darker Gray for heading in alert */
 }
 
+/* Custom styling for compact warning alerts (e.g., Large Results Warning) */
+.alert-warning.compact-alert {
+    padding: 0.6rem 1rem !important;
+    font-size: 0.8rem !important;
+    background-color: #fff9e6 !important; /* Lighter yellow background */
+    color: #664d03 !important; /* Darker yellow/brown text */
+    border: 1px solid #ffecb3 !important;
+    border-left-width: 3px !important;
+    border-left-color: #ffc107 !important; /* Standard Bootstrap warning yellow */
+    margin-top: 0.5rem !important;
+    margin-bottom: 0.5rem !important;
+    border-radius: 0.25rem;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05) !important;
+}
+
+.alert-warning.compact-alert .alert-heading { /* Targets h elements with this class */
+    font-size: 0.9rem !important;
+    font-weight: bold;
+    color: inherit !important;
+    margin-bottom: 0.4rem !important;
+}
+
+.alert-warning.compact-alert p,
+.alert-warning.compact-alert ul {
+    font-size: 0.75rem !important;
+    margin-bottom: 0.4rem !important;
+}
+
+.alert-warning.compact-alert ul {
+    padding-left: 1.2rem !important;
+}
+
+.alert-warning.compact-alert ul li {
+    margin-bottom: 0.2rem !important;
+}
+
+.alert-warning.compact-alert .btn {
+    font-size: 0.75rem !important;
+    padding: 0.25rem 0.75rem !important;
+}
+
+/* Custom styling for compact danger alerts (e.g., error/warning messages) */
+.alert-danger.compact-alert {
+    padding: 0.3rem 0.6rem !important;
+    font-size: 0.8rem !important;
+    background-color: #fff0f1 !important; /* Lighter pink background */
+    color: #58151c !important; /* Dark red text for contrast (Bootstrap --bs-danger-text-emphasis) */
+    border: 1px solid #fcc8cb !important; /* Lighter border color */
+    border-left-width: 3px !important;
+    border-left-color: #dc3545 !important; /* Standard Bootstrap danger red for left border emphasis */
+    margin-bottom: 0.4rem !important; /* Consistent with compact-alert base */
+    border-radius: 0.25rem; /* Slightly smaller border radius for a sleeker look */
+}
+
+.alert-danger.compact-alert h6 {
+    font-size: 0.85rem !important; /* Slightly larger than the alert body text */
+    color: inherit !important; /* Inherit the alert's text color */
+    margin-bottom: 0.2rem !important; /* Reduced space below heading */
+}
+
+.alert-danger.compact-alert .small { /* For text like status-text */
+    font-size: 0.75rem !important; /* Make secondary text smaller */
+    line-height: 1.3 !important; /* Adjust line height for smaller font */
+}
+
+.alert-danger.compact-alert .progress { /* Adjust progress bar margin if needed */
+    margin-top: 0.3rem !important;
+    height: 8px !important; /* Make progress bar sleeker */
+}
+
 /* Progress Bar */
 .progress-bar {
     background-color: #777777 !important; /* Darker Gray for progress */

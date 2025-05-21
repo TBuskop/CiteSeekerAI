@@ -419,6 +419,90 @@ def abstract_job_status(job_id):
     
     return jsonify(processing_jobs[job_id])
 
+@app.route('/abstracts/continue_collection/<job_id>', methods=['POST'])
+def continue_abstract_collection(job_id):
+    """Continue abstract collection after user confirms large result set"""
+    if job_id not in processing_jobs:
+        return jsonify({"status": "error", "message": "Job not found"})
+    
+    if processing_jobs[job_id].get("status") != "AwaitingConfirmation":
+        return jsonify({"status": "error", "message": "Job is not awaiting confirmation"})
+    
+    # Get the original parameters
+    original_params = processing_jobs[job_id].get("original_params", {})
+    
+    if not original_params:
+        return jsonify({"status": "error", "message": "Original parameters not found"})
+    
+    # Update job status
+    processing_jobs[job_id]["status"] = "Processing"
+    processing_jobs[job_id]["progress"] = "Continuing with search after confirmation..."
+    
+    # Start a new thread to continue processing with force_continue_large_search=True
+    threading.Thread(
+        target=process_abstract_search_with_force,
+        args=(
+            job_id,
+            original_params.get("query"),
+            original_params.get("scopus_search_scope"),
+            original_params.get("year_from"),
+            original_params.get("year_to"),
+            original_params.get("min_citations")
+        )
+    ).start()
+    
+    return jsonify({
+        "status": "success",
+        "message": "Continuing with collection",
+        "job_id": job_id
+    })
+    
+def process_abstract_search_with_force(job_id, query, scopus_search_scope, year_from=None, year_to=None, min_citations=None):
+    """Process an abstract collection using the obtain_store_abstracts function with force_continue_large_search=True"""
+    try:
+        # Callback for UI progress updates
+        def update_web_progress(message):
+            if job_id in processing_jobs:
+                processing_jobs[job_id]["progress"] = message
+                
+        update_web_progress("Continuing with large result set collection...")
+        
+        # Run with callback to progress and force_continue_large_search=True
+        result = obtain_store_abstracts(
+            search_query=query,
+            scopus_search_scope=scopus_search_scope,
+            year_from=year_from,
+            year_to=year_to,
+            min_citations_param=min_citations,
+            progress_callback=update_web_progress,
+            force_continue_large_search=True
+        )
+        
+        # Handle result similar to process_abstract_search
+        if "status" in result:
+            if result["status"] == "SUCCESS":
+                # Collection successful
+                processing_jobs[job_id]["status"] = "Completed"
+                update_web_progress("Abstract collection completed!")
+                
+                # Add more details about the results
+                if "file_path" in result:
+                    processing_jobs[job_id]["file_path"] = result["file_path"]
+                if "count" in result:
+                    processing_jobs[job_id]["count"] = result["count"]
+                    update_web_progress(f"Abstract collection completed! Found {result['count']} abstracts.")
+            else:
+                # Handle any errors
+                processing_jobs[job_id]["status"] = "Error"
+                processing_jobs[job_id]["error"] = result.get("message", "Unknown error occurred")
+                update_web_progress(result.get("message", "Error in abstract collection"))
+                
+    except Exception as e:
+        processing_jobs[job_id]["status"] = "Error"
+        processing_jobs[job_id]["error"] = str(e)
+        print(f"Error in abstract collection job {job_id}: {e}")
+        import traceback; traceback.print_exc()
+
 
 def process_single_paper_download(job_id: str, doi: str):
     """Downloads a single paper using its DOI."""
@@ -598,6 +682,7 @@ def process_abstract_search(job_id, query, scopus_search_scope): # Added scopus_
 
 def process_abstract_search(job_id, query, scopus_search_scope, year_from=None, year_to=None, min_citations=None): # Added min_citations
     """Process an abstract collection using the obtain_store_abstracts function"""
+    print(f"DEBUG: Starting process_abstract_search for job {job_id}, query: {query}")
     try:
         # Update job status
         processing_jobs[job_id]["status"] = "Processing"
@@ -609,21 +694,64 @@ def process_abstract_search(job_id, query, scopus_search_scope, year_from=None, 
         # Temporarily override the SCOPUS_SEARCH_STRING in config
         original_scopus_search_string = config.SCOPUS_SEARCH_STRING
         # The query from the form is now the primary search string for obtain_store_abstracts
-        # config.SCOPUS_SEARCH_STRING = query # This line might be redundant if query is passed directly
-
-        # Run with callback to update progress
-        obtain_store_abstracts(search_query=query, # Pass query from form
-                               scopus_search_scope=scopus_search_scope, # Pass selected scope
-                               year_from=year_from, # Pass year_from
-                               year_to=year_to,     # Pass year_to
-                               min_citations_param=min_citations, # Pass min_citations from UI
-                               progress_callback=update_web_progress)
+        # config.SCOPUS_SEARCH_STRING = query # This line might be redundant if query is passed directly        # Run with callback to update progress
+        result = obtain_store_abstracts(
+            search_query=query, # Pass query from form
+            scopus_search_scope=scopus_search_scope, # Pass selected scope
+            year_from=year_from, # Pass year_from
+            year_to=year_to,     # Pass year_to
+            min_citations_param=min_citations, # Pass min_citations from UI
+            progress_callback=update_web_progress,
+            force_continue_large_search=False # Ensure we don't automatically continue with large results
+        )
 
         # Restore original config if it was changed (though direct passing is preferred)
         # config.SCOPUS_SEARCH_STRING = original_scopus_search_string
-
-        # Finalize job status
-        processing_jobs[job_id]["status"] = "Completed"
+          # Handle different result statuses
+        if "status" in result:
+            print(f"DEBUG: Result status: {result['status']}, job_id: {job_id}")
+            if result["status"] == "ERROR_SCRAPE_LIMIT_EXCEEDED":
+                # Too many results (> 20,000)
+                processing_jobs[job_id]["status"] = "Error"
+                processing_jobs[job_id]["error"] = result["message"]
+                processing_jobs[job_id]["count"] = result.get("count")
+                update_web_progress(result["message"])
+                return
+            elif result["status"] == "AWAITING_USER_CONFIRMATION_LARGE_RESULTS":
+                                # Many results (> 1,000) - needs confirmation
+                print(f"DEBUG: Setting AwaitingConfirmation status for job {job_id}")
+                processing_jobs[job_id]["status"] = "AwaitingConfirmation"
+                processing_jobs[job_id]["message"] = result["message"]
+                processing_jobs[job_id]["count"] = result.get("count")
+                processing_jobs[job_id]["original_params"] = {
+                    "query": query,
+                    "scopus_search_scope": scopus_search_scope,
+                    "year_from": year_from,
+                    "year_to": year_to,
+                    "min_citations": min_citations
+                }
+                update_web_progress(result["message"])
+                return
+                
+            elif result["status"] == "ERROR_SCRAPE_FAILED" or result["status"] == "ERROR_SCRAPE_NO_CSV":
+                # Other search errors
+                processing_jobs[job_id]["status"] = "Error"
+                processing_jobs[job_id]["error"] = result["message"]
+                update_web_progress(result["message"])
+                return
+                
+            elif result["status"] == "SUCCESS":
+                # Collection successful
+                processing_jobs[job_id]["status"] = "Completed"
+                update_web_progress("Abstract collection completed!")
+                
+                # Add more details about the results
+                if "file_path" in result:
+                    processing_jobs[job_id]["file_path"] = result["file_path"]
+                if "count" in result:
+                    processing_jobs[job_id]["count"] = result["count"]
+                    update_web_progress(f"Abstract collection completed! Found {result['count']} abstracts.")
+                return
         update_web_progress("Abstract collection completed!")
         # Add more details about the results
         csv_dir = os.path.join(_PROJECT_ROOT, 'data', 'downloads', 'csv')

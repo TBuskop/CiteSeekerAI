@@ -97,30 +97,189 @@ document.addEventListener('DOMContentLoaded', function() {
         .catch(err => {
             showError('Network error: ' + err.message);
         });
-    });
-
-    function pollJobStatus(jobId) {
+    });    function pollJobStatus(jobId) {
         const checkStatus = () => {
             fetch(`/abstracts/status/${jobId}`)
-                .then(response => response.json())
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Failed to check status: ' + response.statusText);
+                    }
+                    return response.json();
+                })
                 .then(data => {
-                    if (data.status === 'Completed') {
+                    console.log("Status check response:", data); // Add logging for status check response
+                      if (data.status === 'Completed') {
                         // Job is complete, show the results
                         statusText.textContent = 'Search completed!';
-                        progressBar.style.width = '100%';
+                        // Hide the progress bar when search is completed
+                        if (progressBar && progressBar.parentElement) {
+                            progressBar.parentElement.classList.add('d-none');
+                        }
                         setTimeout(() => {
                             showResults(data);
                         }, 1000);
                     } else if (data.status === 'Error') {
                         // Job error
                         showError(data.error || 'An error occurred during the search');
+                    } else if (data.status === 'AwaitingConfirmation') {
+                        statusContainer.classList.remove('alert-info', 'alert-danger', 'alert-success');
+                        statusContainer.classList.add('alert-warning', 'compact-alert');
+                        // No longer setting inline styles, rely on CSS classes
+
+                        // Create confirmation UI
+                        let confirmationHtml = `
+                            <div class="alert alert-warning compact-alert py-2 px-3">
+                                <h6 class="alert-heading mb-2">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" class="bi bi-exclamation-triangle-fill me-2" viewBox="0 0 16 16">
+                                        <path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/>
+                                    </svg>
+                                    Large Results Warning
+                                </h6>
+                                <p class="mb-1"><strong>${data.message}</strong></p>
+                                
+                                <p class="mb-2">Do you want to continue with this large result set?</p>
+                                <div class="d-flex justify-content-end mt-2">
+                                    <button id="cancel-search-btn" class="btn btn-danger btn-sm me-2">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="bi bi-x-circle me-1" viewBox="0 0 16 16">
+                                            <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/>
+                                            <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708"/>
+                                        </svg>
+                                        Cancel Search
+                                    </button>
+                                    <button id="continue-search-btn" class="btn btn-success btn-sm">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="bi bi-check-circle me-1" viewBox="0 0 16 16">
+                                            <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/>
+                                            <path d="M10.97 4.97a.235.235 0 0 0-.02.022L7.477 9.417 5.384 7.323a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-1.071-1.05"/>
+                                        </svg>
+                                        Continue Anyway
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                          // Add confirmation UI to the status container with a fade-in animation effect
+                        statusContainer.classList.remove('alert-info');
+                        statusContainer.classList.add('alert-warning');
+                        
+                        // First insert the HTML
+                        statusContainer.insertAdjacentHTML('beforeend', confirmationHtml);
+                        
+                        // Get the newly inserted alert element to add animation
+                        const warningAlert = statusContainer.querySelector('.alert-warning');
+                          // Apply the animation effect (start with opacity 0, then transition to 1)
+                        warningAlert.style.opacity = '0';
+                        warningAlert.style.transition = 'opacity 0.5s ease-in-out';
+                        setTimeout(() => {
+                            warningAlert.style.opacity = '1';
+                            
+                            // Scroll to make the alert visible
+                            warningAlert.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }, 10); // Short timeout to ensure the opacity change triggers the transition
+                          // Set up event listeners for confirmation buttons
+                        document.getElementById('continue-search-btn').addEventListener('click', function() {
+                            // Visual feedback for button click
+                            this.innerHTML = `
+                                <div class="spinner-border spinner-border-sm me-2" role="status">
+                                    <span class="visually-hidden">Processing...</span>
+                                </div>
+                                Continuing...
+                            `;
+                            this.disabled = true;
+                            
+                            // Fade out the warning and transition back to normal status
+                            const warningAlert = this.closest('.alert');
+                            warningAlert.style.transition = 'opacity 0.5s ease-in-out';
+                            warningAlert.style.opacity = '0';
+                            
+                            setTimeout(() => {
+                                // Remove confirmation UI
+                                statusContainer.classList.remove('alert-warning', 'alert-danger', 'alert-success');
+                                statusContainer.classList.add('alert-info');
+                                // Ensure progress bar container is visible and reset
+                                if (progressBar && progressBar.parentElement) {
+                                    progressBar.parentElement.classList.remove('d-none');
+                                }
+                                progressBar.style.width = '0%'; // Reset progress
+                                statusText.textContent = 'Continuing with search...';
+                                warningAlert.remove();
+
+                                // Continue the search
+                                fetch(`/abstracts/continue_collection/${jobId}`, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json'
+                                    }
+                                })
+                                .then(response => response.json())
+                                .then(data => {
+                                    if (data.status === 'success') {
+                                        // Resume polling
+                                        checkStatus();
+                                    } else {
+                                        showError(data.message || 'Failed to continue search');
+                                    }
+                                })
+                                .catch(err => {
+                                    showError('Network error: ' + err.message);
+                                });
+                            }, 500); // Match the transition duration
+                        });
+                        
+                        document.getElementById('cancel-search-btn').addEventListener('click', function() {
+                            // Visual feedback for button click
+                            this.innerHTML = `
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-x-circle me-2" viewBox="0 0 16 16">
+                                    <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/>
+                                    <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708"/>
+                                </svg>
+                                Cancelling...
+                            `;
+                            this.disabled = true;
+                            
+                            // Fade out the alert
+                            const warningAlert = this.closest('.alert');
+                            warningAlert.style.transition = 'opacity 0.5s ease-in-out';
+                            warningAlert.style.opacity = '0';
+                            
+                            setTimeout(() => {
+                                // Reset the UI for a new search
+                                submitBtn.disabled = false;
+                                statusContainer.classList.remove('alert-warning', 'alert-info', 'alert-danger', 'alert-success');
+                                statusContainer.classList.add('d-none');
+                                warningAlert.remove();
+
+                                // Show a temporary message that the search was cancelled
+                                const cancelMessage = document.createElement('div');
+                                cancelMessage.className = 'alert alert-info mt-3';
+                                cancelMessage.textContent = 'Search cancelled. You can modify your query and try again.';
+                                statusContainer.parentNode.insertBefore(cancelMessage, statusContainer);
+                                
+                                // Remove the message after a few seconds
+                                setTimeout(() => {
+                                    cancelMessage.style.opacity = '0';
+                                    cancelMessage.style.transition = 'opacity 0.5s ease-in-out';
+                                    setTimeout(() => cancelMessage.remove(), 500);
+                                }, 3000);
+                            }, 500); // Match the transition duration
+                        });
                     } else if (data.status === 'Processing') {
                         // Update progress
+                        statusContainer.classList.remove('alert-warning', 'alert-danger', 'alert-success');
+                        statusContainer.classList.add('alert-info');
+                        // Ensure progress bar container is visible
+                        if (progressBar && progressBar.parentElement) {
+                            progressBar.parentElement.classList.remove('d-none');
+                        }
                         statusText.textContent = data.progress || 'Processing...';
                         progressBar.style.width = '50%';
                         // Continue polling
                         setTimeout(checkStatus, 3000);
                     } else if (data.status === 'Starting') {
+                        statusContainer.classList.remove('alert-warning', 'alert-danger', 'alert-success');
+                        statusContainer.classList.add('alert-info');
+                        // Ensure progress bar container is visible
+                        if (progressBar && progressBar.parentElement) {
+                            progressBar.parentElement.classList.remove('d-none');
+                        }
                         statusText.textContent = data.progress || 'Starting search...';
                         progressBar.style.width = '20%';
                         // Continue polling
@@ -136,12 +295,14 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Start polling immediately
         checkStatus();
-    }
-
-    function showResults(data) {
+    }    function showResults(data) {
+        statusContainer.classList.remove('alert-info', 'alert-warning', 'alert-danger');
         statusContainer.classList.add('alert-success');
-        statusContainer.classList.remove('alert-info');
-        
+        // Ensure progress bar remains hidden after search completion
+        if (progressBar && progressBar.parentElement) {
+            progressBar.parentElement.classList.add('d-none');
+        }
+
         // Show result container
         resultContainer.classList.remove('d-none');
         
@@ -183,10 +344,13 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function showError(message) {
+        statusContainer.classList.remove('alert-info', 'alert-warning', 'alert-success');
         statusContainer.classList.add('alert-danger');
-        statusContainer.classList.remove('alert-info');
         statusText.textContent = 'Error: ' + message;
-        progressBar.style.width = '100%';
+        // Hide the progress bar's parent element
+        if (progressBar && progressBar.parentElement) {
+            progressBar.parentElement.classList.add('d-none');
+        }
         submitBtn.disabled = false;
     }
     
