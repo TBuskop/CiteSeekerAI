@@ -152,7 +152,7 @@ def retrieve_chunks_bm25(query: str, db_path: str, collection_name: str, top_k: 
 
 # --- RRF Combination ---
 def combine_results_rrf(vector_results: List[Dict], bm25_results: List[Tuple[str, float]],
-                        db_path: str, collection_name: str, execution_mode: str = "query", k_rrf: int = 50, weight_vector_bm25=[0.65, 0.35],
+                        db_path: str, collection_name: str, execution_mode: str = "query", k_rrf: int = 50, weight_vector_bm25=[0.7, 0.3],
                         db_settings: Optional[Settings] = None) -> List[Dict]: # Add db_settings parameter
     """Combines vector and BM25 results using Reciprocal Rank Fusion (RRF)."""
     # Determine effective collection name based on HYPE flag
