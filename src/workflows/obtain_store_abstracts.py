@@ -191,24 +191,36 @@ def obtain_store_abstracts(search_query=None, scopus_search_scope=None, year_fro
         log_progress(f"Scopus search error: Limit exceeded with {results_count} results.")
         return {"status": "ERROR_SCRAPE_LIMIT_EXCEEDED", "message": f"Search limit exceeded: {results_count} results. Please refine your query.", "results_count": results_count}
     
-    # Check for CSV file creation after search attempt (successful or forced continue)
-    if not actual_csv_path:
-        log_progress(f"Scopus search/export did not produce a CSV file. Status: {search_status}, Results: {results_count}")
-        if search_status.startswith("SEARCH_FAILURE"):
-            if search_status == "SEARCH_FAILURE_EXCEPTION":
-                # This is likely a browser closed or connection error
-                return {"status": "ERROR_SCRAPE_SEARCH_FAILED", "message": "Search failed because the browser was closed or connection was lost. Please try again.", "results_count": results_count}
-            else:
-                return {"status": "ERROR_SCRAPE_SEARCH_FAILED", "message": f"Scopus search failed: {search_status}", "results_count": results_count}
+    # Check for CSV file creation and status after search attempt
+    if search_status == "EXPORT_SUCCESS":
+        if not actual_csv_path:
+            # EXPORT_SUCCESS status but no CSV path. This is an error.
+            log_progress(f"Search reported EXPORT_SUCCESS but no CSV path was returned. This is unexpected. Status: {search_status}, Results: {results_count}")
+            return {"status": "ERROR_SCRAPE_NO_CSV_UNEXPECTED", "message": "Scopus export reported success, but the CSV file was not found.", "results_count": results_count}
+        # If actual_csv_path exists and status is EXPORT_SUCCESS, we fall through to ingestion.
+        # The log message for successful creation will appear before ingestion.
     elif search_status == "EXPORT_FAILURE":
-        return {"status": "ERROR_SCRAPE_EXPORT_FAILED", "message": "Failed to export Scopus results to CSV.", "results_count": results_count}    
-    elif search_status == "EXPORT_SUCCESS": 
-        log_progress(f"Search reported EXPORT_SUCCESS but no CSV path was returned. This is unexpected. Status: {search_status}")
-        return {"status": "ERROR_SCRAPE_NO_CSV_UNEXPECTED", "message": "Scopus export reported success, but the CSV file was not found.", "results_count": results_count}
-    else:
-        # If we reach here, there's a CSV file but status isn't recognized - treat as unknown error
-        return {"status": "ERROR_SCRAPE_UNKNOWN", "message": "An unknown error occurred during Scopus scraping.", "results_count": results_count}
+        log_progress(f"Failed to export Scopus results to CSV. Status: {search_status}, Results: {results_count}")
+        return {"status": "ERROR_SCRAPE_EXPORT_FAILED", "message": "Failed to export Scopus results to CSV.", "results_count": results_count}
+    elif search_status.startswith("SEARCH_FAILURE"):
+        # These are search failures that occurred before an export attempt or caused it to be skipped.
+        log_progress(f"Scopus search failed. Status: {search_status}, Results: {results_count}")
+        message = f"Scopus search failed: {search_status}"
+        if search_status == "SEARCH_FAILURE_EXCEPTION":
+            message = "Search failed because the browser was closed or connection was lost. Please try again."
+        return {"status": "ERROR_SCRAPE_SEARCH_FAILED", "message": message, "results_count": results_count}
+    elif not actual_csv_path: 
+        # Covers cases where status is not EXPORT_SUCCESS, EXPORT_FAILURE, or SEARCH_FAILURE,
+        # AND no CSV was produced (e.g., UNEXPECTED_ERROR from run_scopus_search).
+        log_progress(f"Scopus search/export did not produce a CSV file for an unknown reason. Status: {search_status}, Results: {results_count}")
+        return {"status": "ERROR_SCRAPE_UNKNOWN_NO_CSV", "message": f"An unknown error occurred during Scopus scraping (Status: {search_status}), and no CSV file was produced.", "results_count": results_count}
+    else: 
+        # actual_csv_path EXISTS, but status is something else (e.g., UNEXPECTED_ERROR from run_scopus_search, or a new status not handled above)
+        # This is an ambiguous situation.
+        log_progress(f"Scopus process completed with status '{search_status}' and a CSV file was found at {actual_csv_path}. This is an ambiguous state. Results: {results_count}")
+        return {"status": "ERROR_SCRAPE_UNKNOWN_WITH_CSV", "message": f"An unknown error occurred during Scopus scraping (Status: {search_status}), but a CSV file was unexpectedly found.", "results_count": results_count}
 
+    # If all checks above are passed, it means search_status was "EXPORT_SUCCESS" and actual_csv_path is valid.
     log_progress(f"Scopus CSV successfully created at: {actual_csv_path}")
     # Ensure SCOPUS_OUTPUT_CSV_PATH is updated if it's used later and might have changed.
     # If SCOPUS_OUTPUT_CSV_PATH is a global or module-level var, direct assignment might not be ideal.
