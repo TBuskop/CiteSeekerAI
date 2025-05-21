@@ -424,12 +424,15 @@ def find_relevant_dois_from_abstracts(
     use_rerank: bool,
     output_filename: str,
     rerank_candidates: int = DEFAULT_RERANK_CANDIDATE_COUNT,
-    use_hype: bool = False
+    use_hype: bool = False,
+    min_citations_override: Optional[int] = None # Added
 ) -> List[str]:
     """Main function to find relevant DOIs based on the initial query."""
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     print("Initializing API clients...")
     initialize_clients()
+
+    current_min_citations = min_citations_override if min_citations_override is not None else MIN_CITATIONS_RELEVANT_PAPERS
 
     config = {
         "initial_query": initial_query,
@@ -439,7 +442,8 @@ def find_relevant_dois_from_abstracts(
         "use_rerank": use_rerank,
         "output_filename": output_filename,
         "rerank_candidates": rerank_candidates,
-        "execution_mode": "collect_abstracts"
+        "execution_mode": "collect_abstracts",
+        "min_citations": current_min_citations # Added
     }
     
 
@@ -463,7 +467,7 @@ def find_relevant_dois_from_abstracts(
     )
 
     # Enrich vector_results_raw with 'cited_by' from base collection if use_hype is True
-    if MIN_CITATIONS_RELEVANT_PAPERS > 0 and use_hype and vector_results_raw:
+    if config["min_citations"] > 0 and use_hype and vector_results_raw: # Use config["min_citations"]
         print(f"\n--- Enriching {len(vector_results_raw)} HYPE vector results with 'cited_by' from base collection '{config['collection_name']}' ---")
         
         original_ids_to_fetch_meta = []
@@ -513,15 +517,15 @@ def find_relevant_dois_from_abstracts(
 
     # Filter vector_results by citations
     vector_results_filtered = vector_results_raw
-    if MIN_CITATIONS_RELEVANT_PAPERS > 0:
-        print(f"\n--- Filtering {len(vector_results_raw)} vector results by minimum citations ({MIN_CITATIONS_RELEVANT_PAPERS}) ---")
-        vector_results_filtered = _filter_chunks_by_citations(vector_results_raw, MIN_CITATIONS_RELEVANT_PAPERS)
+    if config["min_citations"] > 0: # Use config["min_citations"]
+        print(f"\n--- Filtering {len(vector_results_raw)} vector results by minimum citations ({config['min_citations']}) ---")
+        vector_results_filtered = _filter_chunks_by_citations(vector_results_raw, config["min_citations"]) # Use config["min_citations"]
         print(f"Filtered vector results from {len(vector_results_raw)} to {len(vector_results_filtered)}.")
 
     # Filter bm25_results by citations
     bm25_results_tuples_filtered = bm25_results_tuples_raw
-    if MIN_CITATIONS_RELEVANT_PAPERS > 0 and bm25_results_tuples_raw:
-        print(f"\n--- Filtering {len(bm25_results_tuples_raw)} BM25 results by minimum citations ({MIN_CITATIONS_RELEVANT_PAPERS}) ---")
+    if config["min_citations"] > 0 and bm25_results_tuples_raw: # Use config["min_citations"]
+        print(f"\n--- Filtering {len(bm25_results_tuples_raw)} BM25 results by minimum citations ({config['min_citations']}) ---") # Use config["min_citations"]
         
         bm25_chunk_ids = [item[0] for item in bm25_results_tuples_raw]
         bm25_scores_map = {item[0]: item[1] for item in bm25_results_tuples_raw}
@@ -556,7 +560,7 @@ def find_relevant_dois_from_abstracts(
                         else:
                             print(f"Warning: Metadata missing for BM25 chunk ID {chunk_id} at index {i}. Skipping.")
                 
-                filtered_bm25_chunks_with_meta = _filter_chunks_by_citations(bm25_chunks_with_meta_temp, MIN_CITATIONS_RELEVANT_PAPERS)
+                filtered_bm25_chunks_with_meta = _filter_chunks_by_citations(bm25_chunks_with_meta_temp, config["min_citations"]) # Use config["min_citations"]
                 
                 # Convert back to List[Tuple[str, float]], ensuring score is present
                 bm25_results_tuples_filtered = [

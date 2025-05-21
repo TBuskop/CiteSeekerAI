@@ -55,7 +55,7 @@ def get_timestamp():
     """Generate a timestamp for job ID"""
     return datetime.now().strftime('%Y%m%d_%H%M%S')
 
-def process_research_question(job_id, question, subquestions_count=3, top_k_abstracts=None, top_k_chunks=None):
+def process_research_question(job_id, question, subquestions_count=3, top_k_abstracts=None, top_k_chunks=None, min_citations=None): # Added min_citations
     """Process a research question using the CiteSeekerAI pipeline"""
     try:
         # Initialize job structure for structured progress
@@ -106,7 +106,8 @@ def process_research_question(job_id, question, subquestions_count=3, top_k_abst
             progress_callback=update_web_progress, 
             run_id=job_id,
             top_k_abstracts_val=top_k_abstracts,
-            top_k_chunks_val=top_k_chunks
+            top_k_chunks_val=top_k_chunks,
+            min_citations_val=min_citations # Added
         )
 
         # Find the expected output file directly using job_id instead of finding latest
@@ -285,6 +286,11 @@ def ask_question():
     except (ValueError, TypeError):
         top_k_chunks = config.DEFAULT_TOP_K
     
+    try: # Added
+        min_citations = int(request.form.get('min_citations', config.MIN_CITATIONS_RELEVANT_PAPERS))
+    except (ValueError, TypeError): # Added
+        min_citations = config.MIN_CITATIONS_RELEVANT_PAPERS # Added
+    
     if not question:
         return jsonify({"status": "error", "message": "Question cannot be empty"})
     
@@ -302,7 +308,7 @@ def ask_question():
         "subquery_results_stream": []
     }
     
-    threading.Thread(target=process_research_question, args=(job_id, question, subquestions_count, top_k_abstracts, top_k_chunks)).start()
+    threading.Thread(target=process_research_question, args=(job_id, question, subquestions_count, top_k_abstracts, top_k_chunks, min_citations)).start() # Added min_citations
     
     return jsonify({
         "status": "success",

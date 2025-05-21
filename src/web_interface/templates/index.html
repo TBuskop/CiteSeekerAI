@@ -91,7 +91,7 @@
                 </form>
 
                 <div class="row g-2 mb-2 flex-shrink-0" id="slider-controls-container">
-                    <div class="col-md-6">
+                    <div class="col-md-4">
                         <label for="top-k-abstracts-slider" class="form-label">
                             Papers for Detailed Search
                             <span class="info-tooltip">
@@ -104,7 +104,7 @@
                             <span id="top-k-abstracts-value" class="slider-value">20</span>
                         </div>
                     </div>
-                    <div class="col-md-6">
+                    <div class="col-md-4">
                         <label for="top-k-chunks-slider" class="form-label">
                             Text Chunks for Answer
                             <span class="info-tooltip">
@@ -115,6 +115,19 @@
                         <div class="d-flex align-items-center">
                             <input type="range" class="form-range me-2" id="top-k-chunks-slider" min="3" max="60" value="30">
                             <span id="top-k-chunks-value" class="slider-value">30</span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="min-citations-slider" class="form-label">
+                            Min. Citations for Papers
+                            <span class="info-tooltip">
+                                <i class="bi bi-info-circle"></i>
+                                <span class="tooltip-text">Filters retrieved papers by their minimum number of citations. '0' includes all papers.</span>
+                            </span>
+                        </label>
+                        <div class="d-flex align-items-center">
+                            <input type="range" class="form-range me-2" id="min-citations-slider" min="0" max="50" value="0"> <!-- Default to 0 from config -->
+                            <span id="min-citations-value" class="slider-value">0</span>
                         </div>
                     </div>
                 </div>

@@ -78,7 +78,7 @@ os.makedirs(QUERY_SPECIFIC_OUTPUT_DIR, exist_ok=True)
 
 
 # --- Define Worker Function for Processing Each Subquery ---
-def process_subquery(query: str, query_index: int, progress_callback=None, run_specific_output_dir=None, top_k_abstracts_val=None, top_k_chunks_val=None): # MODIFIED: Added run_specific_output_dir
+def process_subquery(query: str, query_index: int, progress_callback=None, run_specific_output_dir=None, top_k_abstracts_val=None, top_k_chunks_val=None, min_citations_val=None): # MODIFIED: Added min_citations_val
     """
     Processes a single subquery through the pipeline steps:
     Find relevant DOIs -> Download papers -> Chunk papers -> Build relevant chunk DB -> Query relevant chunks.
@@ -90,6 +90,7 @@ def process_subquery(query: str, query_index: int, progress_callback=None, run_s
         run_specific_output_dir (str): The output directory for this specific run.
         top_k_abstracts_val (int, optional): Override for TOP_K_ABSTRACTS.
         top_k_chunks_val (int, optional): Override for QUERY_TOP_K (for chunks).
+        min_citations_val (int, optional): Override for MIN_CITATIONS_RELEVANT_PAPERS.
 
     Returns:
         tuple: (query_index, original_query, final_answer_or_status)
@@ -115,6 +116,7 @@ def process_subquery(query: str, query_index: int, progress_callback=None, run_s
         use_rerank=USE_RERANK_ABSTRACTS,
         output_filename=relevant_abstracts_output_filename_i,
         use_hype=config.HYPE,
+        min_citations_override=min_citations_val # Added
     )
     log_progress_sub(f"Found {len(relevant_doi_list)} relevant DOIs.")
 
@@ -212,7 +214,7 @@ def process_subquery(query: str, query_index: int, progress_callback=None, run_s
 
 
 # --- Main Pipeline Function ---
-def run_deep_research(question=None, query_numbers=None, progress_callback=None, run_id=None, top_k_abstracts_val=None, top_k_chunks_val=None):
+def run_deep_research(question=None, query_numbers=None, progress_callback=None, run_id=None, top_k_abstracts_val=None, top_k_chunks_val=None, min_citations_val=None): # Added min_citations_val
     """
     Run the deep research pipeline.
     
@@ -223,6 +225,7 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None,
         run_id (str): Optional ID to use for output files instead of generating a timestamp
         top_k_abstracts_val (int, optional): Number of abstracts to search.
         top_k_chunks_val (int, optional): Number of chunks to use for the answer.
+        min_citations_val (int, optional): Minimum citations for papers to be considered relevant.
     """
     # --- Initialize Run-Specific Variables ---
     current_run_timestamp = run_id if run_id else time.strftime('%Y%m%d_%H%M%S')
@@ -317,7 +320,8 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None,
                 progress_callback=subquery_step_callback, 
                 run_specific_output_dir=run_specific_output_dir,
                 top_k_abstracts_val=top_k_abstracts_val,
-                top_k_chunks_val=top_k_chunks_val
+                top_k_chunks_val=top_k_chunks_val,
+                min_citations_val=min_citations_val # Added
             )
             results.append(result_tuple)
             

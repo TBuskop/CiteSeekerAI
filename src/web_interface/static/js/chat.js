@@ -16,6 +16,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const topKAbstractsValue = document.getElementById('top-k-abstracts-value');
     const topKChunksSlider = document.getElementById('top-k-chunks-slider');
     const topKChunksValue = document.getElementById('top-k-chunks-value');
+    const minCitationsSlider = document.getElementById('min-citations-slider'); // Added
+    const minCitationsValue = document.getElementById('min-citations-value'); // Added
     // const historyItems = document.querySelectorAll('.history-item'); // Will be handled by updateHistoryList
     const outlineContainer = document.getElementById('outline-container'); // Added for outline
     const referencesListDiv = document.getElementById('references-list'); // Added for references panel
@@ -347,6 +349,12 @@ document.addEventListener('DOMContentLoaded', function() {
             topKChunksValue.textContent = this.value;
         });
     }
+    // Added for Min Citations Slider
+    if (minCitationsSlider && minCitationsValue) {
+        minCitationsSlider.addEventListener('input', function() {
+            minCitationsValue.textContent = this.value;
+        });
+    }
 
     // New Chat button functionality
     if (newChatBtn) {
@@ -387,12 +395,14 @@ document.addEventListener('DOMContentLoaded', function() {
             if (subquestionsCount) subquestionsCount.disabled = true;
             if (topKAbstractsSlider) topKAbstractsSlider.disabled = true;
             if (topKChunksSlider) topKChunksSlider.disabled = true;
+            if (minCitationsSlider) minCitationsSlider.disabled = true; // Added
             
             const formData = new FormData();
             formData.append('question', question);
             if (subquestionsCount) formData.append('subquestions_count', subquestionsCount.value);
             if (topKAbstractsSlider) formData.append('top_k_abstracts', topKAbstractsSlider.value);
             if (topKChunksSlider) formData.append('top_k_chunks', topKChunksSlider.value);
+            if (minCitationsSlider) formData.append('min_citations', minCitationsSlider.value); // Added
             
             fetch('/ask', {
                 method: 'POST',
@@ -1095,6 +1105,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         if (topKChunksSlider) {
             topKChunksSlider.disabled = false;
+        }
+        if (minCitationsSlider) { // Added
+            minCitationsSlider.disabled = false;
         }
         // currentJobId is not reset here, as it might be needed for viewing results
         // It will be overwritten when a new question is asked.
