@@ -73,28 +73,51 @@ def obtain_store_abstracts(search_query=None, scopus_search_scope=None, year_fro
         print(msg) # Also print to console for backend visibility
 
     # --- Configuration & Setup ---
+    log_progress(f"obtain_store_abstracts called with: search_query='{search_query}', "
+                 f"scope='{scopus_search_scope}', year_from='{year_from}', year_to='{year_to}', "
+                 f"min_citations='{min_citations_param}', force_continue='{force_continue_large_search}'")
+
     log_progress("--- Initializing LLM Clients ---")
-    llm_client = llm_interface.initialize_clients() # Initialize LLM client
+    llm_client = None # Initialize to None
+    llm_init_error = None # To store any error message from LLM initialization
+    try:
+        llm_client = llm_interface.initialize_clients() # Initialize LLM client
+        if llm_client:
+            log_progress("LLM Clients initialized successfully.")
+        else:
+            # This case handles if initialize_clients can return None without raising an exception
+            log_progress("LLM Clients initialization returned no client, but no error was raised.")
+            llm_init_error = "Initialization returned no client."
+    except Exception as e:
+        logger.error(f"Error initializing LLM clients: {e}", exc_info=True) # Log full traceback for backend
+        log_progress(f"Error initializing LLM clients: {str(e)}. Proceeding; LLM-dependent features may be affected.")
+        llm_init_error = str(e)
+
 
     # Determine final Scopus query
     log_progress("--- Step 0: Generating Scopus Search String ---")
     if search_query:
         final_scopus_query = search_query
-        print(f"Using provided Scopus query: {final_scopus_query}")
+        log_progress(f"Using provided Scopus query: {final_scopus_query}") # Changed print to log_progress
     elif MANUAL_SCOPUS_QUERY: # Fallback to config if no direct query and MANUAL_SCOPUS_QUERY is set
         final_scopus_query = config.SCOPUS_SEARCH_STRING
-        print(f"Using manual Scopus query from config: {final_scopus_query}")
+        log_progress(f"Using manual Scopus query from config: {final_scopus_query}") # Changed print to log_progress
     else: # Fallback to generating from INITIAL_RESEARCH_QUESTION if no direct query and not manual
-        success, generated_query = generate_scopus_search_string(
-            query=INITIAL_RESEARCH_QUESTION, # Generate based on the general research question from config
-            save_to_file=SAVE_GENERATED_SEARCH_STRING
-        )
-        if success and generated_query:
-            final_scopus_query = generated_query
-            print(f"Using generated Scopus query: {final_scopus_query}")
-        else:
-            final_scopus_query = DEFAULT_SCOPUS_QUERY # Ultimate fallback
-            print(f"Failed to generate search string. Using default Scopus query: {final_scopus_query}")
+        if llm_client: # Check if LLM client is available for generation
+            success, generated_query = generate_scopus_search_string(
+                query=INITIAL_RESEARCH_QUESTION, # Generate based on the general research question from config
+                save_to_file=SAVE_GENERATED_SEARCH_STRING
+                # Assuming generate_scopus_search_string uses the client initialized via llm_interface
+            )
+            if success and generated_query:
+                final_scopus_query = generated_query
+                log_progress(f"Using generated Scopus query: {final_scopus_query}") # Changed print to log_progress
+            else:
+                final_scopus_query = DEFAULT_SCOPUS_QUERY # Ultimate fallback
+                log_progress(f"Failed to generate search string. Using default Scopus query: {final_scopus_query}") # Changed print to log_progress
+        else: # LLM client not available
+            final_scopus_query = DEFAULT_SCOPUS_QUERY
+            log_progress(f"LLM client not available (Error: {llm_init_error}), cannot generate search string. Using default Scopus query: {final_scopus_query}")
 
     # Process other parameters
     # Process year filters - fall back to None for web interface
@@ -122,9 +145,14 @@ def obtain_store_abstracts(search_query=None, scopus_search_scope=None, year_fro
                                  .replace("\n", ''))[:50]
 
     SCOPUS_OUTPUT_CSV_FILENAME = f"scopus_{clean_query}.csv"
-    SCOPUS_OUTPUT_CSV_PATH = os.path.join(CSV_DIR, SCOPUS_OUTPUT_CSV_FILENAME)
-
-    # --- Step 1: Performing Scopus Search ---
+    SCOPUS_OUTPUT_CSV_PATH = os.path.join(CSV_DIR, SCOPUS_OUTPUT_CSV_FILENAME)    # --- Step 1: Performing Scopus Search ---
+    log_progress(f"--- Step 1: Performing Scopus Search ---")
+    
+    # If we're forcing continue on a large result set, add a special message
+    if force_continue_large_search:
+        log_progress(f"Processing a large result set by user request - this may take longer than usual")
+        log_progress(f"Please be patient while we prepare and download the results...")
+    
     search_status, actual_csv_path, results_count = run_scopus_search(
         query=final_scopus_query,
         headless=SCOPUS_HEADLESS_MODE,
@@ -132,10 +160,14 @@ def obtain_store_abstracts(search_query=None, scopus_search_scope=None, year_fro
         year_to=final_year_to,
         output_csv_path=SCOPUS_OUTPUT_CSV_PATH, # Use the centrally defined path
         scopus_search_scope=final_scopus_search_scope,
-        force_continue_large_search=force_continue_large_search # Pass the flag
-    )
+        force_continue_large_search=force_continue_large_search) # Pass the flag    )
 
-    log_progress(f"Scopus search completed. Status: {search_status}, Results: {results_count}, CSV Path: {actual_csv_path}")
+    # Provide more detailed completion message
+    if force_continue_large_search and search_status == "EXPORT_SUCCESS":
+        log_progress(f"Successfully completed large result set search and export!")
+        log_progress(f"Retrieved and exported {results_count} documents to {actual_csv_path}")
+    else:
+        log_progress(f"Scopus search completed. Status: {search_status}, Results: {results_count}, CSV Path: {actual_csv_path}")
 
     # Handle specific search outcomes
     if search_status == "SEARCH_WARNING_TOO_MANY_RESULTS":
@@ -153,22 +185,28 @@ def obtain_store_abstracts(search_query=None, scopus_search_scope=None, year_fro
                 "year_to": final_year_to,
                 "min_citations": final_min_citations # Ensure final_min_citations is defined in this scope
             }
-        }
-
+        }    
+    
     if search_status == "SEARCH_ERROR_LIMIT_EXCEEDED":
         log_progress(f"Scopus search error: Limit exceeded with {results_count} results.")
         return {"status": "ERROR_SCRAPE_LIMIT_EXCEEDED", "message": f"Search limit exceeded: {results_count} results. Please refine your query.", "results_count": results_count}
-
+    
     # Check for CSV file creation after search attempt (successful or forced continue)
     if not actual_csv_path:
         log_progress(f"Scopus search/export did not produce a CSV file. Status: {search_status}, Results: {results_count}")
         if search_status.startswith("SEARCH_FAILURE"):
-            return {"status": "ERROR_SCRAPE_SEARCH_FAILED", "message": f"Scopus search failed: {search_status}", "results_count": results_count}
-        elif search_status == "EXPORT_FAILURE":
-            return {"status": "ERROR_SCRAPE_EXPORT_FAILED", "message": "Failed to export Scopus results to CSV.", "results_count": results_count}
-        elif search_status == "EXPORT_SUCCESS": 
-             log_progress(f"Search reported EXPORT_SUCCESS but no CSV path was returned. This is unexpected. Status: {search_status}")
-             return {"status": "ERROR_SCRAPE_NO_CSV_UNEXPECTED", "message": "Scopus export reported success, but the CSV file was not found.", "results_count": results_count}
+            if search_status == "SEARCH_FAILURE_EXCEPTION":
+                # This is likely a browser closed or connection error
+                return {"status": "ERROR_SCRAPE_SEARCH_FAILED", "message": "Search failed because the browser was closed or connection was lost. Please try again.", "results_count": results_count}
+            else:
+                return {"status": "ERROR_SCRAPE_SEARCH_FAILED", "message": f"Scopus search failed: {search_status}", "results_count": results_count}
+    elif search_status == "EXPORT_FAILURE":
+        return {"status": "ERROR_SCRAPE_EXPORT_FAILED", "message": "Failed to export Scopus results to CSV.", "results_count": results_count}    
+    elif search_status == "EXPORT_SUCCESS": 
+        log_progress(f"Search reported EXPORT_SUCCESS but no CSV path was returned. This is unexpected. Status: {search_status}")
+        return {"status": "ERROR_SCRAPE_NO_CSV_UNEXPECTED", "message": "Scopus export reported success, but the CSV file was not found.", "results_count": results_count}
+    else:
+        # If we reach here, there's a CSV file but status isn't recognized - treat as unknown error
         return {"status": "ERROR_SCRAPE_UNKNOWN", "message": "An unknown error occurred during Scopus scraping.", "results_count": results_count}
 
     log_progress(f"Scopus CSV successfully created at: {actual_csv_path}")
@@ -201,12 +239,15 @@ def obtain_store_abstracts(search_query=None, scopus_search_scope=None, year_fro
     # This step generates hypothetical questions for abstracts and embeds them.
     # It uses the same DB as abstracts but a different collection.
     if config.HYPE:
-        run_hype_index(
-            db_path=ABSTRACT_DB_PATH,
-            source_collection_name=ABSTRACT_COLLECTION_NAME,
-            hype_collection_name=HYPE_ABSTRACT_COLLECTION_NAME,
-            client=llm_client # Pass the initialized client
-        )
+        if llm_client: # Proceed with HyPE only if LLM client was successfully initialized
+            run_hype_index(
+                db_path=ABSTRACT_DB_PATH,
+                source_collection_name=ABSTRACT_COLLECTION_NAME,
+                hype_collection_name=HYPE_ABSTRACT_COLLECTION_NAME,
+                client=llm_client # Pass the initialized client
+            )
+        else:
+            log_progress(f"Skipping HyPE indexing as LLM client initialization failed or client not available (Error: {llm_init_error}).")
       # Return success result
     return {
         "status": "SUCCESS", 

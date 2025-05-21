@@ -249,17 +249,35 @@ class ScopusScraper:
             except PlaywrightTimeoutError:
                 logger.warning("Timeout waiting for results page URL. Checking for results elements.")
                 # Proceed to check for elements even if URL didn't change as expected
-            
-            # FIRST: Apply date filter if provided
+              # FIRST: Apply date filter if provided
             if year_from is not None or year_to is not None:
                 logger.info(f"Applying date filter from {year_from if year_from else 'earliest'} to {year_to if year_to else 'latest'}")
-                if not self._apply_date_range_filter(year_from, year_to):
-                    logger.warning("Failed to apply date filter, proceeding with search anyway")
-                    self._save_screenshot("date_filter_failed")
-                else:
-                    logger.info("Date filter applied successfully")
-                    # Give time for results to update after filtering
-                    time.sleep(3)
+                
+                # Set up a handler to prevent unexpected downloads
+                try:
+                    # Use a very short timeout to catch unexpected download prompts quickly
+                    with self.page.expect_download(timeout=100) as unexpected_download:
+                        if not self._apply_date_range_filter(year_from, year_to):
+                            logger.warning("Failed to apply date filter, proceeding with search anyway")
+                            self._save_screenshot("date_filter_failed")
+                        else:
+                            logger.info("Date filter applied successfully")
+                            # Give time for results to update after filtering
+                            time.sleep(3)
+                    
+                    # If we reach here without a TimeoutError, an unexpected download was triggered
+                    download = unexpected_download.value
+                    logger.warning("Unexpected download was triggered during date filtering - cancelling")
+                    # We don't save the download, effectively cancelling it
+                    
+                    # Reload the page to get back to search results
+                    self.page.reload()
+                    logger.info("Page reloaded after unexpected download")
+                    
+                except PlaywrightTimeoutError:
+                    # This is actually the expected path - no download should occur
+                    logger.info("Date filtering completed without unexpected downloads")
+                    pass
               # THEN: Get search results count after filtering
             logger.info("Getting search results count")
             # sleep for 5 seconds to ensure page has loaded completely and filters are applied
@@ -468,17 +486,34 @@ class ScopusScraper:
                 logger.error("Could not find apply button for date filter")
                 self._save_screenshot("apply_button_not_found")
                 return False
-            
-            # Click the apply button
+              # Click the apply button
             logger.info(f"Clicking apply button: {apply_button}")
-            self.page.click(apply_button)
             
-            # Wait for the filter to be applied and results updated
-            time.sleep(3)
-            self.page.wait_for_load_state('domcontentloaded', timeout=10000)
-                        
-            logger.info("Date range filter applied successfully")
-            return True
+            # Try to catch any unexpected download dialogs that might appear
+            try:
+                # Use a shorter timeout for download to catch it quickly if it happens
+                with self.page.expect_download(timeout=2000) as download_info:
+                    self.page.click(apply_button)
+                    
+                    # If we get here without an exception, a download was triggered
+                    logger.warning("Unexpected download was triggered by date filter - cancelling download")
+                    download = download_info.value
+                    # Cancel the download by not saving it
+                    
+                    # We need to navigate back to the search page or refresh
+                    self.page.reload()
+                    return False
+                    
+            except PlaywrightTimeoutError:
+                # This is the expected path - no download should occur
+                logger.info("Clicked apply button without triggering download (good)")
+                
+                # Wait for the filter to be applied and results updated
+                time.sleep(3)
+                self.page.wait_for_load_state('domcontentloaded', timeout=10000)
+                            
+                logger.info("Date range filter applied successfully")
+                return True
             
         except Exception as e:
             logger.error(f"Error applying date range filter: {str(e)}")
@@ -509,7 +544,6 @@ class ScopusScraper:
         # Add more filter implementations as needed
         
         return success
-    
     def export_to_csv(self, filename: Optional[str] = None) -> Optional[Path]:
         """
         Export search results to CSV.
@@ -522,16 +556,16 @@ class ScopusScraper:
         """
         try:
             logger.info("Exporting search results to CSV")
-            
+            logger.info("Starting the export process - this may take a few moments")
             
             # First try the new UI export flow
             try:
                 # Check if the "Select all" checkbox exists
                 select_all_checkbox = self.page.query_selector('#bulkSelectDocument-primary-document-search-results-toolbar')
-                
                 if select_all_checkbox:
                     time.sleep(5)
                     logger.info("Found new UI with Select All checkbox - using new export flow")
+                    logger.info("Step 1/5: Selecting all documents for export")
                     
                     # Click the Select All checkbox
                     self.page.click('#bulkSelectDocument-primary-document-search-results-toolbar')
@@ -540,6 +574,7 @@ class ScopusScraper:
                     # Wait for the selection to apply
                     time.sleep(1)
                     
+                    logger.info("Step 2/5: Opening export menu")
                     # First, look for the Export button specifically within the primary toolbar
                     export_dropdown_selectors = [
                         'div[data-testid="primary-toolbar"] button:has-text("Export")',
@@ -551,7 +586,6 @@ class ScopusScraper:
                         '[aria-label="Export"]',
                         'button[aria-expanded][aria-haspopup="menu"]',
                     ]
-                    
                     dropdown_clicked = False
                     for selector in export_dropdown_selectors:
                         if self.page.is_visible(selector):
@@ -567,6 +601,7 @@ class ScopusScraper:
                         self._save_screenshot("export_dropdown_not_found")
                         raise Exception("Could not find export dropdown button")
                     
+                    logger.info("Step 3/5: Selecting CSV format")
                     # Now look for the CSV option in the dropdown menu
                     csv_options = [
                         'button[data-testid="export-to-csv"]',
@@ -590,10 +625,10 @@ class ScopusScraper:
                         self._save_screenshot("csv_option_not_found")
                         logger.error("Could not find CSV option in dropdown menu")
                         raise Exception("Could not find CSV export option in dropdown menu")
-                    
-                    # Wait for the export options dialog to appear
+                      # Wait for the export options dialog to appear
                     time.sleep(2)
 
+                    logger.info("Step 4/5: Selecting export fields (Affiliations, Publisher, Abstract & Keywords)")
                     
                     # Check the additional options as requested
                     # Check "Affiliations" checkbox
@@ -634,12 +669,10 @@ class ScopusScraper:
                                 break
                         except:
                             continue
-                    
                     if not abstract_checked:
                         logger.warning("Could not check Abstract & keywords checkbox")
                         
-
-
+                    logger.info("Step 5/5: Starting download - waiting for file...")
                     
                     # Finally click the Export/Submit button
                     submit_selectors = [
@@ -654,6 +687,7 @@ class ScopusScraper:
                             if self.page.is_visible(selector):
                                 logger.info(f"Clicking submit export button: {selector}")
                                 self.page.click(selector)
+                                logger.info("Export initiated - please wait while Scopus prepares the download...")
                                 submit_clicked = True
                                 break
                         
@@ -661,9 +695,9 @@ class ScopusScraper:
                             logger.error("Could not find submit export button")
                             self._save_screenshot("submit_button_not_found")
                             raise Exception("Could not find submit export button")
-                    
-                    # Get the download info
+                      # Get the download info
                     download = download_info.value
+                    logger.info("Download started successfully")
                     
                 else:
                     # Fallback to old UI export flow
@@ -674,6 +708,9 @@ class ScopusScraper:
                 
                 # Classic export flow
                 try:
+                    logger.info("Trying classic UI export flow")
+                    logger.info("Step 1/4: Finding export button in classic UI")
+                    
                     # Different possible export buttons
                     export_buttons = [
                         'button[title="Export"]',
@@ -681,8 +718,7 @@ class ScopusScraper:
                         'button:has-text("Export")',
                         '[aria-label="Export"]'
                     ]
-                    
-                    # Click the first visible export button
+                      # Click the first visible export button
                     export_clicked = False
                     for selector in export_buttons:
                         if self.page.is_visible(selector):
@@ -699,6 +735,7 @@ class ScopusScraper:
                     # Wait for export options to appear
                     time.sleep(1)
                     
+                    logger.info("Step 2/4: Selecting CSV format in classic UI")
                     # Select CSV option - try different selectors
                     csv_options = [
                         'input[value="CSV"]',
@@ -710,7 +747,7 @@ class ScopusScraper:
                     for selector in csv_options:
                         if self.page.is_visible(selector):
                             logger.info(f"Selecting CSV option: {selector}")
-                            self.page.click(selector)
+                            self.page.click(selector)                            
                             csv_clicked = True
                             break
                     
@@ -719,6 +756,7 @@ class ScopusScraper:
                         self._save_screenshot("csv_option_not_found")
                         return None
                     
+                    logger.info("Step 3/4: Selecting export options in classic UI")
                     # Attempt to select "All information" if it exists
                     try:
                         if self.page.is_visible('input[value="ALL"]'):
@@ -727,6 +765,7 @@ class ScopusScraper:
                     except:
                         logger.info("ALL information option not found, continuing...")
                     
+                    logger.info("Step 4/4: Starting download in classic UI")
                     # Click export/download/submit button - try different selectors
                     submit_buttons = [
                         'button.btnSubmit',
@@ -736,11 +775,12 @@ class ScopusScraper:
                     ]
                     
                     with self.page.expect_download() as download_info:
-                        submit_clicked = False
+                        submit_clicked = False                        
                         for selector in submit_buttons:
                             if self.page.is_visible(selector):
                                 logger.info(f"Clicking submit button: {selector}")
-                                self.page.click(selector)
+                                self.page.click(selector)                                
+                                logger.info("Export initiated - waiting for download to start...")
                                 submit_clicked = True
                                 break
                         
@@ -751,6 +791,7 @@ class ScopusScraper:
                     
                     # Get download info
                     download = download_info.value
+                    logger.info("Download started successfully in classic UI")
                     
                 except Exception as inner_e:
                     logger.error(f"Classic UI export failed: {str(inner_e)}")
@@ -811,8 +852,8 @@ class ScopusScraper:
             safe_filename = safe_filename[:97] + '...'
         
         logger.info(f"Sanitized filename: '{filename}' -> '{safe_filename}'")
-        return safe_filename
-
+        return safe_filename    
+    
     def perform_search_and_export(self, query: str, filename: Optional[str] = None,
                                   year_from: Optional[int] = None, year_to: Optional[int] = None) -> Optional[Path]:
         """
@@ -826,14 +867,22 @@ class ScopusScraper:
 
         Returns:
             Path to the downloaded file or None if any step failed
-        """        # Login is assumed to be handled by institutional network access.
+        """
+        # Login is assumed to be handled by institutional network access.
         # If direct navigation to Scopus search page fails, it might indicate an issue
         # with network access or Scopus availability.
 
+        # First perform the search (includes date filtering if specified)
         result, count = self.search(query, year_from=year_from, year_to=year_to)
         if not result or result.startswith("SEARCH_FAILURE"):
             logger.error(f"Search step failed with status: {result}")
             return None
 
-        logger.info("Proceeding to export...")
+        # Check if search was successful but had too many results
+        if result == "SEARCH_ERROR_LIMIT_EXCEEDED":
+            logger.error(f"Search returned too many results ({count} documents). Please refine your search criteria.")
+            return None
+            
+        # If we get here, search was successful, so proceed with export
+        logger.info("Search was successful, proceeding to export...")
         return self.export_to_csv(filename)

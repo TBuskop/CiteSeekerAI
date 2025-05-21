@@ -98,6 +98,9 @@ document.addEventListener('DOMContentLoaded', function() {
             showError('Network error: ' + err.message);
         });
     });    function pollJobStatus(jobId) {
+        // Add flag to control polling
+        let isPolling = true;
+        
         const checkStatus = () => {
             fetch(`/abstracts/status/${jobId}`)
                 .then(response => {
@@ -115,13 +118,18 @@ document.addEventListener('DOMContentLoaded', function() {
                         if (progressBar && progressBar.parentElement) {
                             progressBar.parentElement.classList.add('d-none');
                         }
+                        // Stop polling
+                        isPolling = false;
                         setTimeout(() => {
                             showResults(data);
-                        }, 1000);
-                    } else if (data.status === 'Error') {
+                        }, 1000);                    } else if (data.status === 'Error') {
                         // Job error
+                        // Stop polling
+                        isPolling = false;
                         showError(data.error || 'An error occurred during the search');
                     } else if (data.status === 'AwaitingConfirmation') {
+                        // Stop polling while awaiting user confirmation
+                        isPolling = false;
                         statusContainer.classList.remove('alert-info', 'alert-danger', 'alert-success');
                         statusContainer.classList.add('alert-warning', 'compact-alert');
                         // No longer setting inline styles, rely on CSS classes
@@ -260,8 +268,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                     setTimeout(() => cancelMessage.remove(), 500);
                                 }, 3000);
                             }, 500); // Match the transition duration
-                        });
-                    } else if (data.status === 'Processing') {
+                        });                    } else if (data.status === 'Processing') {
                         // Update progress
                         statusContainer.classList.remove('alert-warning', 'alert-danger', 'alert-success');
                         statusContainer.classList.add('alert-info');
@@ -271,9 +278,10 @@ document.addEventListener('DOMContentLoaded', function() {
                         }
                         statusText.textContent = data.progress || 'Processing...';
                         progressBar.style.width = '50%';
-                        // Continue polling
-                        setTimeout(checkStatus, 3000);
-                    } else if (data.status === 'Starting') {
+                        // Continue polling only if we're still polling
+                        if (isPolling) {
+                            setTimeout(checkStatus, 3000);
+                        }} else if (data.status === 'Starting') {
                         statusContainer.classList.remove('alert-warning', 'alert-danger', 'alert-success');
                         statusContainer.classList.add('alert-info');
                         // Ensure progress bar container is visible
@@ -282,13 +290,24 @@ document.addEventListener('DOMContentLoaded', function() {
                         }
                         statusText.textContent = data.progress || 'Starting search...';
                         progressBar.style.width = '20%';
-                        // Continue polling
-                        setTimeout(checkStatus, 2000);
+                        // Continue polling only if we're still polling
+                        if (isPolling) {
+                            setTimeout(checkStatus, 2000);
+                        }
                     } else if (data.status === 'not_found') {
+                        // Stop polling on not found
+                        isPolling = false;
                         showError('Job not found or expired');
+                    } else {
+                        // Continue polling for other statuses if we're still polling
+                        if (isPolling) {
+                            setTimeout(checkStatus, 2000);
+                        }
                     }
                 })
                 .catch(err => {
+                    // Stop polling on error
+                    isPolling = false;
                     showError('Error checking status: ' + err.message);
                 });
         };
@@ -341,12 +360,17 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Re-enable form
         submitBtn.disabled = false;
-    }
-
-    function showError(message) {
+    }    function showError(message) {
         statusContainer.classList.remove('alert-info', 'alert-warning', 'alert-success');
         statusContainer.classList.add('alert-danger');
-        statusText.textContent = 'Error: ' + message;
+        
+        // Format the error message for better readability
+        if (message.includes("browser was closed") || message.includes("connection was lost")) {
+            statusText.innerHTML = '<strong>Error:</strong> ' + message;
+        } else {
+            statusText.textContent = 'Error: ' + message;
+        }
+        
         // Hide the progress bar's parent element
         if (progressBar && progressBar.parentElement) {
             progressBar.parentElement.classList.add('d-none');

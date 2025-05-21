@@ -192,13 +192,17 @@ def run_scopus_search(query: str = None, headless: bool = False,
                 logger.error(f"Search returned too many results: {results_count} (limit: 20,000)")
                 return search_status, None, results_count
                 
-            if search_status == "SEARCH_WARNING_TOO_MANY_RESULTS":
+            if search_status == "SEARCH_WARNING_TOO_MANY_RESULTS":                
                 if not force_continue_large_search:
                     logger.warning(f"Search returned many results: {results_count} (recommended max: 1,000). Pausing for user confirmation.")
                     # Return the warning status so the caller can decide whether to continue
                     return search_status, None, results_count
                 else:
                     logger.info(f"Search returned many results: {results_count}. Proceeding with export as force_continue_large_search is True.")
+                    # Add more detailed logging for UI progress updates
+                    logger.info("=== FORCE CONTINUE WITH LARGE RESULT SET ===")
+                    logger.info(f"Processing {results_count} documents for export - this may take longer than usual")
+                    logger.info("Please be patient while we prepare the export...")
                     # Do not return here; continue to filtering and export.
                     # The status will be EXPORT_SUCCESS if export is successful.
                 
@@ -207,21 +211,28 @@ def run_scopus_search(query: str = None, headless: bool = False,
                 return search_status, None, results_count
                   
             logger.info(f"Search completed with status: {search_status}")
-            
-            # Date filters are now applied directly in the search method
+              # Date filters are now applied directly in the search method
             # Export results to CSV
-            logger.info("Exporting results to CSV...")
+            logger.info("===== Starting Scopus Export Process =====")
+            logger.info(f"Exporting {results_count if results_count else 'unknown number of'} results to CSV...")
+            
+            # If we have large results, provide more detailed progress information
+            if search_status == "SEARCH_WARNING_TOO_MANY_RESULTS" and force_continue_large_search:
+                logger.info("Large result set export in progress - this may take a few minutes")
+                logger.info("The browser will select all results and prepare them for download")
+            
             actual_csv_path = scraper.export_to_csv(final_filename_base)
             if not actual_csv_path:                
                 logger.error("Failed to export results to CSV.")
-                return "EXPORT_FAILURE", None, results_count
-
+                return "EXPORT_FAILURE", None, results_count            
             if output_csv_path and actual_csv_path != output_csv_path:
                 try:
+                    logger.info("Preparing to save CSV to final location...")
                     if actual_csv_path.exists():
                         if output_csv_path.exists():
                             logger.warning(f"Target CSV path {output_csv_path} already exists. Overwriting.")
                             output_csv_path.unlink()
+                        logger.info(f"Moving CSV from temporary location to final destination...")
                         actual_csv_path.rename(output_csv_path)
                         logger.info(f"Renamed downloaded file to specified path: {output_csv_path}")
                         actual_csv_path = output_csv_path

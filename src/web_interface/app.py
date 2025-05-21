@@ -732,9 +732,8 @@ def process_abstract_search(job_id, query, scopus_search_scope, year_from=None, 
                 }
                 update_web_progress(result["message"])
                 return
-                
-            elif result["status"] == "ERROR_SCRAPE_FAILED" or result["status"] == "ERROR_SCRAPE_NO_CSV":
-                # Other search errors
+            elif result["status"].startswith("ERROR_SCRAPE_"):
+                # Handle all search error types including ERROR_SCRAPE_SEARCH_FAILED (which handles SEARCH_FAILURE)
                 processing_jobs[job_id]["status"] = "Error"
                 processing_jobs[job_id]["error"] = result["message"]
                 update_web_progress(result["message"])
@@ -744,32 +743,50 @@ def process_abstract_search(job_id, query, scopus_search_scope, year_from=None, 
                 # Collection successful
                 processing_jobs[job_id]["status"] = "Completed"
                 update_web_progress("Abstract collection completed!")
-                
-                # Add more details about the results
+                  # Add more details about the results
                 if "file_path" in result:
                     processing_jobs[job_id]["file_path"] = result["file_path"]
                 if "count" in result:
                     processing_jobs[job_id]["count"] = result["count"]
                     update_web_progress(f"Abstract collection completed! Found {result['count']} abstracts.")
                 return
+                  # Add more details about the results if no specific result status was returned
+        # This should only happen in successful cases where the status structure is somehow missing
+        processing_jobs[job_id]["status"] = "Completed"
         update_web_progress("Abstract collection completed!")
-        # Add more details about the results
-        csv_dir = os.path.join(_PROJECT_ROOT, 'data', 'downloads', 'csv')
-        latest_csv = max(glob.glob(os.path.join(csv_dir, "*.csv")), key=os.path.getctime, default=None)
-        if latest_csv:
-            processing_jobs[job_id]["file_path"] = latest_csv
-            # Try to count rows in the CSV
-            try:
-                with open(latest_csv, 'r', encoding='utf-8') as f:
-                    count = sum(1 for _ in f) - 1 # -1 for header
-                processing_jobs[job_id]["count"] = count
-                update_web_progress(f"Abstract collection completed! Found {count} abstracts. File: {os.path.basename(latest_csv)}")
-            except Exception as e_count:
-                print(f"Could not count rows in {latest_csv}: {e_count}")
-                update_web_progress(f"Abstract collection completed! File: {os.path.basename(latest_csv)}")
-                pass
-        else:
-            update_web_progress("Abstract collection completed! No CSV file found to report details.")
+        
+        # Get recent CSV files that might be related to this search
+        try:
+            csv_dir = os.path.join(_PROJECT_ROOT, 'data', 'downloads', 'csv')
+            csv_files = glob.glob(os.path.join(csv_dir, "*.csv"))
+            if not csv_files:
+                update_web_progress("Abstract collection completed! No CSV file found.")
+                return
+                
+            # Get the most recent CSV file
+            latest_csv = max(csv_files, key=os.path.getctime)
+            
+            # Only consider it if created after job started
+            csv_create_time = datetime.fromtimestamp(os.path.getctime(latest_csv))
+            job_time = datetime.strptime(job_id, '%Y%m%d_%H%M%S')
+            
+            if csv_create_time > job_time:
+                # CSV was created during this job
+                processing_jobs[job_id]["file_path"] = latest_csv
+                try:
+                    with open(latest_csv, 'r', encoding='utf-8') as f:
+                        count = sum(1 for _ in f) - 1  # -1 for header
+                    processing_jobs[job_id]["count"] = count
+                    update_web_progress(f"Abstract collection completed! Found {count} abstracts. File: {os.path.basename(latest_csv)}")
+                except Exception as e_count:
+                    print(f"Could not count rows in {latest_csv}: {e_count}")
+                    update_web_progress(f"Abstract collection completed! File: {os.path.basename(latest_csv)}")
+            else:
+                # The CSV file existed before the job started - don't report it as this job's result
+                update_web_progress("Abstract collection completed! No new results found.")
+        except Exception as csv_error:
+            print(f"Error determining CSV results: {csv_error}")
+            update_web_progress("Abstract collection completed! Error determining results.")
             
     except Exception as e:
         processing_jobs[job_id]["status"] = "Error"
@@ -1020,4 +1037,4 @@ if __name__ == '__main__':
     # Start Flask server
     print("Starting Flask server...")
     print("Access the web interface at http://127.0.0.1:5000")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=False, host='0.0.0.0', port=5000)
