@@ -89,6 +89,14 @@ def process_research_question(job_id, question, subquestions_count=3, top_k_abst
                         processing_jobs[job_id]["progress"] = f"Subquery {data.get('index', -1) + 1} completed."
                         processing_jobs[job_id]["progress_message"] = f"Subquery {data.get('index', -1) + 1} completed."
                     
+                    elif payload_type == "api_rate_limit":
+                        # Handle Google API rate limit errors specially
+                        message = payload.get("message", "API rate limit reached")
+                        processing_jobs[job_id]["progress"] = message
+                        processing_jobs[job_id]["progress_message"] = message
+                        processing_jobs[job_id]["api_error"] = "rate_limit" 
+                        processing_jobs[job_id]["error_details"] = message
+                    
                     elif payload_type == "status_update":
                         message = payload.get("message", "Processing...")
                         processing_jobs[job_id]["progress"] = message
@@ -321,8 +329,7 @@ def job_status(job_id):
     """Check the status of a processing job"""
     if job_id not in processing_jobs:
         return jsonify({"status": "not_found", "progress_message": "Job not found."})
-    
-    # Ensure all relevant keys are present in the response
+      # Ensure all relevant keys are present in the response
     job_data = processing_jobs[job_id]
     response_data = {
         "status": job_data.get("status", "Unknown"),
@@ -332,7 +339,9 @@ def job_status(job_id):
         "overall_goal": job_data.get("overall_goal"),
         "decomposed_queries": job_data.get("decomposed_queries", []),
         "subquery_results_stream": job_data.get("subquery_results_stream", []),
-        "error": job_data.get("error")  # Include error if present
+        "error": job_data.get("error"),  # Include error if present
+        "api_error": job_data.get("api_error"),  # Include API error type if present
+        "error_details": job_data.get("error_details")  # Include detailed error message
     }
     
     return jsonify(response_data)
@@ -501,7 +510,8 @@ def process_abstract_search_with_force(job_id, query, scopus_search_scope, year_
         processing_jobs[job_id]["status"] = "Error"
         processing_jobs[job_id]["error"] = str(e)
         print(f"Error in abstract collection job {job_id}: {e}")
-        import traceback; traceback.print_exc()
+        import traceback
+        traceback.print_exc()
 
 
 def process_single_paper_download(job_id: str, doi: str):
@@ -666,7 +676,7 @@ def process_abstract_search(job_id, query, scopus_search_scope): # Added scopus_
                 with open(latest_csv, 'r', encoding='utf-8') as f:
                     count = sum(1 for _ in f) - 1 # -1 for header
                 processing_jobs[job_id]["count"] = count
-                update_web_progress(f"Abstract collection completed! Found {count} abstracts. File: {os.path.basename(latest_csv)}")
+                update_web_progress(f"Abstract collection completed! Found {result['count']} abstracts. File: {os.path.basename(latest_csv)}")
             except Exception as e_count:
                 print(f"Could not count rows in {latest_csv}: {e_count}")
                 update_web_progress(f"Abstract collection completed! File: {os.path.basename(latest_csv)}")
@@ -1037,4 +1047,4 @@ if __name__ == '__main__':
     # Start Flask server
     print("Starting Flask server...")
     print("Access the web interface at http://127.0.0.1:5000")
-    app.run(debug=False, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5000)

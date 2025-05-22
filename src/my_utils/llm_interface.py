@@ -324,9 +324,18 @@ def generate_llm_response(prompt: str, max_tokens: int, temperature: float = 0.7
                  return f"[Error generating response: Invalid content or access error. Finish Reason: {finish_reason}]"
 
 
-        except google_exceptions.ResourceExhausted as rate_limit_error:
-            print(f"!!! Rate Limit Error (429) during generation for model {api_model_name}: {rate_limit_error}")
-            return f"[Error: Rate limit hit for {api_model_name}]"
+        except genai.errors.ClientError as client_error:
+            # Handle google.genai.errors.ClientError, specifically checking for 429
+            error_str = str(client_error)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str.upper():
+                error_message = f"Google API rate limit reached (ClientError 429/ResourceExhausted). Model: {api_model_name}. Please ensure billing and credit card information is configured for your Google Cloud project."
+                return error_message
+            else:
+                # Handle other google.genai.errors.ClientError cases
+                error_message = f"Google GenAI ClientError during API call for {api_model_name}: {client_error}"
+                print(f"ERROR: {error_message}")
+                traceback.print_exc()
+                return f"[Error during API call (ClientError): {client_error}]"
         except Exception as e:
             print(f"ERROR: Exception during Gemini API call for {api_model_name}: {e}")
             traceback.print_exc()

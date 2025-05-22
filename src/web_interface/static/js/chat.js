@@ -366,10 +366,18 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             currentJobId = null; // Reset current job ID
             currentJobState = {}; // Reset job state
-            if (statusContainer) statusContainer.classList.add('d-none'); // Hide status
+            if (statusContainer) {
+                statusContainer.classList.add('d-none'); // Hide status
+                statusContainer.classList.remove('alert-warning'); // Remove warning class
+                statusContainer.classList.add('alert-info');    // Restore info class
+            }
             if (progressBar) {
                 progressBar.style.width = '0%'; // Reset progress bar
                 progressBar.classList.remove('bg-danger');
+                progressBar.classList.remove('bg-warning'); // Remove warning class
+                if (progressBar.parentElement && progressBar.parentElement.classList.contains('progress')) {
+                    progressBar.parentElement.classList.remove('d-none'); // Show progress bar container
+                }
             }
             resetForm(); // Reset the input form
             questionInput.value = ''; // Clear the question input field
@@ -486,10 +494,36 @@ document.addEventListener('DOMContentLoaded', function() {
                 statusCheckInterval = null;
                 statusText.textContent = data.progress_message || "Job not found or expired.";
                 progressBar.style.width = '0%';
+                progressBar.classList.remove('bg-warning'); // Ensure warning is cleared
+                if (statusContainer) {
+                    statusContainer.classList.remove('alert-warning');
+                    statusContainer.classList.add('alert-info');
+                }
+                if (progressBar && progressBar.parentElement && progressBar.parentElement.classList.contains('progress')) {
+                    progressBar.parentElement.classList.remove('d-none');
+                }
                 return;
             }
 
             statusText.textContent = data.progress_message || data.progress || data.status;
+
+            // Handle API Rate Limit Error specifically
+            if (data.api_error === 'rate_limit') {
+                clearInterval(statusCheckInterval);
+                statusCheckInterval = null;
+                statusText.textContent = data.error_details || data.progress_message || "API rate limit reached. Please try again later or start a new chat.";
+                
+                if (statusContainer) {
+                    statusContainer.classList.remove('alert-info');
+                    statusContainer.classList.add('alert-warning'); // Make status box yellow
+                    statusContainer.classList.remove('d-none'); // Ensure it's visible
+                }
+                if (progressBar && progressBar.parentElement && progressBar.parentElement.classList.contains('progress')) {
+                    progressBar.parentElement.classList.add('d-none'); // Hide the progress bar's parent div
+                }
+                // Do not resetForm() or hide statusContainer here, let it persist
+                return; // Stop further processing for this status check
+            }
 
             // Display initial information (overall goal, decomposed queries)
             if (data.overall_goal && data.decomposed_queries && data.decomposed_queries.length > 0 && !currentJobState.initialInfoDisplayed) {
@@ -557,11 +591,27 @@ document.addEventListener('DOMContentLoaded', function() {
                     progressBar.style.width = currentJobState.initialInfoDisplayed ? '15%' : '10%';
                 }
                 progressBar.classList.remove('bg-danger');
+                progressBar.classList.remove('bg-warning'); 
+                if (statusContainer) {
+                    statusContainer.classList.remove('alert-warning');
+                    statusContainer.classList.add('alert-info');
+                }
+                if (progressBar && progressBar.parentElement && progressBar.parentElement.classList.contains('progress')) {
+                    progressBar.parentElement.classList.remove('d-none');
+                }
             } else if (data.status === 'Completed' && !currentJobState.finalAnswerDisplayed) {
                 clearInterval(statusCheckInterval);
                 statusCheckInterval = null;
                 progressBar.style.width = '100%';
                 progressBar.classList.remove('bg-danger');
+                progressBar.classList.remove('bg-warning'); 
+                if (statusContainer) {
+                    statusContainer.classList.remove('alert-warning');
+                    statusContainer.classList.add('alert-info');
+                }
+                if (progressBar && progressBar.parentElement && progressBar.parentElement.classList.contains('progress')) {
+                    progressBar.parentElement.classList.remove('d-none');
+                }
                 
                 // Fetch and display the final combined answer
                 fetch(`/result/${currentJobId}`)
@@ -592,7 +642,18 @@ document.addEventListener('DOMContentLoaded', function() {
                 statusCheckInterval = null;
                 progressBar.style.width = '100%';
                 progressBar.classList.add('bg-danger');
+                progressBar.classList.remove('bg-warning'); 
                 statusText.textContent = `Error: ${data.error || data.progress_message || 'Unknown error'}`;
+                if (statusContainer) {
+                    statusContainer.classList.remove('alert-warning');
+                    // Keep alert-info or let Bootstrap's default danger styling take over if alert-danger is added by other logic
+                    // For now, ensure it's not alert-warning. If statusContainer can become alert-danger, that's fine.
+                    // If it should be alert-info with a red progress bar, ensure alert-info is present.
+                    // For now, just removing warning.
+                }
+                if (progressBar && progressBar.parentElement && progressBar.parentElement.classList.contains('progress')) {
+                    progressBar.parentElement.classList.remove('d-none');
+                }
                 resetForm();
             }
         })
@@ -1113,6 +1174,14 @@ document.addEventListener('DOMContentLoaded', function() {
         // It will be overwritten when a new question is asked.
         if (progressBar) {
             progressBar.classList.remove('bg-danger'); // Reset error state
+            progressBar.classList.remove('bg-warning'); // Reset warning state
+            if (progressBar.parentElement && progressBar.parentElement.classList.contains('progress')) {
+                progressBar.parentElement.classList.remove('d-none'); // Ensure progress bar container is visible on reset
+            }
+        }
+        if (statusContainer) { // Ensure status container is reset to info and not warning
+            statusContainer.classList.remove('alert-warning');
+            statusContainer.classList.add('alert-info');
         }
     }
 

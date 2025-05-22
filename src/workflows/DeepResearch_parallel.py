@@ -89,7 +89,11 @@ os.makedirs(QUERY_SPECIFIC_OUTPUT_DIR, exist_ok=True) # Added for per-query outp
 
 # --- Step 1: Decompose query ---
 print("\n--- Step 1: Decomposing Research Question ---")
-decomposed_queries, overall_goal = query_decomposition(query=INITIAL_RESEARCH_QUESTION, number_of_sub_queries=3, model=config.SUBQUERY_MODEL)
+decomposed_queries, overall_goal, error_message = query_decomposition(query=INITIAL_RESEARCH_QUESTION, number_of_sub_queries=3, model=config.SUBQUERY_MODEL)
+if error_message:
+    print(f"Rate limit or API error during query decomposition: {error_message}")
+    print("Pipeline stopped due to API error. No output file will be written.")
+    sys.exit(1)
 if decomposed_queries:
     print("Decomposed queries:")
     for i, query in enumerate(decomposed_queries):

@@ -96,10 +96,15 @@ def process_subquery(query: str, query_index: int, progress_callback=None, run_s
         tuple: (query_index, original_query, final_answer_or_status)
     """
     # helper to report subquery progress
-    def log_progress_sub(msg):
+    def log_progress_sub(msg, error_type=None):
         tag = f""
+        payload = f"{tag} {msg}"
         if progress_callback:
-            progress_callback(f"{tag} {msg}")
+            if error_type:
+                # If this is an API error, send it with special type for UI handling
+                progress_callback({"type": error_type, "message": payload})
+            else:
+                progress_callback(payload)
         print(f"{tag} {msg}")
     log_progress_sub(f"Starting processing for: '{query}'")
 
@@ -197,7 +202,15 @@ def process_subquery(query: str, query_index: int, progress_callback=None, run_s
             log_progress_sub(query_status)
         except Exception as query_err:
             error_message = f"An error occurred during the final query step: {query_err}"
-            log_progress_sub(error_message)
+            
+            # Check if this is a Google API rate limit error
+            error_str = str(query_err)
+            if "Google API rate limit reached" in error_str or ("429" in error_str and "RESOURCE_EXHAUSTED" in error_str.upper()):
+                # For rate limit errors, use the api_rate_limit error type to trigger special UI handling
+                log_progress_sub(error_str, error_type="api_rate_limit")
+            else:
+                log_progress_sub(error_message)
+                
             final_answer = f"Error: {error_message}"
             query_status = "Query failed."
     elif not relevant_doi_list:
@@ -252,12 +265,28 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None,
 
     # --- Step 1: Decompose Initial Research Question ---
     log_progress_main("status_update", message="\n--- Step 1: Decomposing Research Question ---")
-    decomposed_queries, overall_goal = query_decomposition(
-        query=initial_research_question,
-        number_of_sub_queries=query_numbers,
-        model=config.SUBQUERY_MODEL,
-        output_dir=run_specific_output_dir
-    )
+    try:
+        decomposed_queries, overall_goal, error_message = query_decomposition(
+            query=initial_research_question,
+            number_of_sub_queries=query_numbers,
+            model=config.SUBQUERY_MODEL,
+            output_dir=run_specific_output_dir
+        )
+    except Exception as exc:
+        log_progress_main("status_update", message=f"Error during query decomposition. Exiting. Exception: {exc}")
+        sys.exit(1)
+
+    if error_message:
+        # Check if the error_message is the specific detailed rate limit error
+        if "Google API rate limit reached" in error_message and "Please ensure billing and credit card information" in error_message:
+            # Reformat to the user-friendly version
+            friendly_error_message = "Rate limit error: Google API rate limit reached. Please ensure billing and credit card information is configured for your Google Cloud project."
+            log_progress_main("api_rate_limit", message=friendly_error_message)
+        else:
+            # Log other error messages as they are
+            log_progress_main("api_rate_limit", message=error_message)
+        return  # Stop further processing if rate limit error occurred
+
     if decomposed_queries:
         log_progress_main("initial_info", data={"overall_goal": overall_goal, "decomposed_queries": decomposed_queries, "initial_research_question": initial_research_question})
         print(f"Overall Goal: {overall_goal}")
@@ -265,8 +294,8 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None,
         for i, query in enumerate(decomposed_queries):
             print(f"  Subquery {i+1}: {query}")
     else:
-        log_progress_main("status_update", message="Failed to decompose the query. Exiting.")
-        sys.exit(1)
+        log_progress_main("status_update", message="Failed to decompose the query.")
+        
 
     # --- Initialize LLM Clients ---
     log_progress_main("status_update", message="\n--- Initializing LLM Clients ---")
@@ -287,7 +316,7 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None,
 
         try:
             if i > 0 and results:
-                log_progress_main("status_update", message=f"[Query {i+1}] Refining query based on previous results...")
+                log_progress_main("status_update", message=f"Refining query based on previous results...")
                 previous_queries = [res[1] for res in results]
                 previous_answers = [res[2] for res in results]
                 refined_query = follow_up_query_refinement(
@@ -300,10 +329,10 @@ def run_deep_research(question=None, query_numbers=None, progress_callback=None,
                     query_index=i
                 )
                 if refined_query and refined_query != original_subquery:
-                     log_progress_main("status_update", message=f"[Query {i+1}] Refined query: '{refined_query}'")
+                     log_progress_main("status_update", message=f"Refined query: '{refined_query}'")
                      current_query = refined_query
                 else:
-                     log_progress_main("status_update", message=f"[Query {i+1}] Query refinement did not change the query or failed.")
+                     log_progress_main("status_update", message=f"Query refinement did not change the query or failed.")
             
             # Pass the main log_progress_main to process_subquery if its internal logs should also go through the structured callback
             # For now, process_subquery uses its own print and a simpler progress_callback for its internal steps.
