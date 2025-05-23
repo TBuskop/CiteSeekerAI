@@ -69,7 +69,6 @@ def check_api_key_on_startup():
     print("Performing API key validation check...")
 
     try:
-        # Initialize clients (this sets up llm_interface.gemini_client)
         llm_interface.initialize_clients()
 
         if llm_interface.gemini_client is None:
@@ -80,53 +79,53 @@ def check_api_key_on_startup():
             print(f"API Key Check Result: {API_KEY_VALIDATION_MESSAGE}")
             return
 
-        # Attempt a lightweight test call
-        # Use a known, generally available model like the default CHAT_MODEL from config
         test_prompt = "Briefly say hello."
         print(f"Attempting test call to LLM model '{config.CHAT_MODEL}'")
         test_response = llm_interface.generate_llm_response(
             prompt=test_prompt,
-            max_tokens=5, 
+            max_tokens=5,
             temperature=0.1,
-            model='gemini-1.5-flash' 
+            model='gemini-1.5-flash'
         )
         
         print(f"Test call response: {test_response}")
 
-        if test_response:
-            response_lower = test_response.lower()
-            # Check for specific invalid API key errors
-            is_invalid_key_error = "clienterror" in response_lower and \
-                                   ("api key not valid" in response_lower or \
-                                    ("invalid_argument" in response_lower and "api key" in response_lower))
-            is_auth_error = "permissiondenied" in response_lower or "authentication failed" in response_lower
-
-            if is_invalid_key_error or is_auth_error:
-                API_KEY_VALIDATION_MESSAGE = "ERROR: API key not valid. Please provide a valid API key."
-            elif "rate limit" in response_lower or "429" in test_response or "resource_exhausted" in response_lower:
-                API_KEY_VALIDATION_MESSAGE = (
-                    "WARNING: Gemini API rate limit may have been reached or billing is not configured. "
-                    "Check Google Cloud project quotas and billing."
-                )
-            elif test_response.startswith(("[Error", "[Blocked")) and not API_KEY_VALIDATION_MESSAGE:
-                API_KEY_VALIDATION_MESSAGE = (
-                    f"WARNING: Test call to model '{config.CHAT_MODEL}' failed or was blocked. "
-                    f"Response: {test_response[:200]}... Check model access and safety settings."
-                )
-            elif not test_response.strip() and not API_KEY_VALIDATION_MESSAGE:
-                API_KEY_VALIDATION_MESSAGE = (
-                    f"WARNING: Test call to model '{config.CHAT_MODEL}' returned an empty response. "
-                    "This might indicate an issue."
-                )
-            elif not API_KEY_VALIDATION_MESSAGE:
-                 # If response is not an error and not empty, assume key is likely okay for basic calls
-                 print("API key validation test call was successful or did not indicate a critical key/auth issue.")
-                 API_KEY_VALIDATION_MESSAGE = None # Explicitly set to None for success
-        else: 
+        if not test_response:
             API_KEY_VALIDATION_MESSAGE = (
                 f"WARNING: Test call to model '{config.CHAT_MODEL}' yielded no response. "
                 "Unable to confirm API key validity."
             )
+        else:
+            response_lower = test_response.lower()
+            is_invalid_key_error = "clienterror" in response_lower and \
+                                   ("api key not valid" in response_lower or \
+                                    ("invalid_argument" in response_lower and "api key" in response_lower))
+            is_auth_error = "permissiondenied" in response_lower or "authentication failed" in response_lower
+            is_rate_limit_error = "rate limit" in response_lower or "429" in test_response or "resource_exhausted" in response_lower
+            is_blocked_error = test_response.startswith(("[Error", "[Blocked"))
+            is_empty_response = not test_response.strip()
+
+            if is_invalid_key_error or is_auth_error:
+                API_KEY_VALIDATION_MESSAGE = "ERROR: API key not valid. Please provide a valid API key."
+            elif is_rate_limit_error:
+                API_KEY_VALIDATION_MESSAGE = (
+                    "WARNING: Gemini API rate limit may have been reached or billing is not configured. "
+                    "Check Google Cloud project quotas and billing."
+                )
+            elif is_blocked_error:
+                API_KEY_VALIDATION_MESSAGE = (
+                    f"WARNING: Test call to model '{config.CHAT_MODEL}' failed or was blocked. "
+                    f"Response: {test_response[:200]}... Check model access and safety settings."
+                )
+            elif is_empty_response:
+                API_KEY_VALIDATION_MESSAGE = (
+                    f"WARNING: Test call to model '{config.CHAT_MODEL}' returned an empty response. "
+                    "This might indicate an issue."
+                )
+            else:
+                 # If response is not an error and not empty, assume key is likely okay
+                 print("API key validation test call was successful or did not indicate a critical key/auth issue.")
+                 API_KEY_VALIDATION_MESSAGE = None # Explicitly set to None for success
 
     except Exception as e:
         API_KEY_VALIDATION_MESSAGE = (
@@ -923,7 +922,7 @@ def get_prompt_chunk():
 # Helper function to create a sort key (primary: author, secondary: year desc, tertiary: title asc)
 def get_abstract_sort_key(abstract_metadata_dict):
     authors_string = abstract_metadata_dict.get('authors', '')
-    year_val = abstract_metadata_dict.get('year', '0') # Default to '0' string
+    year_val = abstract_metadata_dict.get('year', '')
     title = abstract_metadata_dict.get('title', '').lower()
 
     first_author_lastname = 'zzzz'  # Default for no authors or errors, sorts them last
