@@ -29,6 +29,32 @@
     </nav>
 
     <div class="container-fluid main-content-area">
+        {% if api_key_message %}
+        <div>
+            <div class="col-12">
+                <div id="api-key-alert" class="alert {% if 'ERROR' in api_key_message or 'CRITICAL' in api_key_message %}alert-danger{% else %}alert-warning{% endif %} alert-dismissible fade show" role="alert">
+                    <strong id="api-key-message-text">{{ api_key_message }}</strong> 
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    
+                    {% if 'ERROR' in api_key_message or 'CRITICAL' in api_key_message %}
+                    <hr class="my-3"> <!-- Use <hr> for a visual separator with margin -->
+                    <h5 class="card-title">Configure Gemini API Key</h5>
+                        <p class="card-text"><small>If you see an API key error above, enter it below and click save.
+                            The application will attempt to use the new key right away. If you do not have one yet, you can get one from <a href="https://ai.google.dev/gemini-api/docs/api-key"><strong>here</strong></a>.
+                            <br><strong>Note:</strong> sure to set up your billing account and payment method on the Google portal to make use of all the features.
+                        </small></p>
+                        <div class="input-group">
+                            <input type="password" id="api-key-input" class="form-control" background-color="black" placeholder="Enter your Gemini API Key">
+                            <button class="btn btn-outline-secondary" type="button" id="save-api-key-btn">Save API Key</button>
+                        </div>
+                        <div id="save-api-key-status" class="mt-2"></div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+
         <div class="row flex-grow-1">
             <div class="col-md-3 d-flex flex-column">
                 <div class="mb-3 flex-shrink-0">

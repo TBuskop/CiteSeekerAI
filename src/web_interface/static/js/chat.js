@@ -21,7 +21,12 @@ document.addEventListener('DOMContentLoaded', function() {
     // const historyItems = document.querySelectorAll('.history-item'); // Will be handled by updateHistoryList
     const outlineContainer = document.getElementById('outline-container'); // Added for outline
     const referencesListDiv = document.getElementById('references-list'); // Added for references panel
-    
+    const apiKeyInput = document.getElementById('api-key-input'); // API Key input
+    const saveApiKeyBtn = document.getElementById('save-api-key-btn'); // Save API Key button
+    const saveApiKeyStatus = document.getElementById('save-api-key-status'); // Status for saving API key
+    const apiKeyAlert = document.getElementById('api-key-alert'); // The alert div for API key messages
+    const apiKeyMessageText = document.getElementById('api-key-message-text'); // The <strong> element holding the message
+
     // Variables
     let currentJobId = null;
     let statusCheckInterval = null;
@@ -338,6 +343,76 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initial attachment
     attachHistoryEventListeners();
 
+    // Save API Key button functionality
+    if (saveApiKeyBtn && apiKeyInput && saveApiKeyStatus) {
+        saveApiKeyBtn.addEventListener('click', function() {
+            const apiKey = apiKeyInput.value.trim();
+            if (!apiKey) {
+                saveApiKeyStatus.innerHTML = '<span class="text-danger">Please enter an API key.</span>';
+                return;
+            }
+
+            saveApiKeyBtn.disabled = true;
+            saveApiKeyStatus.innerHTML = '<span>Saving API Key...</span>';
+
+            const formData = new FormData();
+            formData.append('api_key', apiKey);
+
+            fetch('/save_api_key', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                // Always update the main API key alert first, based on the new validation status from the server
+                if (apiKeyAlert && apiKeyMessageText) {
+                    if (data.api_key_message) {
+                        apiKeyMessageText.textContent = data.api_key_message;
+                        if (data.api_key_message.includes('ERROR') || data.api_key_message.includes('CRITICAL')) {
+                            apiKeyAlert.classList.remove('alert-warning');
+                            apiKeyAlert.classList.add('alert-danger');
+                            // The conditional display of the API key input form in index.html
+                            // should automatically handle showing the form again if needed.
+                        } else { // It's a WARNING or success (null message implies success)
+                            apiKeyAlert.classList.remove('alert-danger');
+                            apiKeyAlert.classList.add('alert-warning');
+                        }
+                        apiKeyAlert.classList.remove('d-none'); // Make sure the alert is visible
+                    } else {
+                        // No API key message from server means key is likely fine after save
+                        apiKeyAlert.classList.add('d-none'); // Hide if no message
+                        apiKeyAlert.classList.remove('alert-danger', 'alert-warning');
+                    }
+                }
+
+                // Now, handle the status message for the save operation itself, reflecting the new key's validity
+                if (data.status === 'success') {
+                    // Save operation was successful. Now check the validation message.
+                    if (data.api_key_message && (data.api_key_message.includes('ERROR') || data.api_key_message.includes('CRITICAL'))) {
+                        saveApiKeyStatus.innerHTML = `<span class="text-danger">API Key updated, but it is still invalid. Please check the key and the message above.</span>`;
+                    } else if (data.api_key_message && data.api_key_message.includes('WARNING')) {
+                        saveApiKeyStatus.innerHTML = `<span class="text-warning">API Key updated. ${data.message} However, please note: ${data.api_key_message}</span>`;
+                    } else {
+                        // Key saved and it's valid (or no message which implies valid).
+                        saveApiKeyStatus.innerHTML = `<span class="text-success">API Key updated successfully and validated.</span>`;
+                    }
+                } else {
+                    // Save operation failed. data.message from server should explain why.
+                    // data.api_key_message will be the validation status of the *old* key in this case.
+                    saveApiKeyStatus.innerHTML = `<span class="text-danger">Error saving API Key: ${data.message}</span>`;
+                }
+            })
+            .catch(error => {
+                console.error('Error saving API key:', error);
+                saveApiKeyStatus.innerHTML = '<span class="text-danger">An unexpected error occurred while saving.</span>';
+                // Main API key alert might not be updated if fetch fails, so it shows last known server state.
+            })
+            .finally(() => {
+                saveApiKeyBtn.disabled = false;
+            });
+        });
+    }
+
     // Slider value updates
     if (topKAbstractsSlider && topKAbstractsValue) {
         topKAbstractsSlider.addEventListener('input', function() {
@@ -417,7 +492,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 body: formData
             })
             .then(response => response.json())
-            .then(data => {
+            .then (data => {
                 if (data.status === 'success') {
                     currentJobId = data.job_id; // Set currentJobId for this new conversation
                     currentJobState = { // Initialize state for the new job

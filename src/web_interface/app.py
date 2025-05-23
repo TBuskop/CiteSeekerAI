@@ -11,6 +11,8 @@ from datetime import datetime
 from collections import OrderedDict
 from markupsafe import Markup
 import re # Import re for sanitization
+import importlib # For reloading config
+import shutil # For file operations like backup
 
 # --- Ensure project root is in sys.path ---
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -30,9 +32,14 @@ from src.workflows.DeepResearch_squential import run_deep_research
 from src.workflows.obtain_store_abstracts import obtain_store_abstracts
 from src.rag.chroma_manager import get_chroma_collection
 from src.scrape.download_papers import download_dois # Import download_dois
+from src.my_utils import llm_interface # Import the llm_interface module
 
 import config
 
+# --- Global variable for API key validation status ---
+API_KEY_VALIDATION_MESSAGE = None
+ENV_FILE_PATH = os.path.join(_PROJECT_ROOT, ".env") # Path to .env file
+# CONFIG_FILE_PATH is no longer directly written to by save_api_key, but config.py itself will use _PROJECT_ROOT
 
 
 app = Flask(__name__, static_folder=os.path.join(_PROJECT_ROOT, "src", "web_interface", "static"), 
@@ -49,6 +56,216 @@ processing_jobs = {}  # Store active processing jobs
 chat_history = OrderedDict()  # Store chat history
 OUTPUT_DIR = os.path.join(_PROJECT_ROOT, "output")
 PAPER_DOWNLOAD_DIR = os.path.join(_PROJECT_ROOT, "data", "downloads", "full_doi_texts") # Path to downloaded PDFs
+
+
+# --- Function to check API key validity on startup ---
+def check_api_key_on_startup():
+    """
+    Checks the validity of the Gemini API key on application startup.
+    Sets a global message (API_KEY_VALIDATION_MESSAGE) based on the outcome.
+    """
+    global API_KEY_VALIDATION_MESSAGE
+    print("Performing API key validation check...")
+
+    try:
+        # Initialize clients (this sets up llm_interface.gemini_client)
+        llm_interface.initialize_clients()
+
+        if llm_interface.gemini_client is None:
+            API_KEY_VALIDATION_MESSAGE = (
+                "WARNING: Gemini API client could not be initialized. "
+                "Please check your `GEMINI_API_KEY` in `config.py` and ensure the "
+                "'google-generativeai' library is installed. AI-dependent features may not work."
+            )
+            print(f"API Key Check Result: {API_KEY_VALIDATION_MESSAGE}")
+            return
+
+        # Attempt a lightweight test call
+        # Use a known, generally available model like the default CHAT_MODEL from config
+        test_prompt = "Briefly say hello."
+        print(f"Attempting test call to LLM")
+        test_response = llm_interface.generate_llm_response(
+            prompt=test_prompt,
+            max_tokens=1,
+            temperature=0.1,
+            model='gemini-1.5-flash-8b'
+        )
+        
+        print(f"Test call response: {test_response}")
+
+        if test_response:
+            response_lower = test_response.lower()
+            # Check for specific invalid API key errors
+            is_invalid_key_error = "clienterror" in response_lower and \
+                                   ("api key not valid" in response_lower or \
+                                    ("invalid_argument" in response_lower and "api key" in response_lower))
+            is_auth_error = "permissiondenied" in response_lower or "authentication failed" in response_lower
+
+            if is_invalid_key_error or is_auth_error:
+                API_KEY_VALIDATION_MESSAGE = (
+                    "ERROR: API key not valid. Please pass a valid API key."
+                )
+            elif "rate limit" in response_lower or "429" in test_response or "resource_exhausted" in response_lower:
+                API_KEY_VALIDATION_MESSAGE = (
+                    "WARNING: Gemini API rate limit may have been reached or billing is not configured. "
+                    "Some features might be temporarily unavailable or perform slowly. "
+                    "Please check your Google Cloud project quotas and billing status."
+                )
+            elif test_response.startswith(("[Error", "[Blocked")) and not (is_invalid_key_error or is_auth_error):
+                 # Catch other errors not related to invalid key or rate limits
+                API_KEY_VALIDATION_MESSAGE = (
+                    f"WARNING: Could not fully verify Gemini API functionality. "
+                    f"Test call to model '{config.CHAT_MODEL}' failed or was blocked. "
+                    f"Response: {test_response[:200]}..."
+                    "Check model access and safety settings."
+                )
+            elif not test_response.strip() and not (is_invalid_key_error or is_auth_error):
+                # Empty response might indicate an issue if not expected
+                API_KEY_VALIDATION_MESSAGE = (
+                    f"WARNING: Test call to model '{config.CHAT_MODEL}' returned an empty response. "
+                    "This might indicate an issue with the model or configuration."
+                )
+            else:
+                # If response is not an error and not empty, assume key is likely okay for basic calls
+                print("API key validation test call was successful or did not indicate a critical key/auth issue.")
+                API_KEY_VALIDATION_MESSAGE = None # Explicitly set to None for success
+        else:
+            # test_response is None or empty string from generate_llm_response
+            API_KEY_VALIDATION_MESSAGE = (
+                f"WARNING: Test call to model '{config.CHAT_MODEL}' yielded no response. "
+                "Unable to confirm API key validity. AI features may be affected."
+            )
+
+    except Exception as e:
+        API_KEY_VALIDATION_MESSAGE = (
+            f"CRITICAL ERROR during API key validation: {str(e)}. "
+            "AI-dependent features are likely non-functional. Check logs for details."
+        )
+        print(f"Exception during API key check: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    if API_KEY_VALIDATION_MESSAGE:
+        print(f"API Key Check Result: {API_KEY_VALIDATION_MESSAGE}")
+    else:
+        print("API Key Check: No critical issues detected with the API key or basic LLM communication.")
+
+
+@app.route('/save_api_key', methods=['POST'])
+def save_api_key():
+    global API_KEY_VALIDATION_MESSAGE
+    new_api_key = request.form.get('api_key', '').strip()
+
+    if not new_api_key:
+        return jsonify({
+            "status": "error",
+            "message": "API key cannot be empty.",
+            "api_key_message": API_KEY_VALIDATION_MESSAGE
+        }), 400
+
+    env_backup_path = ENV_FILE_PATH + ".bak"
+
+    try:
+        # 1. Backup .env file
+        if os.path.exists(ENV_FILE_PATH):
+            shutil.copy2(ENV_FILE_PATH, env_backup_path)
+            print(f"Backed up {ENV_FILE_PATH} to {env_backup_path}")
+        else:
+            print(f"Info: {ENV_FILE_PATH} does not exist. Will create it.")
+            # Create an empty backup path so restore logic doesn't fail if .env was initially missing
+            with open(env_backup_path, 'w', encoding='utf-8') as f: pass
+
+
+        # 2. Read .env content (or prepare for new file)
+        env_content = []
+        if os.path.exists(ENV_FILE_PATH):
+            with open(ENV_FILE_PATH, 'r', encoding='utf-8') as f:
+                env_content = f.readlines()
+
+        # 3. Replace or add GEMINI_API_KEY in .env content
+        new_env_content = []
+        key_updated_in_env = False
+        env_key_pattern = re.compile(r"^\s*GEMINI_API_KEY\s*=\s*.*", re.IGNORECASE)
+        for line in env_content:
+            if env_key_pattern.match(line):
+                # Ensure there's a space around '=' for consistency, and no quotes for .env values
+                new_env_content.append(f'GEMINI_API_KEY = {new_api_key}\n')
+                key_updated_in_env = True
+            else:
+                new_env_content.append(line)
+        
+        if not key_updated_in_env:
+            new_env_content.append(f'GEMINI_API_KEY = {new_api_key}\n')
+            print(f"GEMINI_API_KEY not found in {ENV_FILE_PATH}, appending new key.")
+
+        # 4. Write new content to .env
+        with open(ENV_FILE_PATH, 'w', encoding='utf-8') as f:
+            f.writelines(new_env_content)
+        print(f"Updated GEMINI_API_KEY in {ENV_FILE_PATH}")
+
+        # --- config.py will load from .env upon reload ---
+
+        # 5. Reload config module (for runtime changes in the current process)
+        # This will cause config.py to re-execute, loading the new key from .env
+        importlib.reload(sys.modules['config'])
+        print("Reloaded config module. It should now have the new API key from .env.")
+        
+        # 6. Re-initialize LLM clients
+        llm_interface.initialize_clients() # This will use the reloaded config
+        print("Re-initialized LLM clients.")
+
+        # 7. Re-check API key validity
+        check_api_key_on_startup() # This updates API_KEY_VALIDATION_MESSAGE
+        print(f"Re-checked API key. New status: {API_KEY_VALIDATION_MESSAGE}")
+        
+        # 8. Remove .env backup if successful
+        if os.path.exists(env_backup_path):
+            try:
+                os.remove(env_backup_path)
+                print(f"Removed backup file {env_backup_path}")
+            except OSError as e_rm:
+                print(f"Warning: Could not remove backup file {env_backup_path}: {e_rm}")
+
+        return jsonify({
+            "status": "success",
+            "message": "API Key updated in .env. Validation re-checked.",
+            "api_key_message": API_KEY_VALIDATION_MESSAGE
+        })
+
+    except Exception as e:
+        print(f"ERROR saving API key to .env or reloading config: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # Try to restore .env backup
+        try:
+            if os.path.exists(env_backup_path):
+                # Check if ENV_FILE_PATH was created during this attempt or existed before
+                original_env_existed = not (not os.path.exists(ENV_FILE_PATH) and env_backup_path.endswith(".bak") and open(env_backup_path).read() == "")
+
+                if original_env_existed :
+                    shutil.copy2(env_backup_path, ENV_FILE_PATH)
+                    print(f"Restored {ENV_FILE_PATH} from backup {env_backup_path}")
+                else: # .env was newly created in this failed attempt
+                    if os.path.exists(ENV_FILE_PATH): os.remove(ENV_FILE_PATH)
+                    print(f"Removed {ENV_FILE_PATH} as it was newly created in a failed attempt.")
+                os.remove(env_backup_path) # Clean up backup
+            
+        except Exception as e_restore:
+            print(f"CRITICAL ERROR: Failed to restore .env from backup: {e_restore}")
+        
+        # Re-run validation with potentially old/restored key
+        try:
+            importlib.reload(sys.modules['config'])
+            llm_interface.initialize_clients()
+            check_api_key_on_startup()
+        except Exception as e_reload_final:
+            print(f"Error during final reload/recheck after failed save: {e_reload_final}")
+
+        return jsonify({
+            "status": "error",
+            "message": f"Failed to save API key: {str(e)}",
+            "api_key_message": API_KEY_VALIDATION_MESSAGE
+        }), 500
 
 
 def get_timestamp():
@@ -256,7 +473,7 @@ def index():
             reverse=True
         )
     )
-    return render_template('index.html', chat_history=sorted_history)
+    return render_template('index.html', chat_history=sorted_history, api_key_message=API_KEY_VALIDATION_MESSAGE)
 
 @app.route('/history_list')
 def history_list():
@@ -1043,6 +1260,9 @@ if __name__ == '__main__':
 
     print("Loading chat history...")
     load_chat_history()
+
+    # Perform API key check at startup
+    check_api_key_on_startup()
 
     # Start Flask server
     print("Starting Flask server...")

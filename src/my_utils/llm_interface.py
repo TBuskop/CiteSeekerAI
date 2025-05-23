@@ -57,10 +57,23 @@ def initialize_clients():
     gemini_client = None # Reset client
     initialization_successful = False # Track success locally
 
-    if GOOGLE_GENAI_AVAILABLE and GEMINI_API_KEY:
+    # The config module is expected to be reloaded by the caller (e.g., app.py) if necessary,
+    # before this function is called. This function will use the current state of config.GEMINI_API_KEY.
+    try:
+        # Attempt to get the API key from the (potentially reloaded) config module
+        # This ensures that if app.py reloaded config, we use the new key.
+        current_api_key = sys.modules['config'].GEMINI_API_KEY
+    except (KeyError, AttributeError) as e:
+        # This might happen if 'config' is not in sys.modules or GEMINI_API_KEY is missing after a reload.
+        # Fallback to the GEMINI_API_KEY imported at the module level as a last resort.
+        print(f"Warning: Error accessing GEMINI_API_KEY via sys.modules['config'] ({e}). Using module-level import as fallback.")
+        current_api_key = GEMINI_API_KEY # This is from `from config import GEMINI_API_KEY` at the top of this file
+
+
+    if GOOGLE_GENAI_AVAILABLE and current_api_key:
         try:
             # Use genai.Client for initialization
-            gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+            gemini_client = genai.Client(api_key=current_api_key)
             # Optional: Add a check here, e.g., try listing models via the client if supported
             # models = gemini_client.list_models() # Check documentation for exact method
             initialization_successful = True # Mark success
@@ -72,8 +85,8 @@ def initialize_clients():
             gemini_client = None # Ensure it's None on failure
     elif not GOOGLE_GENAI_AVAILABLE:
         print("Info: Google GenAI library not installed, skipping Gemini client initialization.")
-    elif not GEMINI_API_KEY:
-        print("Info: GEMINI_API_KEY not found in config, skipping Gemini client initialization.")
+    elif not current_api_key: # Check reloaded/current key
+        print("Info: GEMINI_API_KEY not found in (potentially reloaded) config, skipping Gemini client initialization.")
 
     # --- Added Debugging ---
     if initialization_successful and isinstance(gemini_client, genai.Client):
