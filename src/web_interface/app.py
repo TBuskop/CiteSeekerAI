@@ -14,6 +14,7 @@ import re # Import re for sanitization
 import importlib # For reloading config
 import shutil # For file operations like backup
 
+
 # --- Ensure project root is in sys.path ---
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
@@ -21,11 +22,17 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
     
 
-# --- Add project root to sys.path ---
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
+# --- Global variable for API key validation status ---
+API_KEY_VALIDATION_MESSAGE = None
+ENV_FILE_PATH = os.path.join(_PROJECT_ROOT, ".env") # Path to .env file
+ENV_EXAMPLE_FILE_PATH = os.path.join(_PROJECT_ROOT, ".env.example") # Path to .env.example file
+# CONFIG_FILE_PATH is no longer directly written to by save_api_key, but config.py itself will use _PROJECT_ROOT
+
+# create .env file if it does not exist. copy content from .env.example
+if not os.path.exists(ENV_FILE_PATH):
+    if os.path.exists(ENV_EXAMPLE_FILE_PATH):
+        shutil.copy2(ENV_EXAMPLE_FILE_PATH, ENV_FILE_PATH)
+        print(f"Created {ENV_FILE_PATH} from {ENV_EXAMPLE_FILE_PATH}.")
 
 # Import project modules
 from src.workflows.DeepResearch_squential import run_deep_research
@@ -35,13 +42,6 @@ from src.scrape.download_papers import download_dois # Import download_dois
 from src.my_utils import llm_interface # Import the llm_interface module
 
 import config
-
-# --- Global variable for API key validation status ---
-API_KEY_VALIDATION_MESSAGE = None
-ENV_FILE_PATH = os.path.join(_PROJECT_ROOT, ".env") # Path to .env file
-ENV_EXAMPLE_FILE_PATH = os.path.join(_PROJECT_ROOT, ".env.example") # Path to .env.example file
-# CONFIG_FILE_PATH is no longer directly written to by save_api_key, but config.py itself will use _PROJECT_ROOT
-
 
 app = Flask(__name__, static_folder=os.path.join(_PROJECT_ROOT, "src", "web_interface", "static"), 
            template_folder=os.path.join(_PROJECT_ROOT, "src", "web_interface", "templates"))
@@ -65,6 +65,7 @@ def check_api_key_on_startup():
     Sets a global message (API_KEY_VALIDATION_MESSAGE) based on the outcome.
     """
     global API_KEY_VALIDATION_MESSAGE
+    API_KEY_VALIDATION_MESSAGE = None # Reset before check
     print("Performing API key validation check...")
 
     try:
@@ -74,8 +75,7 @@ def check_api_key_on_startup():
         if llm_interface.gemini_client is None:
             API_KEY_VALIDATION_MESSAGE = (
                 "WARNING: Gemini API client could not be initialized. "
-                "Please check your `GEMINI_API_KEY` in `config.py` and ensure the "
-                "'google-generativeai' library is installed. AI-dependent features may not work."
+                "Check `GEMINI_API_KEY` in `.env` and 'google-generativeai' installation."
             )
             print(f"API Key Check Result: {API_KEY_VALIDATION_MESSAGE}")
             return
@@ -83,12 +83,12 @@ def check_api_key_on_startup():
         # Attempt a lightweight test call
         # Use a known, generally available model like the default CHAT_MODEL from config
         test_prompt = "Briefly say hello."
-        print(f"Attempting test call to LLM")
+        print(f"Attempting test call to LLM model '{config.CHAT_MODEL}'")
         test_response = llm_interface.generate_llm_response(
             prompt=test_prompt,
-            max_tokens=1,
+            max_tokens=5, 
             temperature=0.1,
-            model='gemini-1.5-flash-8b'
+            model='gemini-1.5-flash' 
         )
         
         print(f"Test call response: {test_response}")
@@ -102,44 +102,36 @@ def check_api_key_on_startup():
             is_auth_error = "permissiondenied" in response_lower or "authentication failed" in response_lower
 
             if is_invalid_key_error or is_auth_error:
-                API_KEY_VALIDATION_MESSAGE = (
-                    "ERROR: API key not valid. Please pass a valid API key."
-                )
+                API_KEY_VALIDATION_MESSAGE = "ERROR: API key not valid. Please provide a valid API key."
             elif "rate limit" in response_lower or "429" in test_response or "resource_exhausted" in response_lower:
                 API_KEY_VALIDATION_MESSAGE = (
                     "WARNING: Gemini API rate limit may have been reached or billing is not configured. "
-                    "Some features might be temporarily unavailable or perform slowly. "
-                    "Please check your Google Cloud project quotas and billing status."
+                    "Check Google Cloud project quotas and billing."
                 )
-            elif test_response.startswith(("[Error", "[Blocked")) and not (is_invalid_key_error or is_auth_error):
-                 # Catch other errors not related to invalid key or rate limits
+            elif test_response.startswith(("[Error", "[Blocked")) and not API_KEY_VALIDATION_MESSAGE:
                 API_KEY_VALIDATION_MESSAGE = (
-                    f"WARNING: Could not fully verify Gemini API functionality. "
-                    f"Test call to model '{config.CHAT_MODEL}' failed or was blocked. "
-                    f"Response: {test_response[:200]}..."
-                    "Check model access and safety settings."
+                    f"WARNING: Test call to model '{config.CHAT_MODEL}' failed or was blocked. "
+                    f"Response: {test_response[:200]}... Check model access and safety settings."
                 )
-            elif not test_response.strip() and not (is_invalid_key_error or is_auth_error):
-                # Empty response might indicate an issue if not expected
+            elif not test_response.strip() and not API_KEY_VALIDATION_MESSAGE:
                 API_KEY_VALIDATION_MESSAGE = (
                     f"WARNING: Test call to model '{config.CHAT_MODEL}' returned an empty response. "
-                    "This might indicate an issue with the model or configuration."
+                    "This might indicate an issue."
                 )
-            else:
-                # If response is not an error and not empty, assume key is likely okay for basic calls
-                print("API key validation test call was successful or did not indicate a critical key/auth issue.")
-                API_KEY_VALIDATION_MESSAGE = None # Explicitly set to None for success
-        else:
-            # test_response is None or empty string from generate_llm_response
+            elif not API_KEY_VALIDATION_MESSAGE:
+                 # If response is not an error and not empty, assume key is likely okay for basic calls
+                 print("API key validation test call was successful or did not indicate a critical key/auth issue.")
+                 API_KEY_VALIDATION_MESSAGE = None # Explicitly set to None for success
+        else: 
             API_KEY_VALIDATION_MESSAGE = (
                 f"WARNING: Test call to model '{config.CHAT_MODEL}' yielded no response. "
-                "Unable to confirm API key validity. AI features may be affected."
+                "Unable to confirm API key validity."
             )
 
     except Exception as e:
         API_KEY_VALIDATION_MESSAGE = (
             f"CRITICAL ERROR during API key validation: {str(e)}. "
-            "AI-dependent features are likely non-functional. Check logs for details."
+            "AI features likely non-functional."
         )
         print(f"Exception during API key check: {e}")
         import traceback
@@ -160,116 +152,63 @@ def save_api_key():
         return jsonify({
             "status": "error",
             "message": "API key cannot be empty.",
-            "api_key_message": API_KEY_VALIDATION_MESSAGE
+            "api_key_message": API_KEY_VALIDATION_MESSAGE 
         }), 400
 
-    env_backup_path = ENV_FILE_PATH + ".bak"
-
     try:
-        # --- START: Create .env from .env.example if .env does not exist ---
-        if not os.path.exists(ENV_FILE_PATH):
-            print(f"Info: {ENV_FILE_PATH} does not exist.")
-            if os.path.exists(ENV_EXAMPLE_FILE_PATH):
-                try:
-                    shutil.copy2(ENV_EXAMPLE_FILE_PATH, ENV_FILE_PATH)
-                    print(f"Successfully created {ENV_FILE_PATH} from {ENV_EXAMPLE_FILE_PATH}.")
-                except Exception as e_copy:
-                    print(f"Warning: Could not copy {ENV_EXAMPLE_FILE_PATH} to {ENV_FILE_PATH}: {e_copy}. A new .env file will be created.")
-                    # If copy fails, proceed to create a new .env file (handled by backup logic or subsequent write)
-            else:
-                print(f"Warning: {ENV_EXAMPLE_FILE_PATH} also not found. A new, empty {ENV_FILE_PATH} will be created.")
-        # --- END: Create .env from .env.example ---
-
-        # 1. Backup .env file
-        if os.path.exists(ENV_FILE_PATH):
-            shutil.copy2(ENV_FILE_PATH, env_backup_path)
-            print(f"Backed up {ENV_FILE_PATH} to {env_backup_path}")
-        else:
-            # This case should ideally be less frequent now due to the creation logic above,
-            # but it's a fallback if .env still doesn't exist (e.g., copy from .env.example failed and .env wasn't there before).
-            print(f"Info: {ENV_FILE_PATH} does not exist (even after attempting creation from example). Will create it and an empty backup.")
-            # Create an empty backup path so restore logic doesn't fail if .env was initially missing
-            with open(env_backup_path, 'w', encoding='utf-8') as f: pass
-
-
+        
         # 2. Read .env content (or prepare for new file)
-        env_content = []
-        if os.path.exists(ENV_FILE_PATH):
-            with open(ENV_FILE_PATH, 'r', encoding='utf-8') as f:
-                env_content = f.readlines()
+        env_lines = []
+        if os.path.exists(ENV_FILE_PATH): 
+            with open(ENV_FILE_PATH, 'r', encoding='utf-8') as f_read:
+                env_lines = f_read.readlines()
 
         # 3. Replace or add GEMINI_API_KEY in .env content
-        new_env_content = []
-        key_updated_in_env = False
+        new_env_lines = []
+        key_found_and_updated = False
         env_key_pattern = re.compile(r"^\s*GEMINI_API_KEY\s*=\s*.*", re.IGNORECASE)
-        for line in env_content:
+        for line in env_lines:
             if env_key_pattern.match(line):
-                # Ensure there's a space around '=' for consistency, and no quotes for .env values
-                new_env_content.append(f'GEMINI_API_KEY = {new_api_key}\n')
-                key_updated_in_env = True
+                new_env_lines.append(f'GEMINI_API_KEY={new_api_key}\n') 
+                key_found_and_updated = True
             else:
-                new_env_content.append(line)
+                new_env_lines.append(line)
         
-        if not key_updated_in_env:
-            new_env_content.append(f'GEMINI_API_KEY = {new_api_key}\n')
+        if not key_found_and_updated:
+            new_env_lines.append(f'GEMINI_API_KEY={new_api_key}\n')
             print(f"GEMINI_API_KEY not found in {ENV_FILE_PATH}, appending new key.")
 
         # 4. Write new content to .env
-        with open(ENV_FILE_PATH, 'w', encoding='utf-8') as f:
-            f.writelines(new_env_content)
+        with open(ENV_FILE_PATH, 'w', encoding='utf-8') as f_write:
+            f_write.writelines(new_env_lines)
         print(f"Updated GEMINI_API_KEY in {ENV_FILE_PATH}")
 
         # --- config.py will load from .env upon reload ---
 
         # 5. Reload config module (for runtime changes in the current process)
         # This will cause config.py to re-execute, loading the new key from .env
-        importlib.reload(sys.modules['config'])
-        print("Reloaded config module. It should now have the new API key from .env.")
+        importlib.reload(sys.modules['config']) 
+        print("Reloaded config module.")
         
         # 6. Re-initialize LLM clients
-        llm_interface.initialize_clients() # This will use the reloaded config
+        llm_interface.initialize_clients() 
         print("Re-initialized LLM clients.")
-
+        
         # 7. Re-check API key validity
-        check_api_key_on_startup() # This updates API_KEY_VALIDATION_MESSAGE
+        check_api_key_on_startup() 
         print(f"Re-checked API key. New status: {API_KEY_VALIDATION_MESSAGE}")
         
-        # 8. Remove .env backup if successful
-        if os.path.exists(env_backup_path):
-            try:
-                os.remove(env_backup_path)
-                print(f"Removed backup file {env_backup_path}")
-            except OSError as e_rm:
-                print(f"Warning: Could not remove backup file {env_backup_path}: {e_rm}")
-
         return jsonify({
             "status": "success",
-            "message": "API Key updated in .env. Validation re-checked.",
+            "message": "API Key updated in .env and re-validated.",
             "api_key_message": API_KEY_VALIDATION_MESSAGE
         })
 
     except Exception as e:
-        print(f"ERROR saving API key to .env or reloading config: {str(e)}")
+        print(f"ERROR saving API key or reloading: {str(e)}")
         import traceback
         traceback.print_exc()
-        # Try to restore .env backup
-        try:
-            if os.path.exists(env_backup_path):
-                # Check if ENV_FILE_PATH was created during this attempt or existed before
-                original_env_existed = not (not os.path.exists(ENV_FILE_PATH) and env_backup_path.endswith(".bak") and open(env_backup_path).read() == "")
-
-                if original_env_existed :
-                    shutil.copy2(env_backup_path, ENV_FILE_PATH)
-                    print(f"Restored {ENV_FILE_PATH} from backup {env_backup_path}")
-                else: # .env was newly created in this failed attempt
-                    if os.path.exists(ENV_FILE_PATH): os.remove(ENV_FILE_PATH)
-                    print(f"Removed {ENV_FILE_PATH} as it was newly created in a failed attempt.")
-                os.remove(env_backup_path) # Clean up backup
-            
-        except Exception as e_restore:
-            print(f"CRITICAL ERROR: Failed to restore .env from backup: {e_restore}")
         
-        # Re-run validation with potentially old/restored key
         try:
             importlib.reload(sys.modules['config'])
             llm_interface.initialize_clients()
@@ -280,7 +219,7 @@ def save_api_key():
         return jsonify({
             "status": "error",
             "message": f"Failed to save API key: {str(e)}",
-            "api_key_message": API_KEY_VALIDATION_MESSAGE
+            "api_key_message": API_KEY_VALIDATION_MESSAGE 
         }), 500
 
 
@@ -288,59 +227,64 @@ def get_timestamp():
     """Generate a timestamp for job ID"""
     return datetime.now().strftime('%Y%m%d_%H%M%S')
 
-def process_research_question(job_id, question, subquestions_count=3, top_k_abstracts=None, top_k_chunks=None, min_citations=None): # Added min_citations
+def process_research_question(job_id, question, subquestions_count=3, top_k_abstracts=None, top_k_chunks=None, min_citations=None):
     """Process a research question using the CiteSeekerAI pipeline"""
     try:
-        # Initialize job structure for structured progress
-        processing_jobs[job_id].update({
+        job_data = processing_jobs[job_id]
+        job_data.update({
             "status": "Processing",
             "progress": "Initializing deep research...",
             "progress_message": "Initializing deep research...",
             "initial_research_question": question,
             "overall_goal": None,
             "decomposed_queries": [],
-            "subquery_results_stream": [] # To store individual subquery results as they come
+            "subquery_results_stream": []
         })
         
-        # Callback to send structured progress updates to web UI
         def update_web_progress(payload):
-            if job_id in processing_jobs:
-                if isinstance(payload, dict):
-                    payload_type = payload.get("type")
-                    
-                    if payload_type == "initial_info":
-                        data = payload.get("data", {})
-                        processing_jobs[job_id]["overall_goal"] = data.get("overall_goal")
-                        processing_jobs[job_id]["decomposed_queries"] = data.get("decomposed_queries", [])
-                        processing_jobs[job_id]["initial_research_question"] = data.get("initial_research_question", question)
-                        processing_jobs[job_id]["progress"] = "Query decomposed. Starting subquery processing."
-                        processing_jobs[job_id]["progress_message"] = "Query decomposed. Starting subquery processing."
-                    
-                    elif payload_type == "subquery_result":
-                        data = payload.get("data", {})
-                        processing_jobs[job_id]["subquery_results_stream"].append(data)
-                        processing_jobs[job_id]["progress"] = f"Subquery {data.get('index', -1) + 1} completed."
-                        processing_jobs[job_id]["progress_message"] = f"Subquery {data.get('index', -1) + 1} completed."
-                    
-                    elif payload_type == "api_rate_limit":
-                        # Handle Google API rate limit errors specially
-                        message = payload.get("message", "API rate limit reached")
-                        processing_jobs[job_id]["progress"] = message
-                        processing_jobs[job_id]["progress_message"] = message
-                        processing_jobs[job_id]["api_error"] = "rate_limit" 
-                        processing_jobs[job_id]["error_details"] = message
-                    
-                    elif payload_type == "status_update":
-                        message = payload.get("message", "Processing...")
-                        processing_jobs[job_id]["progress"] = message
-                        processing_jobs[job_id]["progress_message"] = message
-                
-                elif isinstance(payload, str):
-                    # Backward compatibility for simple string messages
-                    processing_jobs[job_id]["progress"] = payload
-                    processing_jobs[job_id]["progress_message"] = payload
+            if job_id not in processing_jobs:
+                return
+
+            current_job_data = processing_jobs[job_id]
+            if isinstance(payload, dict):
+                payload_type = payload.get("type")
+                data = payload.get("data", {})
+
+                if payload_type == "initial_info":
+                    current_job_data.update({
+                        "overall_goal": data.get("overall_goal"),
+                        "decomposed_queries": data.get("decomposed_queries", []),
+                        "initial_research_question": data.get("initial_research_question", question),
+                        "progress": "Query decomposed. Starting subquery processing.",
+                        "progress_message": "Query decomposed. Starting subquery processing."
+                    })
+                elif payload_type == "subquery_result":
+                    current_job_data["subquery_results_stream"].append(data)
+                    progress_msg = f"Subquery {data.get('index', -1) + 1} completed."
+                    current_job_data.update({
+                        "progress": progress_msg,
+                        "progress_message": progress_msg
+                    })
+                elif payload_type == "api_rate_limit":
+                    message = payload.get("message", "API rate limit reached")
+                    current_job_data.update({
+                        "progress": message,
+                        "progress_message": message,
+                        "api_error": "rate_limit",
+                        "error_details": message
+                    })
+                elif payload_type == "status_update":
+                    message = payload.get("message", "Processing...")
+                    current_job_data.update({
+                        "progress": message,
+                        "progress_message": message
+                    })
+            elif isinstance(payload, str): 
+                current_job_data.update({
+                    "progress": payload,
+                    "progress_message": payload
+                })
         
-        # Run deep research with callback and pass the job_id as run_id
         run_deep_research(
             question=question, 
             query_numbers=subquestions_count, 
@@ -348,10 +292,9 @@ def process_research_question(job_id, question, subquestions_count=3, top_k_abst
             run_id=job_id,
             top_k_abstracts_val=top_k_abstracts,
             top_k_chunks_val=top_k_chunks,
-            min_citations_val=min_citations # Added
+            min_citations_val=min_citations
         )
 
-        # Find the expected output file directly using job_id instead of finding latest
         output_file = os.path.join(OUTPUT_DIR, f"combined_answers_{job_id}.txt")
         subqueries_file = os.path.join(OUTPUT_DIR, "query_specific", job_id, "subqueries.json")
         
@@ -360,19 +303,14 @@ def process_research_question(job_id, question, subquestions_count=3, top_k_abst
             try:
                 with open(subqueries_file, 'r', encoding='utf-8') as f_sub:
                     subqueries_data = json.load(f_sub)
-                    # Prefer 'subqueries' key, fallback to 'original_subqueries'
-                    if 'subqueries' in subqueries_data and isinstance(subqueries_data['subqueries'], list):
-                        subqueries_list = subqueries_data['subqueries']
-                    elif 'original_subqueries' in subqueries_data and isinstance(subqueries_data['original_subqueries'], list):
-                        subqueries_list = subqueries_data['original_subqueries']
+                    subqueries_list = subqueries_data.get('subqueries', subqueries_data.get('original_subqueries', []))
             except Exception as e_sub:
-                print(f"Error reading or parsing subqueries.json for job {job_id}: {e_sub}")
+                print(f"Error reading subqueries.json for job {job_id}: {e_sub}")
 
         if os.path.exists(output_file):
             with open(output_file, 'r', encoding='utf-8') as f:
                 answer = f.read()
             
-            # Store in chat history
             chat_history[job_id] = {
                 "question": question,
                 "answer": answer,
@@ -380,41 +318,17 @@ def process_research_question(job_id, question, subquestions_count=3, top_k_abst
                 "file_path": output_file,
                 "subqueries": subqueries_list
             }
-            
-            # Update job status
-            processing_jobs[job_id]["status"] = "Completed"
-            processing_jobs[job_id]["output_file"] = output_file
+            processing_jobs[job_id].update({"status": "Completed", "output_file": output_file})
         else:
-            # Fall back to finding the latest file if the expected file doesn't exist
-            # This fallback might not have associated subqueries easily, handle gracefully
-            print(f"Warning: Expected output file combined_answers_{job_id}.txt not found. Attempting fallback.")
-            output_file = find_latest_output_file() # This is a generic fallback
-            if output_file:
-                with open(output_file, 'r', encoding='utf-8') as f:
-                    answer = f.read()
-                
-                # For fallback, subqueries might be harder to associate if job_id doesn't match file's implicit ID
-                # For simplicity, we might not have subqueries here or try to infer if possible
-                # For now, it will default to an empty list if subqueries_file for original job_id wasn't found
-                chat_history[job_id] = {
-                    "question": question,
-                    "answer": answer,
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "file_path": output_file,
-                    "subqueries": subqueries_list # This would be from the original job_id context
-                }
-                
-                processing_jobs[job_id]["status"] = "Completed"
-                processing_jobs[job_id]["output_file"] = output_file
-                print(f"Warning: Used fallback output file {os.path.basename(output_file)} for job {job_id}")
-            else:
-                processing_jobs[job_id]["status"] = "Error"
-                processing_jobs[job_id]["error"] = "Output file not found"
+            print(f"Error: Expected output file {output_file} not found for job {job_id}.")
+            processing_jobs[job_id].update({
+                "status": "Error", 
+                "error": f"Output file combined_answers_{job_id}.txt not found."
+            })
     
     except Exception as e:
-        processing_jobs[job_id]["status"] = "Error"
-        processing_jobs[job_id]["error"] = str(e)
-        print(f"Error processing question: {str(e)}")
+        processing_jobs[job_id].update({"status": "Error", "error": str(e)})
+        print(f"Error processing question for job {job_id}: {str(e)}")
         import traceback
         traceback.print_exc()
 
@@ -428,6 +342,8 @@ def find_latest_output_file():
 
 def load_chat_history():
     """Load chat history from output directory"""
+    global chat_history
+    chat_history = OrderedDict() 
     pattern = os.path.join(OUTPUT_DIR, "combined_answers_*.txt")
     files = glob.glob(pattern)
     
@@ -436,44 +352,34 @@ def load_chat_history():
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
                 
-            # Extract original question
-            question = "Unknown Question"  # Default value
-            # Try new format: "## Original Research Question\n{question}\n..."
-            marker_new = "## Original Research Question"
-            idx_marker_new = content.find(marker_new)
-
-            if idx_marker_new != -1:
-                # Calculate start of the content after the marker text itself
-                start_of_question_part = idx_marker_new + len(marker_new)
-                # Get the rest of the content from this point
-                question_section = content[start_of_question_part:]
-                
-                # The question is expected on the next line.
-                # Strip leading whitespace (like the \n immediately after the marker)
-                question_section_stripped = question_section.lstrip()
-                
-                # Take the first line from this stripped section as the question
-                question_lines = question_section_stripped.split('\n', 1)
-                if question_lines and question_lines[0].strip(): # Check if the line is not empty
-                    question = question_lines[0].strip()
-            else:
-                # Try old format: "Original Research Question: {question}\n"
-                marker_old = "Original Research Question:"
-                # Split content by the old marker
-                question_match_parts = content.split(marker_old, 1)
-                if len(question_match_parts) > 1:
-                    # The question is in the part after the marker
-                    # Strip leading spaces from this part, then take the first line
-                    first_line_after_marker = question_match_parts[1].lstrip().split("\n", 1)[0]
-                    question = first_line_after_marker.strip()
-                
-            job_id = os.path.basename(file_path).replace("combined_answers_", "").replace(".txt", "")
+            question = "Unknown Question" 
             
-            chat_history[job_id] = {
+            match_new = re.search(r"## Original Research Question\s*\n(.*?)\n", content, re.DOTALL)
+            if match_new and match_new.group(1).strip():
+                question = match_new.group(1).strip()
+            else:
+                match_old = re.search(r"Original Research Question:\s*(.*?)\n", content)
+                if match_old and match_old.group(1).strip():
+                    question = match_old.group(1).strip()
+            
+            job_id_from_file = os.path.basename(file_path).replace("combined_answers_", "").replace(".txt", "")
+            
+            subqueries_list = []
+            subqueries_file_path = os.path.join(OUTPUT_DIR, "query_specific", job_id_from_file, "subqueries.json")
+            if os.path.exists(subqueries_file_path):
+                try:
+                    with open(subqueries_file_path, 'r', encoding='utf-8') as f_sub:
+                        subqueries_data = json.load(f_sub)
+                        subqueries_list = subqueries_data.get('subqueries', subqueries_data.get('original_subqueries', []))
+                except Exception as e_sub_load:
+                    print(f"Error loading subqueries for {job_id_from_file} from {subqueries_file_path}: {e_sub_load}")
+
+            chat_history[job_id_from_file] = {
                 "question": question,
                 "answer": content,
                 "timestamp": datetime.fromtimestamp(os.path.getctime(file_path)).strftime("%Y-%m-%d %H:%M:%S"),
-                "file_path": file_path
+                "file_path": file_path,
+                "subqueries": subqueries_list
             }
         except Exception as e:
             print(f"Error loading chat history from {file_path}: {str(e)}")
@@ -507,16 +413,16 @@ def history_list():
 def ask_question():
     """Handle new research questions"""
     question = request.form.get('question', '').strip()
-    subquestions_count = request.form.get('subquestions_count', '3')
-    
-    try:
-        subquestions_count = int(subquestions_count)
-        if subquestions_count < 0 or subquestions_count > 10:
-            subquestions_count = 3  # Default to 3 if out of range
-    except ValueError:
-        subquestions_count = 3  # Default to 3 if not a valid integer
+    if not question:
+        return jsonify({"status": "error", "message": "Question cannot be empty"}), 400
 
-    # Get slider values
+    try:
+        subquestions_count = int(request.form.get('subquestions_count', '3'))
+        if not (0 <= subquestions_count <= 10): 
+            subquestions_count = 3 
+    except ValueError:
+        subquestions_count = 3
+
     try:
         top_k_abstracts = int(request.form.get('top_k_abstracts', config.TOP_K_ABSTRACTS))
     except (ValueError, TypeError):
@@ -527,29 +433,22 @@ def ask_question():
     except (ValueError, TypeError):
         top_k_chunks = config.DEFAULT_TOP_K
     
-    try: # Added
+    try: 
         min_citations = int(request.form.get('min_citations', config.MIN_CITATIONS_RELEVANT_PAPERS))
-    except (ValueError, TypeError): # Added
-        min_citations = config.MIN_CITATIONS_RELEVANT_PAPERS # Added
+    except (ValueError, TypeError): 
+        min_citations = config.MIN_CITATIONS_RELEVANT_PAPERS 
     
-    if not question:
-        return jsonify({"status": "error", "message": "Question cannot be empty"})
-    
-    # Create job ID
     job_id = get_timestamp()
     
-    # Start processing in background
     processing_jobs[job_id] = {
         "status": "Starting", 
         "progress": "Initializing...",
         "progress_message": "Initializing...",
-        "initial_research_question": question,
-        "overall_goal": None,
-        "decomposed_queries": [],
-        "subquery_results_stream": []
+        "initial_research_question": question, 
     }
     
-    threading.Thread(target=process_research_question, args=(job_id, question, subquestions_count, top_k_abstracts, top_k_chunks, min_citations)).start() # Added min_citations
+    threading.Thread(target=process_research_question, 
+                     args=(job_id, question, subquestions_count, top_k_abstracts, top_k_chunks, min_citations)).start() 
     
     return jsonify({
         "status": "success",
@@ -560,58 +459,53 @@ def ask_question():
 @app.route('/status/<job_id>')
 def job_status(job_id):
     """Check the status of a processing job"""
-    if job_id not in processing_jobs:
-        return jsonify({"status": "not_found", "progress_message": "Job not found."})
-      # Ensure all relevant keys are present in the response
-    job_data = processing_jobs[job_id]
-    response_data = {
-        "status": job_data.get("status", "Unknown"),
-        "progress": job_data.get("progress", ""),  # Keep for backward compatibility
-        "progress_message": job_data.get("progress_message", ""),
-        "initial_research_question": job_data.get("initial_research_question"),
-        "overall_goal": job_data.get("overall_goal"),
-        "decomposed_queries": job_data.get("decomposed_queries", []),
-        "subquery_results_stream": job_data.get("subquery_results_stream", []),
-        "error": job_data.get("error"),  # Include error if present
-        "api_error": job_data.get("api_error"),  # Include API error type if present
-        "error_details": job_data.get("error_details")  # Include detailed error message
-    }
+    job_info = processing_jobs.get(job_id)
+    if not job_info:
+        return jsonify({"status": "not_found", "progress_message": "Job not found."}), 404
     
+    response_data = {
+        "status": job_info.get("status", "Unknown"),
+        "progress": job_info.get("progress", ""), 
+        "progress_message": job_info.get("progress_message", "Waiting for update..."),
+        "initial_research_question": job_info.get("initial_research_question"),
+        "overall_goal": job_info.get("overall_goal"),
+        "decomposed_queries": job_info.get("decomposed_queries", []),
+        "subquery_results_stream": job_info.get("subquery_results_stream", []),
+        "error": job_info.get("error"),
+        "api_error": job_info.get("api_error"),
+        "error_details": job_info.get("error_details"),
+        "file_path": job_info.get("file_path"),
+        "count": job_info.get("count"),
+        "message": job_info.get("message") 
+    }
     return jsonify(response_data)
 
 @app.route('/result/<job_id>')
 def get_result(job_id):
     """Get the result of a completed job"""
-    if job_id in chat_history:
-        history_item = chat_history[job_id]
-        subqueries_list = history_item.get("subqueries", [])
+    history_item = chat_history.get(job_id)
+    if not history_item:
+        return jsonify({"status": "not_found", "message": "Result not found or job not completed."}), 404
 
-        # If subqueries are not in chat_history (e.g. older history items before this change),
-        # try to load them from the subqueries.json file directly.
-        if not subqueries_list:
-            subqueries_file = os.path.join(OUTPUT_DIR, "query_specific", job_id, "subqueries.json")
-            if os.path.exists(subqueries_file):
-                try:
-                    with open(subqueries_file, 'r', encoding='utf-8') as f_sub:
-                        subqueries_data = json.load(f_sub)
-                        if 'subqueries' in subqueries_data and isinstance(subqueries_data['subqueries'], list):
-                            subqueries_list = subqueries_data['subqueries']
-                        elif 'original_subqueries' in subqueries_data and isinstance(subqueries_data['original_subqueries'], list):
-                             subqueries_list = subqueries_data['original_subqueries']
-                        # Update chat_history entry if we just loaded them
-                        chat_history[job_id]["subqueries"] = subqueries_list
-                except Exception as e_sub:
-                    print(f"Error reading or parsing subqueries.json for job {job_id} during get_result: {e_sub}")
+    subqueries_list = history_item.get("subqueries", [])
+    if not subqueries_list: 
+        subqueries_file_path = os.path.join(OUTPUT_DIR, "query_specific", job_id, "subqueries.json")
+        if os.path.exists(subqueries_file_path):
+            try:
+                with open(subqueries_file_path, 'r', encoding='utf-8') as f_sub:
+                    subqueries_data = json.load(f_sub)
+                    subqueries_list = subqueries_data.get('subqueries', subqueries_data.get('original_subqueries', []))
+                    history_item["subqueries"] = subqueries_list 
+            except Exception as e_sub_load:
+                print(f"Error reading subqueries.json for job {job_id} during get_result: {e_sub_load}")
         
-        return jsonify({
-            "status": "success",
-            "question": history_item["question"],
-            "answer": history_item["answer"],
-            "timestamp": history_item["timestamp"],
-            "subqueries": subqueries_list
-        })
-    
-    return jsonify({"status": "not_found"})
+    return jsonify({
+        "status": "success",
+        "question": history_item["question"],
+        "answer": history_item["answer"],
+        "timestamp": history_item["timestamp"],
+        "subqueries": subqueries_list
+    })
 
 @app.route('/output/<filename>')
 def output_file(filename):
@@ -627,25 +521,45 @@ def abstract_search_page():
 def start_abstract_search():
     """Handle new abstract collection requests"""
     query = request.form.get('query', '').strip()
-    scopus_search_scope = request.form.get('scopus_search_scope', config.SCOPUS_SEARCH_SCOPE) # Added, with fallback to config
-    year_from_str = request.form.get('year_from', '').strip()
-    year_to_str = request.form.get('year_to', '').strip()
-    min_citations_str = request.form.get('min_citations', '').strip() # Get min_citations
-
-    year_from = int(year_from_str) if year_from_str else None
-    year_to = int(year_to_str) if year_to_str else None
-    min_citations = int(min_citations_str) if min_citations_str else None # Convert to int or None
-    
     if not query:
-        return jsonify({"status": "error", "message": "Search query cannot be empty"})
+        return jsonify({"status": "error", "message": "Search query cannot be empty"}), 400
+
+    scopus_search_scope = request.form.get('scopus_search_scope', config.SCOPUS_SEARCH_SCOPE)
     
-    # Create job ID
+    try:
+        year_from_str = request.form.get('year_from', '').strip()
+        year_from = int(year_from_str) if year_from_str else None
+    except ValueError:
+        return jsonify({"status": "error", "message": "Invalid 'Year From'"}), 400
+        
+    try:
+        year_to_str = request.form.get('year_to', '').strip()
+        year_to = int(year_to_str) if year_to_str else None
+    except ValueError:
+        return jsonify({"status": "error", "message": "Invalid 'Year To'"}), 400
+
+    try:
+        min_citations_str = request.form.get('min_citations', '').strip()
+        min_citations = int(min_citations_str) if min_citations_str else None
+    except ValueError:
+        return jsonify({"status": "error", "message": "Invalid 'Min Citations'"}), 400
+
     job_id = get_timestamp()
     
-    # Start processing in background
-    processing_jobs[job_id] = {"status": "Starting", "progress": "Initializing..."}
-    # Pass min_citations to process_abstract_search
-    threading.Thread(target=process_abstract_search, args=(job_id, query, scopus_search_scope, year_from, year_to, min_citations)).start() 
+    processing_jobs[job_id] = {
+        "status": "Starting", 
+        "progress": "Initializing abstract collection...",
+        "original_params": { 
+            "query": query,
+            "scopus_search_scope": scopus_search_scope,
+            "year_from": year_from,
+            "year_to": year_to,
+            "min_citations": min_citations
+        }
+    }
+    
+    threading.Thread(target=process_abstract_search, 
+                     args=(job_id, query, scopus_search_scope, year_from, year_to, min_citations)).start() 
     
     return jsonify({
         "status": "success",
@@ -656,10 +570,7 @@ def start_abstract_search():
 @app.route('/abstracts/status/<job_id>')
 def abstract_job_status(job_id):
     """Check the status of an abstract collection job"""
-    if job_id not in processing_jobs:
-        return jsonify({"status": "not_found"})
-    
-    return jsonify(processing_jobs[job_id])
+    return job_status(job_id)
 
 @app.route('/abstracts/continue_collection/<job_id>', methods=['POST'])
 def continue_abstract_collection(job_id):
@@ -700,16 +611,16 @@ def continue_abstract_collection(job_id):
     })
     
 def process_abstract_search_with_force(job_id, query, scopus_search_scope, year_from=None, year_to=None, min_citations=None):
-    """Process an abstract collection using the obtain_store_abstracts function with force_continue_large_search=True"""
+    """Process an abstract collection using obtain_store_abstracts with force_continue_large_search=True"""
     try:
-        # Callback for UI progress updates
+        current_job_data = processing_jobs[job_id]
+        
         def update_web_progress(message):
-            if job_id in processing_jobs:
+            if job_id in processing_jobs: 
                 processing_jobs[job_id]["progress"] = message
                 
         update_web_progress("Continuing with large result set collection...")
         
-        # Run with callback to progress and force_continue_large_search=True
         result = obtain_store_abstracts(
             search_query=query,
             scopus_search_scope=scopus_search_scope,
@@ -717,32 +628,38 @@ def process_abstract_search_with_force(job_id, query, scopus_search_scope, year_
             year_to=year_to,
             min_citations_param=min_citations,
             progress_callback=update_web_progress,
-            force_continue_large_search=True
+            force_continue_large_search=True 
         )
         
-        # Handle result similar to process_abstract_search
         if "status" in result:
             if result["status"] == "SUCCESS":
-                # Collection successful
-                processing_jobs[job_id]["status"] = "Completed"
-                update_web_progress("Abstract collection completed!")
-                
-                # Add more details about the results
-                if "file_path" in result:
-                    processing_jobs[job_id]["file_path"] = result["file_path"]
-                if "count" in result:
-                    processing_jobs[job_id]["count"] = result["count"]
-                    update_web_progress(f"Abstract collection completed! Found {result['count']} abstracts.")
-            else:
-                # Handle any errors
-                processing_jobs[job_id]["status"] = "Error"
-                processing_jobs[job_id]["error"] = result.get("message", "Unknown error occurred")
-                update_web_progress(result.get("message", "Error in abstract collection"))
+                current_job_data.update({
+                    "status": "Completed",
+                    "progress": f"Abstract collection completed! Found {result.get('count', 'N/A')} abstracts.",
+                    "file_path": result.get("file_path"),
+                    "count": result.get("count")
+                })
+            else: 
+                current_job_data.update({
+                    "status": "Error",
+                    "error": result.get("message", "Unknown error during forced collection."),
+                    "progress": result.get("message", "Error in abstract collection")
+                })
+        else: 
+            current_job_data.update({
+                "status": "Error",
+                "error": "Unexpected result from abstract collection process.",
+                "progress": "Error: Unexpected result."
+            })
                 
     except Exception as e:
-        processing_jobs[job_id]["status"] = "Error"
-        processing_jobs[job_id]["error"] = str(e)
-        print(f"Error in abstract collection job {job_id}: {e}")
+        if job_id in processing_jobs:
+            processing_jobs[job_id].update({
+                "status": "Error",
+                "error": str(e),
+                "progress": f"Error: {str(e)}"
+            })
+        print(f"Error in forced abstract collection job {job_id}: {e}")
         import traceback
         traceback.print_exc()
 
@@ -791,22 +708,23 @@ def download_paper_route():
     if not doi:
         return jsonify({"status": "error", "message": "DOI cannot be empty"}), 400
 
-    job_id = get_timestamp() + f"_dl_{sanitize_doi_for_filename(doi)[:20]}" # Make job_id more unique for downloads
+    safe_doi_part = sanitize_doi_for_filename(doi)[:30] 
+    job_id = f"{get_timestamp()}_dl_{safe_doi_part}"
     
     processing_jobs[job_id] = {
         "status": "Starting",
         "progress": f"Initializing download for DOI: {doi}",
-        "doi": doi
+        "doi": doi,
+        "type": "single_download" 
     }
     
-    # Start download in a background thread
     thread = threading.Thread(target=process_single_paper_download, args=(job_id, doi))
     thread.start()
     
     return jsonify({
         "status": "success",
         "job_id": job_id,
-        "message": f"Download initiated for DOI: {doi}. Polling for status."
+        "message": f"Download initiated for DOI: {doi}. Check status for progress."
     })
 
 def process_multiple_papers_download(job_id: str, dois: list):
@@ -849,18 +767,17 @@ def download_multiple_papers_route():
     data = request.get_json()
     dois = data.get('dois', [])
 
-    if not dois or not isinstance(dois, list):
-        return jsonify({"status": "error", "message": "List of DOIs cannot be empty"}), 400
+    if not dois or not isinstance(dois, list) or not all(isinstance(d, str) for d in dois):
+        return jsonify({"status": "error", "message": "A non-empty list of DOI strings is required"}), 400
     
-    # Sanitize/validate DOIs if necessary here
-
-    job_id = get_timestamp() + f"_dl_batch_{len(dois)}"
+    job_id = f"{get_timestamp()}_dl_batch_{len(dois)}"
     
     processing_jobs[job_id] = {
         "status": "Starting",
         "progress": f"Initializing batch download for {len(dois)} paper(s)...",
         "total_dois": len(dois),
-        "downloaded_count": 0
+        "downloaded_count": 0,
+        "type": "batch_download" 
     }
     
     thread = threading.Thread(target=process_multiple_papers_download, args=(job_id, dois))
@@ -869,173 +786,89 @@ def download_multiple_papers_route():
     return jsonify({
         "status": "success",
         "job_id": job_id,
-        "message": f"Batch download initiated for {len(dois)} paper(s). Polling for status."
+        "message": f"Batch download initiated for {len(dois)} paper(s). Check status for progress."
     })
 
-
-def process_abstract_search(job_id, query, scopus_search_scope): # Added scopus_search_scope parameter
+def process_abstract_search(job_id, query, scopus_search_scope, year_from=None, year_to=None, min_citations=None):
     """Process an abstract collection using the obtain_store_abstracts function"""
+    print(f"DEBUG: Starting process_abstract_search for job {job_id}, query: '{query}', scope: {scopus_search_scope}, years: {year_from}-{year_to}, min_citations: {min_citations}")
+    
+    current_job_data = processing_jobs.get(job_id)
+    if not current_job_data:
+        print(f"Error: Job {job_id} not found in processing_jobs at start of process_abstract_search.")
+        return
+
     try:
-        # Update job status
-        processing_jobs[job_id]["status"] = "Processing"
-        # Callback for UI progress updates
+        current_job_data["status"] = "Processing"
+        
         def update_web_progress(message):
-            if job_id in processing_jobs:
+            if job_id in processing_jobs: 
                 processing_jobs[job_id]["progress"] = message
+        
         update_web_progress("Initializing abstract collection...")
-        # Temporarily override the SCOPUS_SEARCH_STRING in config
-        original_scopus_search_string = config.SCOPUS_SEARCH_STRING
-        # The query from the form is now the primary search string for obtain_store_abstracts
-        # config.SCOPUS_SEARCH_STRING = query # This line might be redundant if query is passed directly
-
-        # Run with callback to update progress
-        obtain_store_abstracts(search_query=query, # Pass query from form
-                               scopus_search_scope=scopus_search_scope, # Pass selected scope
-                               progress_callback=update_web_progress)
-
-        # Restore original config if it was changed (though direct passing is preferred)
-        # config.SCOPUS_SEARCH_STRING = original_scopus_search_string
-
-        # Finalize job status
-        processing_jobs[job_id]["status"] = "Completed"
-        update_web_progress("Abstract collection completed!")
-        # Add more details about the results
-        csv_dir = os.path.join(_PROJECT_ROOT, 'data', 'downloads', 'csv')
-        latest_csv = max(glob.glob(os.path.join(csv_dir, "*.csv")), key=os.path.getctime, default=None)
-        if latest_csv:
-            processing_jobs[job_id]["file_path"] = latest_csv
-            # Try to count rows in the CSV
-            try:
-                with open(latest_csv, 'r', encoding='utf-8') as f:
-                    count = sum(1 for _ in f) - 1 # -1 for header
-                processing_jobs[job_id]["count"] = count
-                update_web_progress(f"Abstract collection completed! Found {result['count']} abstracts. File: {os.path.basename(latest_csv)}")
-            except Exception as e_count:
-                print(f"Could not count rows in {latest_csv}: {e_count}")
-                update_web_progress(f"Abstract collection completed! File: {os.path.basename(latest_csv)}")
-                pass
-        else:
-            update_web_progress("Abstract collection completed! No CSV file found to report details.")
-            
-    except Exception as e:
-        processing_jobs[job_id]["status"] = "Error"
-        processing_jobs[job_id]["error"] = str(e)
-        print(f"Error in abstract collection job {job_id}: {e}")
-        import traceback; traceback.print_exc()
-
-def process_abstract_search(job_id, query, scopus_search_scope, year_from=None, year_to=None, min_citations=None): # Added min_citations
-    """Process an abstract collection using the obtain_store_abstracts function"""
-    print(f"DEBUG: Starting process_abstract_search for job {job_id}, query: {query}")
-    try:
-        # Update job status
-        processing_jobs[job_id]["status"] = "Processing"
-        # Callback for UI progress updates
-        def update_web_progress(message):
-            if job_id in processing_jobs:
-                processing_jobs[job_id]["progress"] = message
-        update_web_progress("Initializing abstract collection...")
-        # Temporarily override the SCOPUS_SEARCH_STRING in config
-        original_scopus_search_string = config.SCOPUS_SEARCH_STRING
-        # The query from the form is now the primary search string for obtain_store_abstracts
-        # config.SCOPUS_SEARCH_STRING = query # This line might be redundant if query is passed directly        # Run with callback to update progress
+        
         result = obtain_store_abstracts(
-            search_query=query, # Pass query from form
-            scopus_search_scope=scopus_search_scope, # Pass selected scope
-            year_from=year_from, # Pass year_from
-            year_to=year_to,     # Pass year_to
-            min_citations_param=min_citations, # Pass min_citations from UI
+            search_query=query,
+            scopus_search_scope=scopus_search_scope,
+            year_from=year_from,
+            year_to=year_to,
+            min_citations_param=min_citations,
             progress_callback=update_web_progress,
-            force_continue_large_search=False # Ensure we don't automatically continue with large results
+            force_continue_large_search=False 
         )
 
-        # Restore original config if it was changed (though direct passing is preferred)
-        # config.SCOPUS_SEARCH_STRING = original_scopus_search_string
-          # Handle different result statuses
+        print(f"DEBUG: Result from obtain_store_abstracts for job {job_id}: {result}")
+
         if "status" in result:
-            print(f"DEBUG: Result status: {result['status']}, job_id: {job_id}")
-            if result["status"] == "ERROR_SCRAPE_LIMIT_EXCEEDED":
-                # Too many results (> 20,000)
-                processing_jobs[job_id]["status"] = "Error"
-                processing_jobs[job_id]["error"] = result["message"]
-                processing_jobs[job_id]["count"] = result.get("count")
-                update_web_progress(result["message"])
-                return
-            elif result["status"] == "AWAITING_USER_CONFIRMATION_LARGE_RESULTS":
-                                # Many results (> 1,000) - needs confirmation
-                print(f"DEBUG: Setting AwaitingConfirmation status for job {job_id}")
-                processing_jobs[job_id]["status"] = "AwaitingConfirmation"
-                processing_jobs[job_id]["message"] = result["message"]
-                processing_jobs[job_id]["count"] = result.get("count")
-                processing_jobs[job_id]["original_params"] = {
-                    "query": query,
-                    "scopus_search_scope": scopus_search_scope,
-                    "year_from": year_from,
-                    "year_to": year_to,
-                    "min_citations": min_citations
-                }
-                update_web_progress(result["message"])
-                return
-            elif result["status"].startswith("ERROR_SCRAPE_"):
-                # Handle all search error types including ERROR_SCRAPE_SEARCH_FAILED (which handles SEARCH_FAILURE)
-                processing_jobs[job_id]["status"] = "Error"
-                processing_jobs[job_id]["error"] = result["message"]
-                update_web_progress(result["message"])
-                return
-                
-            elif result["status"] == "SUCCESS":
-                # Collection successful
-                processing_jobs[job_id]["status"] = "Completed"
-                update_web_progress("Abstract collection completed!")
-                  # Add more details about the results
-                if "file_path" in result:
-                    processing_jobs[job_id]["file_path"] = result["file_path"]
-                if "count" in result:
-                    processing_jobs[job_id]["count"] = result["count"]
-                    update_web_progress(f"Abstract collection completed! Found {result['count']} abstracts.")
-                return
-                  # Add more details about the results if no specific result status was returned
-        # This should only happen in successful cases where the status structure is somehow missing
-        processing_jobs[job_id]["status"] = "Completed"
-        update_web_progress("Abstract collection completed!")
-        
-        # Get recent CSV files that might be related to this search
-        try:
-            csv_dir = os.path.join(_PROJECT_ROOT, 'data', 'downloads', 'csv')
-            csv_files = glob.glob(os.path.join(csv_dir, "*.csv"))
-            if not csv_files:
-                update_web_progress("Abstract collection completed! No CSV file found.")
-                return
-                
-            # Get the most recent CSV file
-            latest_csv = max(csv_files, key=os.path.getctime)
+            result_status = result["status"]
+            result_message = result.get("message", "No message provided.")
+            result_count = result.get("count")
             
-            # Only consider it if created after job started
-            csv_create_time = datetime.fromtimestamp(os.path.getctime(latest_csv))
-            job_time = datetime.strptime(job_id, '%Y%m%d_%H%M%S')
-            
-            if csv_create_time > job_time:
-                # CSV was created during this job
-                processing_jobs[job_id]["file_path"] = latest_csv
-                try:
-                    with open(latest_csv, 'r', encoding='utf-8') as f:
-                        count = sum(1 for _ in f) - 1  # -1 for header
-                    processing_jobs[job_id]["count"] = count
-                    update_web_progress(f"Abstract collection completed! Found {count} abstracts. File: {os.path.basename(latest_csv)}")
-                except Exception as e_count:
-                    print(f"Could not count rows in {latest_csv}: {e_count}")
-                    update_web_progress(f"Abstract collection completed! File: {os.path.basename(latest_csv)}")
-            else:
-                # The CSV file existed before the job started - don't report it as this job's result
-                update_web_progress("Abstract collection completed! No new results found.")
-        except Exception as csv_error:
-            print(f"Error determining CSV results: {csv_error}")
-            update_web_progress("Abstract collection completed! Error determining results.")
+            current_job_data["progress"] = result_message 
+
+            if result_status == "AWAITING_USER_CONFIRMATION_LARGE_RESULTS":
+                current_job_data.update({
+                    "status": "AwaitingConfirmation",
+                    "message": result_message, 
+                    "count": result_count,
+                })
+                print(f"DEBUG: Job {job_id} set to AwaitingConfirmation. Count: {result_count}")
+            elif result_status == "SUCCESS":
+                current_job_data.update({
+                    "status": "Completed",
+                    "file_path": result.get("file_path"),
+                    "count": result_count,
+                    "progress": f"Abstract collection completed! Found {result_count or 'N/A'} abstracts."
+                })
+            elif result_status.startswith("ERROR_"): 
+                current_job_data.update({
+                    "status": "Error",
+                    "error": result_message,
+                    "count": result_count 
+                })
+            else: 
+                current_job_data.update({
+                    "status": "Error",
+                    "error": f"Unknown status from abstract collection: {result_status}",
+                    "progress": f"Unknown status: {result_status}. Message: {result_message}"
+                })
+        else: 
+            current_job_data.update({
+                "status": "Error",
+                "error": "Invalid response structure from abstract collection process.",
+                "progress": "Error: Invalid response from collection process."
+            })
             
     except Exception as e:
-        processing_jobs[job_id]["status"] = "Error"
-        processing_jobs[job_id]["error"] = str(e)
-        print(f"Error in abstract collection job {job_id}: {e}")
-        import traceback; traceback.print_exc()
+        print(f"CRITICAL ERROR in process_abstract_search for job {job_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        if job_id in processing_jobs: 
+            processing_jobs[job_id].update({
+                "status": "Error",
+                "error": str(e),
+                "progress": f"Critical error: {str(e)}"
+            })
 
 @app.route('/static/<path:path>')
 def serve_static(path):
@@ -1118,76 +951,64 @@ def get_abstract_sort_key(abstract_metadata_dict):
 
 @app.route('/abstracts/list', methods=['GET'])
 def list_abstracts():
-    """API endpoint to list abstracts in the database"""
+    """API endpoint to list abstracts in the database with server-side sorting and filtering."""
     try:
-        search_term = request.args.get('search', '')
-        search_fields = request.args.get('search_fields', 'title,authors').split(',')
-        page = int(request.args.get('page', 1))
-        per_page = int(request.args.get('per_page', 20))
+        search_term = request.args.get('search', '').strip().lower()
+        search_fields_str = request.args.get('search_fields', 'title,authors')
+        search_fields = [field.strip() for field in search_fields_str.split(',') if field.strip()]
         
+        try:
+            page = int(request.args.get('page', 1))
+            per_page = int(request.args.get('per_page', 20))
+            if page < 1: page = 1
+            if per_page < 1: per_page = 1
+            if per_page > 100: per_page = 100 
+        except ValueError:
+            page, per_page = 1, 20
+
         collection = get_chroma_collection(
             db_path=os.path.join(_PROJECT_ROOT, "data", "databases", "abstract_chroma_db"),
             collection_name="abstracts",
             execution_mode="query" 
         )
 
-        total_db_count = collection.count()
-        sortable_items = [] # This list will hold items to be sorted.
-
-        # Fetch all IDs and metadatas needed for sorting and filtering.
-        # This ensures we operate on the entire dataset for these operations.
-        # We only fetch 'metadatas' here to keep it lighter; 'documents' are fetched for the page later.
-        all_metadata_results = collection.get(
-            limit=total_db_count, # Fetch all
-            include=["metadatas"] 
-        )
-
-        if all_metadata_results.get('ids'):
-            for i, doc_id in enumerate(all_metadata_results['ids']):
-                metadata = all_metadata_results['metadatas'][i]
-                
-                item_data_for_sort_and_filter = {
-                    'id': doc_id,
+        all_db_items = collection.get(include=["metadatas"])
+        
+        filtered_items_metadata = []
+        if all_db_items and all_db_items.get('ids'):
+            for i, doc_id in enumerate(all_db_items['ids']):
+                metadata = all_db_items['metadatas'][i]
+                item_data_for_filter = {
+                    'id': doc_id, 
                     'authors': metadata.get('authors', ''),
                     'year': metadata.get('year', ''),
                     'title': metadata.get('title', '')
                 }
 
                 if search_term:
-                    # Apply search filter if a search term is provided
-                    search_term_lower = search_term.lower()
-                    matches = False
-                    if 'title' in search_fields and item_data_for_sort_and_filter.get('title'):
-                        if search_term_lower in item_data_for_sort_and_filter['title'].lower():
-                            matches = True
+                    matches_search = False
+                    if 'title' in search_fields and item_data_for_filter.get('title', '').lower().find(search_term) != -1:
+                        matches_search = True
+                    if not matches_search and 'authors' in search_fields and item_data_for_filter.get('authors', '').lower().find(search_term) != -1:
+                        matches_search = True
                     
-                    if not matches and 'authors' in search_fields and item_data_for_sort_and_filter.get('authors'):
-                        if search_term_lower in item_data_for_sort_and_filter['authors'].lower():
-                            matches = True
-                    
-                    if matches:
-                        sortable_items.append(item_data_for_sort_and_filter)
+                    if matches_search:
+                        filtered_items_metadata.append(item_data_for_filter)
                 else:
-                    # No search term, so all items are candidates for sorting and pagination
-                    sortable_items.append(item_data_for_sort_and_filter)
+                    filtered_items_metadata.append(item_data_for_filter)
         
-        # Sort the (potentially filtered) list of items
-        sortable_items.sort(key=get_abstract_sort_key)
+        filtered_items_metadata.sort(key=get_abstract_sort_key)
         
-        # Determine the total count for pagination display
-        # If searching, it's the number of matched items. Otherwise, it's the total in DB.
-        total_items_for_pagination = len(sortable_items) if search_term else total_db_count
+        total_filtered_items = len(filtered_items_metadata)
 
-        # Paginate the sorted list of items
         start_idx = (page - 1) * per_page
         end_idx = start_idx + per_page
         
-        ids_for_page = [item['id'] for item in sortable_items[start_idx:end_idx]]
+        ids_for_current_page = [item['id'] for item in filtered_items_metadata[start_idx:end_idx]]
         
-        paginated_abstracts_data = []
-        if ids_for_page:
-            # Fetch full data (including documents) only for the IDs on the current page
-            page_full_data_results = collection.get(ids=ids_for_page, include=["metadatas", "documents"])
+        paginated_abstracts_full_data = []
+        if ids_for_current_page:
+            page_full_data_results = collection.get(ids=ids_for_current_page, include=["metadatas", "documents"])
             
             id_to_full_data_map = {}
             if page_full_data_results.get('ids'):
@@ -1197,7 +1018,7 @@ def list_abstracts():
                         'document': page_full_data_results['documents'][i]
                     }
 
-            for item_id in ids_for_page: 
+            for item_id in ids_for_current_page: 
                 if item_id in id_to_full_data_map:
                     full_data = id_to_full_data_map[item_id]
                     metadata = full_data['metadata']
@@ -1205,14 +1026,11 @@ def list_abstracts():
                     is_downloaded = False
                     doi = metadata.get('doi', '')
                     if doi:
-                        sanitized_doi = sanitize_doi_for_filename(doi)
-                        # Ensure the TXT extension is added for the check
-                        txt_filename = f"{sanitized_doi}.txt" 
-                        txt_path = os.path.join(PAPER_DOWNLOAD_DIR, txt_filename) # PDF_DOWNLOAD_DIR is used for .txt files as per user context
-                        if os.path.exists(txt_path):
-                            is_downloaded = True
+                        sanitized_doi_filename = sanitize_doi_for_filename(doi) + ".txt"
+                        txt_path = os.path.join(PAPER_DOWNLOAD_DIR, sanitized_doi_filename)
+                        is_downloaded = os.path.exists(txt_path)
                             
-                    paginated_abstracts_data.append({
+                    paginated_abstracts_full_data.append({
                         'id': item_id,
                         'title': metadata.get('title', ''),
                         'authors': metadata.get('authors', ''),
@@ -1220,19 +1038,19 @@ def list_abstracts():
                         'source_title': metadata.get('source_title', ''),
                         'cited_by': metadata.get('cited_by', ''),
                         'doi': doi,
-                        'document': full_data['document'],
-                        'is_downloaded': is_downloaded # Add the downloaded status
+                        'document': full_data['document'], 
+                        'is_downloaded': is_downloaded
                     })
         
-        has_more = end_idx < len(sortable_items)
+        has_more_pages = end_idx < total_filtered_items
         
         return jsonify({
             'status': 'success',
-            'abstracts': paginated_abstracts_data,
+            'abstracts': paginated_abstracts_full_data,
             'page': page,
             'per_page': per_page,
-            'total': total_items_for_pagination, 
-            'has_more': has_more
+            'total': total_filtered_items, 
+            'has_more': has_more_pages
         })
         
     except Exception as e:
