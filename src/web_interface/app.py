@@ -39,6 +39,7 @@ import config
 # --- Global variable for API key validation status ---
 API_KEY_VALIDATION_MESSAGE = None
 ENV_FILE_PATH = os.path.join(_PROJECT_ROOT, ".env") # Path to .env file
+ENV_EXAMPLE_FILE_PATH = os.path.join(_PROJECT_ROOT, ".env.example") # Path to .env.example file
 # CONFIG_FILE_PATH is no longer directly written to by save_api_key, but config.py itself will use _PROJECT_ROOT
 
 
@@ -56,7 +57,6 @@ processing_jobs = {}  # Store active processing jobs
 chat_history = OrderedDict()  # Store chat history
 OUTPUT_DIR = os.path.join(_PROJECT_ROOT, "output")
 PAPER_DOWNLOAD_DIR = os.path.join(_PROJECT_ROOT, "data", "downloads", "full_doi_texts") # Path to downloaded PDFs
-
 
 # --- Function to check API key validity on startup ---
 def check_api_key_on_startup():
@@ -166,12 +166,28 @@ def save_api_key():
     env_backup_path = ENV_FILE_PATH + ".bak"
 
     try:
+        # --- START: Create .env from .env.example if .env does not exist ---
+        if not os.path.exists(ENV_FILE_PATH):
+            print(f"Info: {ENV_FILE_PATH} does not exist.")
+            if os.path.exists(ENV_EXAMPLE_FILE_PATH):
+                try:
+                    shutil.copy2(ENV_EXAMPLE_FILE_PATH, ENV_FILE_PATH)
+                    print(f"Successfully created {ENV_FILE_PATH} from {ENV_EXAMPLE_FILE_PATH}.")
+                except Exception as e_copy:
+                    print(f"Warning: Could not copy {ENV_EXAMPLE_FILE_PATH} to {ENV_FILE_PATH}: {e_copy}. A new .env file will be created.")
+                    # If copy fails, proceed to create a new .env file (handled by backup logic or subsequent write)
+            else:
+                print(f"Warning: {ENV_EXAMPLE_FILE_PATH} also not found. A new, empty {ENV_FILE_PATH} will be created.")
+        # --- END: Create .env from .env.example ---
+
         # 1. Backup .env file
         if os.path.exists(ENV_FILE_PATH):
             shutil.copy2(ENV_FILE_PATH, env_backup_path)
             print(f"Backed up {ENV_FILE_PATH} to {env_backup_path}")
         else:
-            print(f"Info: {ENV_FILE_PATH} does not exist. Will create it.")
+            # This case should ideally be less frequent now due to the creation logic above,
+            # but it's a fallback if .env still doesn't exist (e.g., copy from .env.example failed and .env wasn't there before).
+            print(f"Info: {ENV_FILE_PATH} does not exist (even after attempting creation from example). Will create it and an empty backup.")
             # Create an empty backup path so restore logic doesn't fail if .env was initially missing
             with open(env_backup_path, 'w', encoding='utf-8') as f: pass
 
